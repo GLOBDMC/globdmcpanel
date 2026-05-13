@@ -27,15 +27,15 @@
                 <img src="/static/logo.jpg" alt="GlobDMC" class="h-10 rounded-md"/>
                 <div class="border-l border-gray-500 pl-3">
                     <p class="text-xs text-gray-300 uppercase tracking-wider">Operasyon Paneli</p>
-                    <p class="text-xs text-gray-400">Cruise &amp; Tour Management</p>
+                    <p class="text-xs text-gray-400">Tour Management</p>
                 </div>
             </div>
             <div class="flex items-center space-x-4">
                 <div class="text-right">
-                    <p class="text-sm text-white font-medium">Gokhan Kaya</p>
-                    <p class="text-xs text-gray-400">Cruise Operation Manager</p>
+                    <p class="text-sm text-white font-medium">{{ kullanici.ad_soyad }}</p>
+                    <p class="text-xs text-gray-400">{{ kullanici.pozisyon }}</p>
                 </div>
-                <div class="w-9 h-9 bg-glob-accent rounded-full flex items-center justify-center text-white text-sm font-medium">GK</div>
+                <div class="w-9 h-9 bg-glob-accent rounded-full flex items-center justify-center text-white text-sm font-medium">{{ kullanici.bas_harfler }}</div>
             </div>
         </div>
     </nav>
