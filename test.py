@@ -1,0 +1,1 @@
+print("Merhaba Gökhan, panel kurulumu başlıyor!")
