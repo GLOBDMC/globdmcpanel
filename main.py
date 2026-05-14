@@ -12,7 +12,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 
 db_engine = create_engine(
-    "postgresql://gokhan:12345@localhost:5432/globdmc_panel"
+    os.getenv("DATABASE_URL")
 )
 
 
