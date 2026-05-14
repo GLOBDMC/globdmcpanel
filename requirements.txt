@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+sqlalchemy
+psycopg2-binary
+gspread
+oauth2client
+apscheduler
+jinja2
+python-multipart
+pydantic
