@@ -61,88 +61,189 @@
             </div>
         </div>
 
-        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5 mb-6">
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div class="md:col-span-3">
-                    <label class="block text-xs font-medium text-gray-600 mb-1">Arama</label>
-                    <input type="text" id="aramaInput" placeholder="Tur adi, JT kodu, havayolu..." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-glob-dark"/>
-                </div>
-                <div>
-                    <label class="block text-xs font-medium text-gray-600 mb-1">Havayolu</label>
-                    <select id="havayoluFiltre" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-glob-dark">
-                        <option value="">Tumu</option>
-                        {% for hy in havayollari %}
-                        <option value="{{ hy }}">{{ hy }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div>
-                    <label class="block text-xs font-medium text-gray-600 mb-1">Doluluk</label>
-                    <select id="dolulukFiltre" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-glob-dark">
-                        <option value="">Tumu</option>
-                        <option value="kritik">Kritik</option>
-                        <option value="orta">Orta</option>
-                        <option value="bol">Bol</option>
-                    </select>
-                </div>
-                <div>
-                    <label class="block text-xs font-medium text-gray-600 mb-1">Tarih Araligi</label>
-                    <div class="flex gap-2">
-                        <input type="date" id="tarihBaslangic" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-glob-dark"/>
-                        <input type="date" id="tarihBitis" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-glob-dark"/>
+        <!-- SEKMELER -->
+        <div class="flex gap-1 mb-0">
+            <button id="tab-kontenjan" onclick="sekmeAc('kontenjan')"
+                class="sekme-btn px-5 py-2.5 text-sm font-semibold rounded-t-lg border border-b-0 transition-colors bg-emerald-50 border-emerald-200 text-emerald-800">
+                Tur Kontenjanlari
+            </button>
+            <button id="tab-satis" onclick="sekmeAc('satis')"
+                class="sekme-btn px-5 py-2.5 text-sm font-semibold rounded-t-lg border border-b-0 transition-colors flex items-center gap-2
+                {% if satis_alertleri %}bg-amber-50 border-amber-400 text-amber-800 hover:bg-amber-100{% else %}bg-gray-100 border-gray-200 text-gray-500 hover:text-glob-dark{% endif %}">
+                Kritik Satış Uyarısı
+                {% if satis_alertleri %}
+                <span class="bg-amber-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">{{ satis_alertleri|length }}</span>
+                {% endif %}
+            </button>
+        </div>
+
+        <!-- SEKME 1: TUR KONTENJANLARI -->
+        <div id="panel-kontenjan">
+            <div class="bg-white rounded-lg rounded-tl-none shadow-sm border border-gray-200 p-5 mb-4">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div class="md:col-span-3">
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Arama</label>
+                        <input type="text" id="aramaInput" placeholder="Tur adi, JT kodu, havayolu..." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-glob-dark"/>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Havayolu</label>
+                        <select id="havayoluFiltre" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-glob-dark">
+                            <option value="">Tumu</option>
+                            {% for hy in havayollari %}
+                            <option value="{{ hy }}">{{ hy }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Doluluk</label>
+                        <select id="dolulukFiltre" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-glob-dark">
+                            <option value="">Tumu</option>
+                            <option value="kritik">Kritik</option>
+                            <option value="orta">Orta</option>
+                            <option value="bol">Bol</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Tarih Araligi</label>
+                        <div class="flex gap-2">
+                            <input type="date" id="tarihBaslangic" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-glob-dark"/>
+                            <input type="date" id="tarihBitis" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-glob-dark"/>
+                        </div>
                     </div>
                 </div>
+                <div class="mt-3 flex justify-end">
+                    <button id="temizleBtn" class="text-xs text-glob-dark hover:underline font-medium">Filtreleri Temizle</button>
+                </div>
             </div>
-            <div class="mt-3 flex justify-end">
-                <button id="temizleBtn" class="text-xs text-glob-dark hover:underline font-medium">Filtreleri Temizle</button>
+
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                <div class="flex justify-between items-center px-5 py-3 border-b border-gray-200 bg-gray-50">
+                    <h2 class="text-lg font-semibold text-glob-dark">Tur Kontenjanlari</h2>
+                    <span id="sonucSayisi" class="text-sm text-gray-500">{{ toplam }} tur</span>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200" id="turTablosu">
+                        <thead class="bg-glob-dark" id="turBaslik">
+                            <tr>
+                                <th data-kolon="0" class="sirala px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider cursor-pointer hover:bg-glob-darker">Tur Kodu</th>
+                                <th data-kolon="1" class="sirala px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider cursor-pointer hover:bg-glob-darker">Tur İsmi</th>
+                                <th data-kolon="2" data-tip="tarih" class="sirala px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider cursor-pointer hover:bg-glob-darker">Tur Tarihi</th>
+                                <th data-kolon="3" class="sirala px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider cursor-pointer hover:bg-glob-darker">Havayolu</th>
+                                <th data-kolon="4" data-tip="sayi" class="sirala px-4 py-3 text-right text-xs font-semibold text-white uppercase tracking-wider cursor-pointer hover:bg-glob-darker">Toplam Kontenjan</th>
+                                <th data-kolon="5" data-tip="sayi" class="sirala px-4 py-3 text-right text-xs font-semibold text-white uppercase tracking-wider cursor-pointer hover:bg-glob-darker">Satılan</th>
+                                <th data-kolon="6" data-tip="sayi" class="sirala px-4 py-3 text-right text-xs font-semibold text-white uppercase tracking-wider cursor-pointer hover:bg-glob-darker">Kalan</th>
+                                <th class="px-4 py-3 text-right text-xs font-semibold text-white uppercase tracking-wider">Fiyat</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider">Rehber</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100" id="turGovde">
+                            {% for tur in turlar %}
+                            <tr class="hover:bg-gray-50 transition-colors tur-satir" data-havayolu="{{ tur[3] }}" data-kalan="{{ tur[6] if tur[6] is not none else 0 }}" data-tarih="{{ tur[2] }}">
+                                <td class="px-4 py-3 text-sm font-medium text-glob-dark whitespace-nowrap">{{ tur[0] }}</td>
+                                <td class="px-4 py-3 text-sm text-gray-700">{{ tur[1] }}</td>
+                                <td class="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">{{ tur[2] }}</td>
+                                <td class="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">{{ tur[3] }}</td>
+                                <td class="px-4 py-3 text-sm text-gray-700 text-right">{{ tur[4] }}</td>
+                                <td class="px-4 py-3 text-sm text-gray-700 text-right">{{ tur[5] }}</td>
+                                <td class="px-4 py-3 text-sm font-semibold text-right">
+                                    {% if tur[6] is none %}<span class="text-gray-400">-</span>
+                                    {% elif tur[6] <= 3 %}<span class="text-red-600">{{ tur[6] }}</span>
+                                    {% elif tur[6] <= 10 %}<span class="text-amber-600">{{ tur[6] }}</span>
+                                    {% else %}<span class="text-green-600">{{ tur[6] }}</span>
+                                    {% endif %}
+                                </td>
+                                <td class="px-4 py-3 text-sm text-gray-700 text-right whitespace-nowrap">{{ tur[7] or '-' }}</td>
+                                <td class="px-4 py-3 text-sm text-gray-700 whitespace-nowrap rehber-hucre" data-jt="{{ tur[0] }}">
+                                    <span class="rehber-metin cursor-pointer hover:text-glob-dark {% if not tur[8] %}text-gray-300 italic{% endif %}">
+                                        {{ tur[8] or 'Ekle...' }}
+                                    </span>
+                                    <input type="text" class="rehber-input hidden border border-glob-dark rounded px-2 py-0.5 text-sm w-40 focus:outline-none focus:ring-1 focus:ring-glob-dark" value="{{ tur[8] or '' }}" placeholder="Rehber adı..."/>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                        <tfoot class="bg-glob-dark border-t-2 border-glob-accent">
+                            <tr>
+                                <td colspan="4" class="px-4 py-3 text-xs font-semibold text-gray-300 uppercase tracking-wider">Toplam</td>
+
+                                <td id="toplamPax" class="px-4 py-3 text-sm font-bold text-white text-right"></td>
+                                <td id="toplamSatilan" class="px-4 py-3 text-sm font-bold text-white text-right"></td>
+                                <td id="toplamKalan" class="px-4 py-3 text-sm font-bold text-white text-right"></td>
+                                <td id="toplamOran" class="px-4 py-3 text-sm font-bold text-green-400 text-right"></td>
+                                <td id="toplamKalanOran" class="px-4 py-3 text-sm font-bold text-red-400 text-right"></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
             </div>
         </div>
 
-        <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-            <div class="flex justify-between items-center px-5 py-3 border-b border-gray-200 bg-gray-50">
-                <h2 class="text-lg font-semibold text-glob-dark">Tur Kontenjanlari</h2>
-                <span id="sonucSayisi" class="text-sm text-gray-500">{{ toplam }} tur</span>
-            </div>
-            <div class="overflow-x-auto">
-                <table class="min-w-full divide-y divide-gray-200" id="turTablosu">
-                    <thead class="bg-glob-dark">
-                        <tr>
-                            <th data-kolon="0" class="sirala px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider cursor-pointer hover:bg-glob-darker">JT Kodu</th>
-                            <th data-kolon="1" class="sirala px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider cursor-pointer hover:bg-glob-darker">Tur Adi</th>
-                            <th data-kolon="2" data-tip="tarih" class="sirala px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider cursor-pointer hover:bg-glob-darker">Kalkis</th>
-                            <th data-kolon="3" class="sirala px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider cursor-pointer hover:bg-glob-darker">Havayolu</th>
-                            <th data-kolon="4" data-tip="sayi" class="sirala px-4 py-3 text-right text-xs font-semibold text-white uppercase tracking-wider cursor-pointer hover:bg-glob-darker">PAX</th>
-                            <th data-kolon="5" data-tip="sayi" class="sirala px-4 py-3 text-right text-xs font-semibold text-white uppercase tracking-wider cursor-pointer hover:bg-glob-darker">Satilan</th>
-                            <th data-kolon="6" data-tip="sayi" class="sirala px-4 py-3 text-right text-xs font-semibold text-white uppercase tracking-wider cursor-pointer hover:bg-glob-darker">Kalan</th>
-                            <th class="px-4 py-3 text-right text-xs font-semibold text-white uppercase tracking-wider">Fiyat</th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-gray-100" id="turGovde">
-                        {% for tur in turlar %}
-                        <tr class="hover:bg-gray-50 transition-colors tur-satir" data-havayolu="{{ tur[3] }}" data-kalan="{{ tur[6] if tur[6] is not none else 0 }}" data-tarih="{{ tur[2] }}">
-                            <td class="px-4 py-3 text-sm font-medium text-glob-dark whitespace-nowrap">{{ tur[0] }}</td>
-                            <td class="px-4 py-3 text-sm text-gray-700">{{ tur[1] }}</td>
-                            <td class="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">{{ tur[2] }}</td>
-                            <td class="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">{{ tur[3] }}</td>
-                            <td class="px-4 py-3 text-sm text-gray-700 text-right">{{ tur[4] }}</td>
-                            <td class="px-4 py-3 text-sm text-gray-700 text-right">{{ tur[5] }}</td>
-                            <td class="px-4 py-3 text-sm font-semibold text-right">
-                                {% if tur[6] is none %}<span class="text-gray-400">-</span>
-                                {% elif tur[6] <= 3 %}<span class="text-red-600">{{ tur[6] }}</span>
-                                {% elif tur[6] <= 10 %}<span class="text-amber-600">{{ tur[6] }}</span>
-                                {% else %}<span class="text-green-600">{{ tur[6] }}</span>
-                                {% endif %}
-                            </td>
-                            <td class="px-4 py-3 text-sm text-gray-700 text-right whitespace-nowrap">{{ tur[7] or '-' }}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+        <!-- SEKME 2: KRİTİK SATIS UYARISI -->
+        <div id="panel-satis" class="hidden">
+            <div class="bg-white rounded-lg rounded-tl-none shadow-sm border border-gray-200 overflow-hidden">
+                <div class="flex justify-between items-center px-5 py-3 border-b border-gray-200 bg-gray-50">
+                    <div>
+                        <h2 class="text-lg font-semibold text-glob-dark">Kritik Satis Uyarisi</h2>
+                        <p class="text-xs text-gray-400 mt-0.5">35–60 gün içinde kalkışı olan, doluluk %50 altındaki turlar</p>
+                    </div>
+                    <span class="text-sm text-gray-500">{{ satis_alertleri|length }} tur</span>
+                </div>
+                {% if satis_alertleri %}
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-glob-dark">
+                            <tr>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider">Tur Kodu</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider">Tur İsmi</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider">Tur Tarihi</th>
+                                <th class="px-4 py-3 text-right text-xs font-semibold text-white uppercase tracking-wider">Kalan Gün</th>
+                                <th class="px-4 py-3 text-right text-xs font-semibold text-white uppercase tracking-wider">Toplam Kontenjan</th>
+                                <th class="px-4 py-3 text-right text-xs font-semibold text-white uppercase tracking-wider">Satılan</th>
+                                <th class="px-4 py-3 text-right text-xs font-semibold text-white uppercase tracking-wider">Doluluk</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100">
+                            {% for a in satis_alertleri %}
+                            <tr class="hover:bg-gray-50 transition-colors">
+                                <td class="px-4 py-3 text-sm font-medium text-glob-dark whitespace-nowrap">{{ a.jt_kodu }}</td>
+                                <td class="px-4 py-3 text-sm text-gray-700">{{ a.tur_adi }}</td>
+                                <td class="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">{{ a.kalkis }}</td>
+                                <td class="px-4 py-3 text-sm text-right font-semibold text-amber-600">{{ a.days_left }}</td>
+                                <td class="px-4 py-3 text-sm text-right text-gray-700">{{ a.pax }}</td>
+                                <td class="px-4 py-3 text-sm text-right text-gray-700">{{ a.satilan }}</td>
+                                <td class="px-4 py-3 text-sm text-right font-semibold text-red-600">%{{ a.doluluk }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="px-5 py-12 text-center text-gray-400 text-sm">Kritik satış uyarısı bulunmuyor.</div>
+                {% endif %}
             </div>
         </div>
+
     </main>
 
     <script>
+        function sekmeAc(sekme) {
+            const aktifBtn = 'bg-white border-gray-200 text-glob-dark';
+            const pasifBtn = 'bg-gray-100 border-gray-200 text-gray-500 hover:text-glob-dark';
+
+            document.getElementById('panel-kontenjan').classList.toggle('hidden', sekme !== 'kontenjan');
+            document.getElementById('panel-satis').classList.toggle('hidden', sekme !== 'satis');
+
+            ['kontenjan', 'satis'].forEach(function(s) {
+                const btn = document.getElementById('tab-' + s);
+                btn.className = btn.className.replace(/bg-\S+|text-\S+/g, '').trim();
+                if (s === sekme) {
+                    btn.classList.add('bg-white', 'text-glob-dark');
+                } else {
+                    btn.classList.add('bg-gray-100', 'text-gray-500');
+                }
+            });
+        }
+
         const aramaInput = document.getElementById('aramaInput');
         const havayoluFiltre = document.getElementById('havayoluFiltre');
         const dolulukFiltre = document.getElementById('dolulukFiltre');
@@ -191,7 +292,25 @@
             });
 
             sonucSayisi.textContent = gorunen + ' tur';
+
+            let topPax = 0, topSatilan = 0, topKalan = 0;
+            satirlar.forEach(function(satir) {
+                if (satir.style.display === 'none') return;
+                topPax     += parseInt(satir.cells[4].textContent.trim()) || 0;
+                topSatilan += parseInt(satir.cells[5].textContent.trim()) || 0;
+                topKalan   += parseInt(satir.cells[6].textContent.trim()) || 0;
+            });
+            document.getElementById('toplamPax').textContent     = topPax.toLocaleString('tr-TR');
+            document.getElementById('toplamSatilan').textContent = topSatilan.toLocaleString('tr-TR');
+            document.getElementById('toplamKalan').textContent   = topKalan.toLocaleString('tr-TR');
+            document.getElementById('toplamOran').textContent      = topPax > 0 ? '%' + (topSatilan / topPax * 100).toFixed(1) : '';
+            document.getElementById('toplamKalanOran').textContent = topPax > 0 ? '%' + (topKalan  / topPax * 100).toFixed(1) : '';
         }
+
+        // Sayfa açılınca tarihi bugüne set et ve filtrele
+        const bugun = new Date().toISOString().split('T')[0];
+        tarihBaslangic.value = bugun;
+        filtrele();
 
         aramaInput.addEventListener('input', filtrele);
         havayoluFiltre.addEventListener('change', filtrele);
@@ -248,6 +367,93 @@
                 satirlar.forEach(function(s) { govde.appendChild(s); });
             });
         });
+
+        // STICKY BAŞLIK
+        (function() {
+            const thead = document.getElementById('turBaslik');
+            const table = document.getElementById('turTablosu');
+            const nav  = document.querySelector('nav');
+
+            function layoutTop(el) {
+                let top = 0;
+                while (el) { top += el.offsetTop; el = el.offsetParent; }
+                return top;
+            }
+
+            function stickyBaslik() {
+                const navH = nav.offsetHeight;
+                const theadTop = layoutTop(table) - window.scrollY;
+                if (theadTop < navH) {
+                    thead.style.transform = 'translateY(' + (navH - theadTop) + 'px)';
+                    thead.style.zIndex = '20';
+                } else {
+                    thead.style.transform = '';
+                    thead.style.zIndex  = '';
+                }
+            }
+
+            window.addEventListener('scroll', stickyBaslik, { passive: true });
+        })();
+
+        // REHBER INLINE EDIT
+        document.getElementById('turGovde').addEventListener('click', function(e) {
+            const metin = e.target.closest('.rehber-metin');
+            if (!metin) return;
+
+            const hucre = metin.closest('.rehber-hucre');
+            const input = hucre.querySelector('.rehber-input');
+
+            metin.classList.add('hidden');
+            input.classList.remove('hidden');
+            input.focus();
+            input.select();
+        });
+
+        document.getElementById('turGovde').addEventListener('focusout', function(e) {
+            const input = e.target.closest('.rehber-input');
+            if (!input) return;
+            rehberKaydet(input);
+        });
+
+        document.getElementById('turGovde').addEventListener('keydown', function(e) {
+            const input = e.target.closest('.rehber-input');
+            if (!input) return;
+            if (e.key === 'Enter') rehberKaydet(input);
+            if (e.key === 'Escape') rehberIptal(input);
+        });
+
+        function rehberKaydet(input) {
+            const hucre = input.closest('.rehber-hucre');
+            const metin = hucre.querySelector('.rehber-metin');
+            const jt = hucre.dataset.jt;
+            const yeniDeger = input.value.trim();
+
+            fetch('/api/tur/' + encodeURIComponent(jt) + '/rehber', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ rehber: yeniDeger })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (yeniDeger) {
+                    metin.textContent = yeniDeger;
+                    metin.classList.remove('text-gray-300', 'italic');
+                } else {
+                    metin.textContent = 'Ekle...';
+                    metin.classList.add('text-gray-300', 'italic');
+                }
+                input.classList.add('hidden');
+                metin.classList.remove('hidden');
+            });
+        }
+
+        function rehberIptal(input) {
+            const hucre = input.closest('.rehber-hucre');
+            const metin = hucre.querySelector('.rehber-metin');
+            input.value = metin.textContent === 'Ekle...' ? '' : metin.textContent;
+            input.classList.add('hidden');
+            metin.classList.remove('hidden');
+        }
     </script>
 
 </body>

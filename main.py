@@ -1,9 +1,12 @@
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import create_engine, text
 from apscheduler.schedulers.background import BackgroundScheduler
 from contextlib import asynccontextmanager
+from datetime import datetime
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
@@ -36,6 +39,7 @@ def tablo_olustur():
             satilan INTEGER,
             kalan INTEGER,
             guncel_fiyat VARCHAR(50),
+            rehber VARCHAR(200) DEFAULT '',
             guncelleme_zamani TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """
@@ -54,6 +58,9 @@ def tablo_olustur():
     with db_engine.connect() as conn:
         conn.execute(text(sql_turlar))
         conn.execute(text(sql_kullanicilar))
+        conn.execute(text("""
+            ALTER TABLE turlar ADD COLUMN IF NOT EXISTS rehber VARCHAR(200) DEFAULT ''
+        """))
         # Ilk kullaniciyi ekle (eger yoksa)
         conn.execute(text("""
             INSERT INTO kullanicilar (kullanici_adi, ad_soyad, pozisyon, email, rol)
@@ -148,6 +155,50 @@ def aktif_kullaniciyi_getir():
         return None
 
 
+def satis_aleri_getir():
+    with db_engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT jt_kodu, tur_adi, kalkis_tarihi, pax, satilan FROM turlar WHERE pax > 0"
+        )).fetchall()
+
+    today = datetime.today()
+    alerts = []
+
+    for row in rows:
+        try:
+            for fmt in ("%d-%m-%Y", "%d.%m.%Y"):
+                try:
+                    tour_date = datetime.strptime(row[2], fmt)
+                    break
+                except ValueError:
+                    continue
+            else:
+                continue
+
+            days_left = (tour_date - today).days
+            if not (35 <= days_left <= 60):
+                continue
+
+            pax = row[3] or 0
+            satilan = row[4] or 0
+            if pax == 0 or satilan / pax >= 0.5:
+                continue
+
+            alerts.append({
+                "jt_kodu": row[0],
+                "tur_adi": row[1],
+                "kalkis": row[2],
+                "days_left": days_left,
+                "pax": pax,
+                "satilan": satilan,
+                "doluluk": round(satilan / pax * 100, 1),
+            })
+        except Exception:
+            continue
+
+    return sorted(alerts, key=lambda x: x["days_left"])
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     tablo_olustur()
@@ -164,10 +215,25 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 
+class RehberGuncelle(BaseModel):
+    rehber: str
+
+
+@app.patch("/api/tur/{jt_kodu}/rehber")
+def rehber_guncelle(jt_kodu: str, body: RehberGuncelle):
+    with db_engine.connect() as conn:
+        conn.execute(
+            text("UPDATE turlar SET rehber = :rehber WHERE jt_kodu = :jt"),
+            {"rehber": body.rehber.strip(), "jt": jt_kodu}
+        )
+        conn.commit()
+    return JSONResponse({"ok": True, "rehber": body.rehber.strip()})
+
+
 @app.get("/")
 def anasayfa(request: Request):
     select_sql = """
-        SELECT jt_kodu, tur_adi, kalkis_tarihi, havayolu, pax, satilan, kalan, guncel_fiyat
+        SELECT jt_kodu, tur_adi, kalkis_tarihi, havayolu, pax, satilan, kalan, guncel_fiyat, rehber
         FROM turlar ORDER BY id DESC
     """
     with db_engine.connect() as conn:
@@ -181,6 +247,7 @@ def anasayfa(request: Request):
     bol = sum(1 for t in turlar if t[6] is not None and t[6] > 10)
 
     kullanici = aktif_kullaniciyi_getir()
+    satis_alertleri = satis_aleri_getir()
 
     return templates.TemplateResponse(
         request=request,
@@ -192,6 +259,7 @@ def anasayfa(request: Request):
             "kritik": kritik,
             "orta": orta,
             "bol": bol,
-            "kullanici": kullanici
+            "kullanici": kullanici,
+            "satis_alertleri": satis_alertleri,
         }
     )
