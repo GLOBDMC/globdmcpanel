@@ -86,6 +86,31 @@ def tablo_olustur():
     print("Tablolar hazir")
 
 
+def bitis_tarihi_hesapla(bitis_raw: str, tur_adi: str, kalkis: str) -> str:
+    """Sheet'ten gelen bitiş tarihini döndürür.
+    Boşsa tur adındaki gece sayısından hesaplar."""
+    import re as _re
+    from datetime import timedelta as _td
+
+    if bitis_raw:
+        return bitis_raw
+
+    # Tur adından gece sayısını çıkar: "7 Gece", "10gece", "14 GECE" vb.
+    m = _re.search(r'(\d+)\s*[Gg][Ee][Cc][Ee]', tur_adi)
+    if not m or not kalkis:
+        return ""
+
+    geceler = int(m.group(1))
+    for fmt in ("%d-%m-%Y", "%d.%m.%Y"):
+        try:
+            kalkis_dt = datetime.strptime(kalkis.strip(), fmt)
+            bitis_dt  = kalkis_dt + _td(days=geceler)
+            return bitis_dt.strftime(fmt)
+        except ValueError:
+            continue
+    return ""
+
+
 def sheets_den_postgresql_kopyala():
     client = sheets_baglan()
     sheet = client.open("TUR KONTENJANLARI").sheet1
@@ -96,16 +121,17 @@ def sheets_den_postgresql_kopyala():
     guncellenen = 0
 
     insert_sql = """
-        INSERT INTO turlar (jt_kodu, tur_adi, kalkis_tarihi, havayolu, pax, satilan, kalan, guncel_fiyat)
-        VALUES (:jt, :tur_adi, :kalkis, :havayolu, :pax, :satilan, :kalan, :fiyat)
+        INSERT INTO turlar (jt_kodu, tur_adi, kalkis_tarihi, bitis_tarihi, havayolu, pax, satilan, kalan, guncel_fiyat)
+        VALUES (:jt, :tur_adi, :kalkis, :bitis, :havayolu, :pax, :satilan, :kalan, :fiyat)
         ON CONFLICT (jt_kodu) DO UPDATE SET
-            tur_adi = EXCLUDED.tur_adi,
+            tur_adi       = EXCLUDED.tur_adi,
             kalkis_tarihi = EXCLUDED.kalkis_tarihi,
-            havayolu = EXCLUDED.havayolu,
-            pax = EXCLUDED.pax,
-            satilan = EXCLUDED.satilan,
-            kalan = EXCLUDED.kalan,
-            guncel_fiyat = EXCLUDED.guncel_fiyat,
+            bitis_tarihi  = EXCLUDED.bitis_tarihi,
+            havayolu      = EXCLUDED.havayolu,
+            pax           = EXCLUDED.pax,
+            satilan       = EXCLUDED.satilan,
+            kalan         = EXCLUDED.kalan,
+            guncel_fiyat  = EXCLUDED.guncel_fiyat,
             guncelleme_zamani = CURRENT_TIMESTAMP
         RETURNING (xmax = 0) AS yeni_mi
     """
@@ -117,9 +143,12 @@ def sheets_den_postgresql_kopyala():
             jt = satir[16].strip() if len(satir) > 16 else ""
             if not jt:
                 continue
-            tur_adi = satir[1] if len(satir) > 1 else ""
-            kalkis = satir[3] if len(satir) > 3 else ""
+            tur_adi  = satir[1] if len(satir) > 1 else ""
+            kalkis   = satir[3] if len(satir) > 3 else ""
             havayolu = satir[2] if len(satir) > 2 else ""
+            # I sütunu = index 8 → bitiş tarihi
+            bitis_raw = satir[8].strip() if len(satir) > 8 else ""
+            bitis = bitis_tarihi_hesapla(bitis_raw, tur_adi, kalkis)
             try:
                 pax = int(satir[13]) if satir[13].strip() else 0
             except:
@@ -135,7 +164,7 @@ def sheets_den_postgresql_kopyala():
             fiyat = satir[20].strip() if len(satir) > 20 else ""
 
             sonuc = conn.execute(text(insert_sql), {
-                "jt": jt, "tur_adi": tur_adi, "kalkis": kalkis,
+                "jt": jt, "tur_adi": tur_adi, "kalkis": kalkis, "bitis": bitis,
                 "havayolu": havayolu, "pax": pax, "satilan": satilan,
                 "kalan": kalan, "fiyat": fiyat
             })
