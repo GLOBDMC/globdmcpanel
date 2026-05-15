@@ -703,3 +703,38 @@ def vitrin_sync(request: Request):
         return JSONResponse({"ok": True, "mesaj": "Jolly Sonuc sync tamamlandi"})
     except Exception as e:
         return JSONResponse({"ok": False, "hata": str(e)}, status_code=500)
+
+
+@app.get("/api/vitrin-debug")
+def vitrin_debug(request: Request):
+    """Tarih format uyuşmazlığını tespit etmek için debug endpoint."""
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici:
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=401)
+    with db_engine.connect() as conn:
+        # jolly_sonuc tablosundan örnek
+        js_rows = conn.execute(text(
+            "SELECT grup_adi, kalkis_tarihi, vitrinde FROM jolly_sonuc LIMIT 10"
+        )).fetchall()
+        # turlar tablosundan örnek
+        t_rows = conn.execute(text(
+            "SELECT tur_adi, kalkis_tarihi FROM turlar LIMIT 10"
+        )).fetchall()
+        # JOIN sonucu kaç eşleşme var
+        match_count = conn.execute(text(
+            "SELECT COUNT(*) FROM turlar t "
+            "JOIN jolly_sonuc j ON LOWER(TRIM(t.tur_adi))=LOWER(TRIM(j.grup_adi)) "
+            "AND COALESCE(t.kalkis_tarihi,'')=COALESCE(j.kalkis_tarihi,'')"
+        )).scalar()
+        # jolly_sonuc toplam kayıt
+        js_total = conn.execute(text("SELECT COUNT(*) FROM jolly_sonuc")).scalar()
+    return JSONResponse({
+        "jolly_sonuc_toplam": js_total,
+        "join_eslesme_sayisi": match_count,
+        "jolly_sonuc_ornekler": [
+            {"grup_adi": r[0], "kalkis_tarihi": r[1], "vitrinde": r[2]} for r in js_rows
+        ],
+        "turlar_ornekler": [
+            {"tur_adi": r[0], "kalkis_tarihi": r[1]} for r in t_rows
+        ],
+    })
