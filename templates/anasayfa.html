@@ -85,6 +85,11 @@
                 class="sekme-btn flex-1 sm:flex-none whitespace-nowrap px-4 py-2.5 text-sm font-semibold rounded-t-lg border border-b-0 transition-colors bg-emerald-50 border-emerald-200 text-emerald-800">
                 Tur Kontenjanlari
             </button>
+            <button id="tab-gidecek" onclick="sekmeAc('gidecek')"
+                class="sekme-btn flex-1 sm:flex-none whitespace-nowrap px-4 py-2.5 text-sm font-semibold rounded-t-lg border border-b-0 transition-colors flex items-center justify-center gap-2 bg-gray-100 border-gray-200 text-gray-500 hover:text-glob-dark">
+                Gidecek Turlar
+                <span id="gidecek-badge" class="bg-blue-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">0</span>
+            </button>
             <button id="tab-satis" onclick="sekmeAc('satis')"
                 class="sekme-btn flex-1 sm:flex-none whitespace-nowrap px-4 py-2.5 text-sm font-semibold rounded-t-lg border border-b-0 transition-colors flex items-center justify-center gap-2
                 {% if satis_alertleri %}bg-amber-50 border-amber-400 text-amber-800 hover:bg-amber-100{% else %}bg-gray-100 border-gray-200 text-gray-500 hover:text-glob-dark{% endif %}">
@@ -311,6 +316,34 @@
             </div>
         </div>
 
+        <!-- SEKME: GİDECEK TURLAR -->
+        <div id="panel-gidecek" class="hidden">
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                <div class="flex justify-between items-center px-4 py-3 border-b border-gray-200 bg-gray-50">
+                    <div>
+                        <h2 class="text-base sm:text-lg font-semibold text-glob-dark">Gidecek Turlar</h2>
+                        <p class="text-xs text-gray-400 mt-0.5">Bugün ile 10 gün içinde kalkışı olan, en az 1 satılan turlar</p>
+                    </div>
+                    <span id="gidecekSayisi" class="text-sm text-gray-500">0 tur</span>
+                </div>
+                <div class="hidden md:block overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-glob-dark">
+                            <tr>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider">Tur İsmi</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider">Tur Tarihi</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider">Havayolu</th>
+                                <th class="px-4 py-3 text-right text-xs font-semibold text-white uppercase tracking-wider">Satılan</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider">Rehber</th>
+                            </tr>
+                        </thead>
+                        <tbody id="gidecekGovde" class="divide-y divide-gray-100"></tbody>
+                    </table>
+                </div>
+                <div class="md:hidden divide-y divide-gray-100" id="gidecekKartlar"></div>
+            </div>
+        </div>
+
     </main>
 
     <!-- ADMİN KULLANICI PANELİ -->
@@ -366,7 +399,7 @@
         }
 
         function sekmeAc(sekme) {
-            ['kontenjan', 'satis'].forEach(function(s) {
+            ['kontenjan', 'gidecek', 'satis'].forEach(function(s) {
                 document.getElementById('panel-' + s).classList.toggle('hidden', s !== sekme);
                 const btn = document.getElementById('tab-' + s);
                 btn.className = btn.className.replace(/bg-\S+|text-\S+/g, '').trim();
@@ -376,6 +409,52 @@
                     btn.classList.add('bg-gray-100', 'text-gray-500');
                 }
             });
+        }
+
+        function gidecekFiltrele() {
+            const bugunD = new Date(); bugunD.setHours(0,0,0,0);
+            const sonD = new Date(bugunD); sonD.setDate(sonD.getDate() + 10);
+            const tbody = document.getElementById('gidecekGovde');
+            const kartlar = document.getElementById('gidecekKartlar');
+            tbody.innerHTML = ''; kartlar.innerHTML = '';
+            let sayac = 0;
+
+            document.querySelectorAll('.tur-satir').forEach(function(satir) {
+                const turTarihi = tarihParse(satir.dataset.tarih);
+                if (!turTarihi || turTarihi < bugunD || turTarihi > sonD) return;
+                const c = satir.cells;
+                const satilan = parseInt(c[5].textContent.trim()) || 0;
+                if (satilan < 1) return;
+                const rehber = c[8].querySelector('.rehber-metin') ? c[8].querySelector('.rehber-metin').textContent.trim() : '-';
+
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-gray-50 transition-colors';
+                tr.innerHTML = `
+                    <td class="px-4 py-3 text-sm text-gray-700">${c[1].textContent.trim()}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">${c[2].textContent.trim()}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">${c[3].textContent.trim()}</td>
+                    <td class="px-4 py-3 text-sm font-semibold text-glob-dark text-right">${satilan}</td>
+                    <td class="px-4 py-3 text-sm text-gray-500 italic">${rehber === 'Ekle...' ? '-' : rehber}</td>`;
+                tbody.appendChild(tr);
+
+                const kart = document.createElement('div');
+                kart.className = 'p-4';
+                kart.innerHTML = `
+                    <div class="flex justify-between items-start mb-1">
+                        <p class="text-sm font-medium text-gray-800">${c[1].textContent.trim()}</p>
+                        <span class="text-sm font-bold text-glob-dark ml-2">${satilan} satılan</span>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2 text-xs text-gray-500 mt-2">
+                        <div><span class="font-medium text-gray-700">${c[2].textContent.trim()}</span><br>Tarih</div>
+                        <div><span class="font-medium text-gray-700">${c[3].textContent.trim()}</span><br>Havayolu</div>
+                        <div><span class="font-medium text-gray-700">${rehber === 'Ekle...' ? '-' : rehber}</span><br>Rehber</div>
+                    </div>`;
+                kartlar.appendChild(kart);
+                sayac++;
+            });
+
+            document.getElementById('gidecekSayisi').textContent = sayac + ' tur';
+            document.getElementById('gidecek-badge').textContent = sayac;
         }
 
         const aramaInput = document.getElementById('aramaInput');
@@ -471,6 +550,7 @@
         const bugun = new Date().toISOString().split('T')[0];
         tarihBaslangic.value = bugun;
         filtrele();
+        gidecekFiltrele();
 
 
         aramaInput.addEventListener('input', filtrele);
