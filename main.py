@@ -435,29 +435,26 @@ def dashboard(request: Request):
         return RedirectResponse("/login", status_code=302)
 
     turlar = tur_verileri_getir()
-    toplam = len(turlar)
-    kritik = sum(1 for t in turlar if t[6] is not None and t[6] <= 3)
-    orta   = sum(1 for t in turlar if t[6] is not None and 3 < t[6] <= 10)
-    bol    = sum(1 for t in turlar if t[6] is not None and t[6] > 10)
+    toplam     = len(turlar)
+    son_yerler = sum(1 for t in turlar if t[6] is not None and 1 <= t[6] <= 5)
+    yakin_dolu = sum(1 for t in turlar if t[6] is not None and 6 <= t[6] <= 10)
+    bol        = sum(1 for t in turlar if t[6] is not None and t[6] > 10)
 
     satis_alertleri = satis_aleri_getir()
 
     # Havayolu bazlı özet
     from collections import defaultdict
-    hy_sayi   = defaultdict(int)
-    hy_kritik = defaultdict(int)
+    hy_sayi    = defaultdict(int)
+    hy_sonyerler = defaultdict(int)
     for t in turlar:
         hy = t[3] or "Diğer"
         hy_sayi[hy] += 1
-        if t[6] is not None and t[6] <= 3:
-            hy_kritik[hy] += 1
+        if t[6] is not None and 1 <= t[6] <= 5:
+            hy_sonyerler[hy] += 1
     havayolu_ozet = sorted(
-        [(hy, hy_sayi[hy], hy_kritik[hy]) for hy in hy_sayi],
+        [(hy, hy_sayi[hy], hy_sonyerler[hy]) for hy in hy_sayi],
         key=lambda x: x[1], reverse=True
     )[:8]
-
-    # Kritik turlar (dashboard için)
-    kritik_turlar = [t for t in turlar if t[6] is not None and t[6] <= 3][:6]
 
     bugun = datetime.today().strftime("%d %B %Y")
 
@@ -468,14 +465,13 @@ def dashboard(request: Request):
             "kullanici": kullanici,
             "aktif_sayfa": "dashboard",
             "toplam": toplam,
-            "kritik": kritik,
-            "orta": orta,
+            "son_yerler": son_yerler,
+            "yakin_dolu": yakin_dolu,
             "bol": bol,
             "satis_alertleri": satis_alertleri,
             "satis_alert_sayisi": len(satis_alertleri),
             "havayolu_ozet": havayolu_ozet,
-            "kritik_turlar": kritik_turlar,
-            "kritik_sayi": kritik,
+            "kritik_sayi": son_yerler,
             "bugun": bugun,
         }
     )
@@ -489,8 +485,8 @@ def turlar_sayfasi(request: Request):
 
     turlar = tur_verileri_getir()
     havayollari = sorted(set([t[3] for t in turlar if t[3]]))
-    toplam = len(turlar)
-    kritik = sum(1 for t in turlar if t[6] is not None and t[6] <= 3)
+    toplam     = len(turlar)
+    son_yerler = sum(1 for t in turlar if t[6] is not None and 1 <= t[6] <= 5)
     satis_alertleri = satis_aleri_getir()
 
     return templates.TemplateResponse(
@@ -502,9 +498,8 @@ def turlar_sayfasi(request: Request):
             "turlar": turlar,
             "havayollari": havayollari,
             "toplam": toplam,
-            "kritik": kritik,
             "satis_alertleri": satis_alertleri,
-            "kritik_sayi": kritik,
+            "kritik_sayi": son_yerler,
         }
     )
 

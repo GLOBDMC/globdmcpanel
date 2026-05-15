@@ -32,13 +32,14 @@
         border-bottom: 1px solid rgba(255,255,255,0.06);
         white-space: nowrap;
         position: sticky;
-        top: 0;
+        top: 56px;
         z-index: 10;
         cursor: pointer;
         user-select: none;
     }
     .data-table thead th:hover { color: #94A3B8; }
     .data-table thead th.sorted { color: #60A5FA; }
+    .data-table thead th.text-right { text-align: right; }
     .data-table tbody tr {
         border-bottom: 1px solid rgba(255,255,255,0.04);
         transition: background 0.1s;
@@ -59,9 +60,10 @@
         border-top: 1px solid rgba(255,255,255,0.1);
     }
 
-    .badge-kritik { color: #F87171; font-weight: 700; }
-    .badge-orta   { color: #FBBF24; font-weight: 600; }
-    .badge-bol    { color: #34D399; font-weight: 600; }
+    .badge-son-yer  { color: #FBBF24; font-weight: 700; }
+    .badge-yakin    { color: #FDE047; font-weight: 600; }
+    .badge-bol      { color: #34D399; font-weight: 600; }
+    .badge-dolu     { color: #475569; font-weight: 400; }
 
     .rehber-metin { cursor: pointer; transition: color 0.1s; }
     .rehber-metin:hover { color: #60A5FA; }
@@ -157,7 +159,7 @@
 
     <!-- Table -->
     <div class="card" style="padding: 0; overflow: hidden;">
-        <div class="overflow-x-auto">
+        <div style="overflow-x: auto; overflow-y: clip;">
             <table class="data-table" id="turTablosu">
                 <thead class="sticky-table-head">
                     <tr>
@@ -182,9 +184,9 @@
                         <td class="text-right">{{ tur[4] }}</td>
                         <td class="text-right">{{ tur[5] }}</td>
                         <td class="text-right">
-                            {% if tur[6] is none %}<span class="text-slate-600">—</span>
-                            {% elif tur[6] <= 3 %}<span class="badge-kritik">{{ tur[6] }}</span>
-                            {% elif tur[6] <= 10 %}<span class="badge-orta">{{ tur[6] }}</span>
+                            {% if tur[6] is none or tur[6] == 0 %}<span class="badge-dolu">—</span>
+                            {% elif tur[6] <= 5 %}<span class="badge-son-yer">{{ tur[6] }}</span>
+                            {% elif tur[6] <= 10 %}<span class="badge-yakin">{{ tur[6] }}</span>
                             {% else %}<span class="badge-bol">{{ tur[6] }}</span>
                             {% endif %}
                         </td>
