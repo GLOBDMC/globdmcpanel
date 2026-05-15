@@ -58,13 +58,13 @@
         color: #CBD5E1;
         white-space: nowrap;
     }
-    .data-table tbody td.td-right { text-align: right; }
+    .data-table tbody td.td-right  { text-align: right !important; }
+    .data-table tfoot td.td-right  { text-align: right !important; }
     .data-table tfoot td {
         background: #111827;
         padding: 10px 14px;
         font-size: 13px;
         font-weight: 600;
-        color: #F1F5F9;
         border-top: 1px solid rgba(255,255,255,0.1);
     }
 
@@ -212,12 +212,12 @@
                 </tbody>
                 <tfoot>
                     <tr>
-                        <td colspan="5" class="text-slate-400 text-xs uppercase tracking-wider font-semibold">Toplam</td>
-                        <td id="toplamPax" class="td-right text-white"></td>
-                        <td id="toplamSatilan" class="td-right text-white"></td>
-                        <td id="toplamKalan" class="td-right text-white"></td>
-                        <td id="toplamOran" class="td-right text-green-400"></td>
-                        <td id="toplamKalanOran" class="td-right text-red-400"></td>
+                        <td colspan="5" style="color:#475569; font-size:11px; text-transform:uppercase; letter-spacing:.07em;">Toplam</td>
+                        <td id="toplamPax"       class="td-right" style="color:#F1F5F9;"></td>
+                        <td id="toplamSatilan"   class="td-right" style="color:#F1F5F9;"></td>
+                        <td id="toplamKalan"     class="td-right" style="color:#F1F5F9;"></td>
+                        <td id="toplamOran"      class="td-right" style="color:#34D399;"></td>
+                        <td id="toplamKalanOran" class="td-right" style="color:#F87171;"></td>
                     </tr>
                 </tfoot>
             </table>
