@@ -30,12 +30,18 @@
                     <p class="text-xs text-gray-400">Tour Management</p>
                 </div>
             </div>
-            <div class="flex items-center space-x-4">
+            <div class="flex items-center space-x-3">
+                {% if kullanici.rol == 'admin' %}
+                <button onclick="adminPanelAc()" class="text-xs text-gray-300 hover:text-white border border-gray-600 hover:border-gray-400 px-3 py-1.5 rounded-lg transition-colors">
+                    Kullanıcılar
+                </button>
+                {% endif %}
                 <div class="text-right">
                     <p class="text-sm text-white font-medium">{{ kullanici.ad_soyad }}</p>
                     <p class="text-xs text-gray-400">{{ kullanici.pozisyon }}</p>
                 </div>
                 <div class="w-9 h-9 bg-glob-accent rounded-full flex items-center justify-center text-white text-sm font-medium">{{ kullanici.bas_harfler }}</div>
+                <a href="/logout" class="text-xs text-gray-400 hover:text-white transition-colors ml-1">Çıkış</a>
             </div>
         </div>
     </nav>
@@ -224,6 +230,52 @@
         </div>
 
     </main>
+
+    <!-- ADMİN KULLANICI PANELİ -->
+    <div id="adminModal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+            <div class="flex justify-between items-center px-6 py-4 border-b border-gray-200">
+                <h2 class="text-lg font-bold text-glob-dark">Kullanıcı Yönetimi</h2>
+                <button onclick="adminPanelKapat()" class="text-gray-400 hover:text-gray-600 text-xl font-bold">✕</button>
+            </div>
+
+            <!-- Kullanıcı Listesi -->
+            <div class="overflow-y-auto flex-1 px-6 py-4">
+                <table class="min-w-full text-sm" id="kullaniciTablosu">
+                    <thead>
+                        <tr class="text-xs text-gray-500 uppercase border-b">
+                            <th class="text-left py-2">Ad Soyad</th>
+                            <th class="text-left py-2">Kullanıcı Adı</th>
+                            <th class="text-left py-2">Ünvan</th>
+                            <th class="text-left py-2">Rol</th>
+                            <th class="py-2"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="kullaniciListesi"></tbody>
+                </table>
+            </div>
+
+            <!-- Yeni Kullanıcı Ekle -->
+            <div class="border-t border-gray-200 px-6 py-4 bg-gray-50 rounded-b-xl">
+                <p class="text-xs font-semibold text-gray-600 uppercase mb-3">Yeni Kullanıcı Ekle</p>
+                <div class="grid grid-cols-2 gap-3">
+                    <input id="yeniAd" type="text" placeholder="Ad Soyad" class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-glob-dark"/>
+                    <input id="yeniKullanici" type="text" placeholder="Kullanıcı Adı" class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-glob-dark"/>
+                    <input id="yeniUnvan" type="text" placeholder="Ünvan" class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-glob-dark"/>
+                    <input id="yeniEmail" type="email" placeholder="E-posta" class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-glob-dark"/>
+                    <input id="yeniSifre" type="password" placeholder="Şifre" class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-glob-dark"/>
+                    <select id="yeniRol" class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-glob-dark">
+                        <option value="kullanici">Kullanıcı</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                </div>
+                <button onclick="kullaniciEkle()" class="mt-3 bg-glob-dark text-white text-sm font-semibold px-5 py-2 rounded-lg hover:bg-glob-darker transition-colors">
+                    Ekle
+                </button>
+                <span id="eklemesaj" class="ml-3 text-sm"></span>
+            </div>
+        </div>
+    </div>
 
     <script>
         function sekmeAc(sekme) {
@@ -453,6 +505,176 @@
             input.value = metin.textContent === 'Ekle...' ? '' : metin.textContent;
             input.classList.add('hidden');
             metin.classList.remove('hidden');
+        }
+
+        // ── ADMİN PANEL ───────────────────────────────────────────────────────────
+
+        function adminPanelAc() {
+            document.getElementById('adminModal').classList.remove('hidden');
+            kullanicilariYukle();
+        }
+
+        function adminPanelKapat() {
+            document.getElementById('adminModal').classList.add('hidden');
+            document.getElementById('eklemesaj').textContent = '';
+        }
+
+        // Modal dışına tıklayınca kapat
+        document.getElementById('adminModal').addEventListener('click', function(e) {
+            if (e.target === this) adminPanelKapat();
+        });
+
+        function kullanicilariYukle() {
+            const liste = document.getElementById('kullaniciListesi');
+            liste.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-gray-400 text-xs">Yükleniyor...</td></tr>';
+            fetch('/api/admin/kullanicilar')
+                .then(r => r.json())
+                .then(kullanicilar => {
+                    liste.innerHTML = '';
+                    kullanicilar.forEach(k => {
+                        const tr = document.createElement('tr');
+                        tr.className = 'border-b border-gray-100 hover:bg-gray-50';
+                        tr.dataset.uid = k.id;
+                        tr.innerHTML = `
+                            <td class="py-2 pr-3">
+                                <span class="ad-metin text-sm text-gray-800 font-medium">${k.ad_soyad}</span>
+                            </td>
+                            <td class="py-2 pr-3 text-sm text-gray-500">${k.kullanici_adi}</td>
+                            <td class="py-2 pr-3">
+                                <span class="unvan-metin text-sm text-gray-500">${k.pozisyon || '-'}</span>
+                            </td>
+                            <td class="py-2 pr-3">
+                                <span class="rol-badge text-xs px-2 py-0.5 rounded-full font-semibold ${k.rol === 'admin' ? 'bg-glob-dark text-white' : 'bg-gray-100 text-gray-600'}">${k.rol}</span>
+                            </td>
+                            <td class="py-2 text-right space-x-1 whitespace-nowrap">
+                                ${k.aktif ? `
+                                <button onclick="kullaniciDuzenle(${k.id})" title="Düzenle"
+                                    class="text-xs text-blue-600 hover:text-blue-800 border border-blue-200 hover:border-blue-400 px-2 py-0.5 rounded transition-colors">Düzenle</button>
+                                <button onclick="sifreSifirla(${k.id})" title="Şifre"
+                                    class="text-xs text-amber-600 hover:text-amber-800 border border-amber-200 hover:border-amber-400 px-2 py-0.5 rounded transition-colors">Şifre</button>
+                                <button onclick="kullaniciSil(${k.id}, '${k.ad_soyad}')" title="Sil"
+                                    class="text-xs text-red-500 hover:text-red-700 border border-red-200 hover:border-red-400 px-2 py-0.5 rounded transition-colors">Sil</button>
+                                ` : `<span class="text-xs text-gray-400 italic">Pasif</span>`}
+                            </td>`;
+                        liste.appendChild(tr);
+                    });
+                })
+                .catch(() => {
+                    liste.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-red-400 text-xs">Yüklenemedi</td></tr>';
+                });
+        }
+
+        function kullaniciEkle() {
+            const ad = document.getElementById('yeniAd').value.trim();
+            const kullanici = document.getElementById('yeniKullanici').value.trim();
+            const unvan = document.getElementById('yeniUnvan').value.trim();
+            const email = document.getElementById('yeniEmail').value.trim();
+            const sifre = document.getElementById('yeniSifre').value;
+            const rol = document.getElementById('yeniRol').value;
+            const mesaj = document.getElementById('eklemesaj');
+
+            if (!ad || !kullanici || !sifre) {
+                mesaj.textContent = 'Ad soyad, kullanıcı adı ve şifre zorunlu.';
+                mesaj.className = 'ml-3 text-sm text-red-500';
+                return;
+            }
+
+            const form = new FormData();
+            form.append('kullanici_adi', kullanici);
+            form.append('ad_soyad', ad);
+            form.append('pozisyon', unvan);
+            form.append('email', email);
+            form.append('rol', rol);
+            form.append('sifre', sifre);
+
+            fetch('/api/admin/kullanicilar/ekle', { method: 'POST', body: form })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.ok) {
+                        mesaj.textContent = '✓ Kullanıcı eklendi.';
+                        mesaj.className = 'ml-3 text-sm text-green-600';
+                        ['yeniAd','yeniKullanici','yeniUnvan','yeniEmail','yeniSifre'].forEach(id => document.getElementById(id).value = '');
+                        document.getElementById('yeniRol').value = 'kullanici';
+                        kullanicilariYukle();
+                        setTimeout(() => { mesaj.textContent = ''; }, 3000);
+                    } else {
+                        mesaj.textContent = data.hata || 'Hata oluştu.';
+                        mesaj.className = 'ml-3 text-sm text-red-500';
+                    }
+                })
+                .catch(() => { mesaj.textContent = 'Sunucu hatası.'; mesaj.className = 'ml-3 text-sm text-red-500'; });
+        }
+
+        function kullaniciDuzenle(uid) {
+            const tr = document.querySelector(`tr[data-uid="${uid}"]`);
+            const adEl = tr.querySelector('.ad-metin');
+            const unvanEl = tr.querySelector('.unvan-metin');
+            const rolEl = tr.querySelector('.rol-badge');
+            const btns = tr.querySelector('td:last-child');
+
+            const mevcutAd = adEl.textContent;
+            const mevcutUnvan = unvanEl.textContent === '-' ? '' : unvanEl.textContent;
+            const mevcutRol = rolEl.textContent;
+
+            adEl.outerHTML = `<input class="duzenle-ad border border-gray-300 rounded px-2 py-0.5 text-sm w-32 focus:outline-none focus:ring-1 focus:ring-glob-dark" value="${mevcutAd}"/>`;
+            unvanEl.outerHTML = `<input class="duzenle-unvan border border-gray-300 rounded px-2 py-0.5 text-sm w-28 focus:outline-none focus:ring-1 focus:ring-glob-dark" value="${mevcutUnvan}"/>`;
+            rolEl.outerHTML = `<select class="duzenle-rol border border-gray-300 rounded px-1 py-0.5 text-xs focus:outline-none">
+                <option value="kullanici" ${mevcutRol==='kullanici'?'selected':''}>kullanici</option>
+                <option value="admin" ${mevcutRol==='admin'?'selected':''}>admin</option>
+            </select>`;
+
+            btns.innerHTML = `
+                <button onclick="kullaniciKaydet(${uid})"
+                    class="text-xs text-green-600 hover:text-green-800 border border-green-200 hover:border-green-400 px-2 py-0.5 rounded transition-colors">Kaydet</button>
+                <button onclick="kullanicilariYukle()"
+                    class="text-xs text-gray-500 hover:text-gray-700 border border-gray-200 hover:border-gray-400 px-2 py-0.5 rounded transition-colors ml-1">İptal</button>`;
+        }
+
+        function kullaniciKaydet(uid) {
+            const tr = document.querySelector(`tr[data-uid="${uid}"]`);
+            const ad = tr.querySelector('.duzenle-ad').value.trim();
+            const unvan = tr.querySelector('.duzenle-unvan').value.trim();
+            const rol = tr.querySelector('.duzenle-rol').value;
+
+            if (!ad) return;
+
+            const form = new FormData();
+            form.append('ad_soyad', ad);
+            form.append('pozisyon', unvan);
+            form.append('email', '');
+            form.append('rol', rol);
+
+            fetch(`/api/admin/kullanicilar/${uid}/guncelle`, { method: 'POST', body: form })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.ok) kullanicilariYukle();
+                });
+        }
+
+        function sifreSifirla(uid) {
+            const yeni = prompt('Yeni şifre girin:');
+            if (!yeni || yeni.length < 4) return;
+            const form = new FormData();
+            form.append('yeni_sifre', yeni);
+            fetch(`/api/admin/kullanicilar/${uid}/sifre`, { method: 'POST', body: form })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.ok) {
+                        const mesaj = document.getElementById('eklemesaj');
+                        mesaj.textContent = '✓ Şifre güncellendi.';
+                        mesaj.className = 'ml-3 text-sm text-green-600';
+                        setTimeout(() => { mesaj.textContent = ''; }, 3000);
+                    }
+                });
+        }
+
+        function kullaniciSil(uid, ad) {
+            if (!confirm(`"${ad}" kullanıcısını devre dışı bırakmak istediğinizden emin misiniz?`)) return;
+            fetch(`/api/admin/kullanicilar/${uid}/sil`, { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.ok) kullanicilariYukle();
+                });
         }
     </script>
 

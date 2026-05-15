@@ -1,6 +1,6 @@
 import os
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request, Form
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -8,8 +8,12 @@ from sqlalchemy import create_engine, text
 from apscheduler.schedulers.background import BackgroundScheduler
 from contextlib import asynccontextmanager
 from datetime import datetime
+from starlette.middleware.sessions import SessionMiddleware
+from passlib.context import CryptContext
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+
+pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 db_engine = create_engine(
@@ -59,21 +63,23 @@ def tablo_olustur():
             email VARCHAR(100),
             rol VARCHAR(50) DEFAULT 'kullanici',
             aktif BOOLEAN DEFAULT TRUE,
+            sifre_hash VARCHAR(200),
             kayit_tarihi TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """
     with db_engine.connect() as conn:
         conn.execute(text(sql_turlar))
         conn.execute(text(sql_kullanicilar))
+        conn.execute(text("ALTER TABLE turlar ADD COLUMN IF NOT EXISTS rehber VARCHAR(200) DEFAULT ''"))
+        conn.execute(text("ALTER TABLE kullanicilar ADD COLUMN IF NOT EXISTS sifre_hash VARCHAR(200)"))
+        # Admin hesabı — ilk kurulumda varsayılan şifre: Glob2025!
+        default_hash = pwd.hash("Glob2025!")
         conn.execute(text("""
-            ALTER TABLE turlar ADD COLUMN IF NOT EXISTS rehber VARCHAR(200) DEFAULT ''
-        """))
-        # Ilk kullaniciyi ekle (eger yoksa)
-        conn.execute(text("""
-            INSERT INTO kullanicilar (kullanici_adi, ad_soyad, pozisyon, email, rol)
-            VALUES ('gokhan', 'Gokhan Kaya', 'Cruise Operation Manager', 'gokhan.kaya@globdmc.com', 'admin')
-            ON CONFLICT (kullanici_adi) DO NOTHING
-        """))
+            INSERT INTO kullanicilar (kullanici_adi, ad_soyad, pozisyon, email, rol, sifre_hash)
+            VALUES ('gokhan', 'Gokhan Kaya', 'Cruise Operation Manager', 'gokhan.kaya@globdmc.com', 'admin', :h)
+            ON CONFLICT (kullanici_adi) DO UPDATE SET
+                sifre_hash = CASE WHEN kullanicilar.sifre_hash IS NULL THEN :h ELSE kullanicilar.sifre_hash END
+        """), {"h": default_hash})
         conn.commit()
     print("Tablolar hazir")
 
@@ -140,14 +146,12 @@ def sheets_den_postgresql_kopyala():
     print(f"Eklenen: {eklenen}, Guncellenen: {guncellenen}")
 
 
-def aktif_kullaniciyi_getir():
-    """Su an icin sabit kullanici (login eklenince degisecek)."""
+def kullanici_getir(kullanici_adi: str):
     with db_engine.connect() as conn:
-        sonuc = conn.execute(text("""
-            SELECT kullanici_adi, ad_soyad, pozisyon, email, rol
-            FROM kullanicilar WHERE kullanici_adi = 'gokhan' LIMIT 1
-        """))
-        row = sonuc.fetchone()
+        row = conn.execute(text("""
+            SELECT kullanici_adi, ad_soyad, pozisyon, email, rol, sifre_hash
+            FROM kullanicilar WHERE kullanici_adi = :k AND aktif = TRUE LIMIT 1
+        """), {"k": kullanici_adi}).fetchone()
         if row:
             ad = row[1]
             bas_harfler = ''.join([p[0].upper() for p in ad.split() if p])[:2]
@@ -157,9 +161,17 @@ def aktif_kullaniciyi_getir():
                 "pozisyon": row[2],
                 "email": row[3],
                 "rol": row[4],
-                "bas_harfler": bas_harfler
+                "sifre_hash": row[5],
+                "bas_harfler": bas_harfler,
             }
+    return None
+
+
+def oturum_kullanicisi(request: Request):
+    k = request.session.get("kullanici_adi")
+    if not k:
         return None
+    return kullanici_getir(k)
 
 
 def satis_aleri_getir():
@@ -229,12 +241,105 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(SessionMiddleware, secret_key=os.environ.get("SECRET_KEY", "glob-gizli-anahtar-2025"))
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 
 class RehberGuncelle(BaseModel):
     rehber: str
+
+
+@app.get("/login")
+def login_sayfasi(request: Request):
+    if request.session.get("kullanici_adi"):
+        return RedirectResponse("/", status_code=302)
+    return templates.TemplateResponse("login.html", {"request": request, "hata": None})
+
+
+@app.post("/login")
+def login_yap(request: Request, kullanici_adi: str = Form(...), sifre: str = Form(...)):
+    k = kullanici_getir(kullanici_adi)
+    if not k or not k["sifre_hash"] or not pwd.verify(sifre, k["sifre_hash"]):
+        return templates.TemplateResponse("login.html", {"request": request, "hata": "Kullanıcı adı veya şifre hatalı"})
+    request.session["kullanici_adi"] = k["kullanici_adi"]
+    return RedirectResponse("/", status_code=302)
+
+
+@app.get("/logout")
+def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse("/login", status_code=302)
+
+
+# ── Admin: kullanıcı listesi ──────────────────────────────────────────────────
+@app.get("/api/admin/kullanicilar")
+def kullanicilar_listesi(request: Request):
+    k = oturum_kullanicisi(request)
+    if not k or k["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+    with db_engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT id, kullanici_adi, ad_soyad, pozisyon, email, rol, aktif FROM kullanicilar ORDER BY id"
+        )).fetchall()
+    return JSONResponse([dict(r._mapping) for r in rows])
+
+
+@app.post("/api/admin/kullanicilar/ekle")
+def kullanici_ekle(request: Request, kullanici_adi: str = Form(...), ad_soyad: str = Form(...),
+                   pozisyon: str = Form(""), email: str = Form(""), rol: str = Form("kullanici"),
+                   sifre: str = Form(...)):
+    k = oturum_kullanicisi(request)
+    if not k or k["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+    h = pwd.hash(sifre)
+    try:
+        with db_engine.connect() as conn:
+            conn.execute(text("""
+                INSERT INTO kullanicilar (kullanici_adi, ad_soyad, pozisyon, email, rol, sifre_hash)
+                VALUES (:k, :a, :p, :e, :r, :h)
+            """), {"k": kullanici_adi, "a": ad_soyad, "p": pozisyon, "e": email, "r": rol, "h": h})
+            conn.commit()
+        return JSONResponse({"ok": True})
+    except Exception as ex:
+        return JSONResponse({"hata": str(ex)}, status_code=400)
+
+
+@app.post("/api/admin/kullanicilar/{uid}/guncelle")
+def kullanici_guncelle(uid: int, request: Request, ad_soyad: str = Form(...),
+                       pozisyon: str = Form(""), email: str = Form(""), rol: str = Form("kullanici")):
+    k = oturum_kullanicisi(request)
+    if not k or k["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+    with db_engine.connect() as conn:
+        conn.execute(text("""
+            UPDATE kullanicilar SET ad_soyad=:a, pozisyon=:p, email=:e, rol=:r WHERE id=:id
+        """), {"a": ad_soyad, "p": pozisyon, "e": email, "r": rol, "id": uid})
+        conn.commit()
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/admin/kullanicilar/{uid}/sifre")
+def sifre_sifirla(uid: int, request: Request, yeni_sifre: str = Form(...)):
+    k = oturum_kullanicisi(request)
+    if not k or k["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+    with db_engine.connect() as conn:
+        conn.execute(text("UPDATE kullanicilar SET sifre_hash=:h WHERE id=:id"),
+                     {"h": pwd.hash(yeni_sifre), "id": uid})
+        conn.commit()
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/admin/kullanicilar/{uid}/sil")
+def kullanici_sil(uid: int, request: Request):
+    k = oturum_kullanicisi(request)
+    if not k or k["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+    with db_engine.connect() as conn:
+        conn.execute(text("UPDATE kullanicilar SET aktif=FALSE WHERE id=:id"), {"id": uid})
+        conn.commit()
+    return JSONResponse({"ok": True})
 
 
 @app.get("/api/debug")
@@ -270,6 +375,9 @@ def rehber_guncelle(jt_kodu: str, body: RehberGuncelle):
 
 @app.get("/")
 def anasayfa(request: Request):
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici:
+        return RedirectResponse("/login", status_code=302)
     select_sql = """
         SELECT jt_kodu, tur_adi, kalkis_tarihi, havayolu, pax, satilan, kalan, guncel_fiyat, rehber
         FROM turlar
@@ -290,7 +398,6 @@ def anasayfa(request: Request):
     orta = sum(1 for t in turlar if t[6] is not None and 3 < t[6] <= 10)
     bol = sum(1 for t in turlar if t[6] is not None and t[6] > 10)
 
-    kullanici = aktif_kullaniciyi_getir()
     satis_alertleri = satis_aleri_getir()
 
     return templates.TemplateResponse(
