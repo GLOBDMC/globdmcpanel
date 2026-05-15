@@ -2,6 +2,7 @@
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GlobDMC Panel</title>
     <link rel="icon" type="image/jpeg" href="/static/logo.jpg">
     <script src="https://cdn.tailwindcss.com"></script>
@@ -22,15 +23,24 @@
 <body class="bg-gray-50 min-h-screen">
 
     <nav class="bg-glob-dark shadow-lg sticky top-0 z-10">
-        <div class="max-w-7xl mx-auto px-6 py-3 flex justify-between items-center">
-            <div class="flex items-center space-x-3">
-                <img src="/static/logo.jpg" alt="GlobDMC" class="h-10 rounded-md"/>
-                <div class="border-l border-gray-500 pl-3">
-                    <p class="text-xs text-gray-300 uppercase tracking-wider">Operasyon Paneli</p>
-                    <p class="text-xs text-gray-400">Tour Management</p>
+        <div class="max-w-7xl mx-auto px-4 py-3">
+            <div class="flex justify-between items-center">
+                <div class="flex items-center space-x-3">
+                    <img src="/static/logo.jpg" alt="GlobDMC" class="h-9 rounded-md"/>
+                    <div class="border-l border-gray-500 pl-3">
+                        <p class="text-xs text-gray-300 uppercase tracking-wider">Operasyon Paneli</p>
+                        <p class="text-xs text-gray-400 hidden sm:block">Tour Management</p>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-3">
+                    <div class="hidden sm:block text-right">
+                        <p class="text-sm text-white font-medium">{{ kullanici.ad_soyad }}</p>
+                        <p class="text-xs text-gray-400">{{ kullanici.pozisyon }}</p>
+                    </div>
+                    <button id="kullaniciBtn" class="w-9 h-9 bg-glob-accent rounded-full flex items-center justify-center text-white text-sm font-medium flex-shrink-0" onclick="kullaniciMenuToggle()">{{ kullanici.bas_harfler }}</button>
                 </div>
             </div>
-            <div class="flex items-center space-x-3">
+            <div class="hidden sm:flex items-center space-x-3">
                 {% if kullanici.rol == 'admin' %}
                 <button onclick="adminPanelAc()" class="text-xs text-gray-300 hover:text-white border border-gray-600 hover:border-gray-400 px-3 py-1.5 rounded-lg transition-colors">
                     Kullanıcılar
@@ -43,12 +53,21 @@
                 <div class="w-9 h-9 bg-glob-accent rounded-full flex items-center justify-center text-white text-sm font-medium">{{ kullanici.bas_harfler }}</div>
                 <a href="/logout" class="text-xs text-gray-400 hover:text-white transition-colors ml-1">Çıkış</a>
             </div>
+            <!-- Mobil kullanıcı bilgisi dropdown -->
+            <div id="kullaniciMenu" class="hidden sm:hidden mt-2 pt-2 border-t border-glob-accent">
+                <p class="text-sm text-white font-medium">{{ kullanici.ad_soyad }}</p>
+                <p class="text-xs text-gray-400">{{ kullanici.pozisyon }}</p>
+                {% if kullanici.rol == 'admin' %}
+                <button onclick="adminPanelAc()" class="mt-2 text-xs text-gray-300 hover:text-white border border-gray-600 px-3 py-1.5 rounded-lg">Kullanıcılar</button>
+                {% endif %}
+                <a href="/logout" class="block mt-1 text-xs text-gray-400 hover:text-white">Çıkış</a>
+            </div>
         </div>
     </nav>
 
-    <main class="max-w-7xl mx-auto px-6 py-8">
+    <main class="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-8">
 
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
             <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
                 <p class="text-sm text-gray-500">Toplam Tur</p>
                 <p class="text-3xl font-bold text-glob-dark mt-1">{{ toplam }}</p>
@@ -68,13 +87,13 @@
         </div>
 
         <!-- SEKMELER -->
-        <div class="flex gap-1 mb-0">
+        <div class="flex gap-1 mb-0 overflow-x-auto">
             <button id="tab-kontenjan" onclick="sekmeAc('kontenjan')"
-                class="sekme-btn px-5 py-2.5 text-sm font-semibold rounded-t-lg border border-b-0 transition-colors bg-emerald-50 border-emerald-200 text-emerald-800">
+                class="sekme-btn flex-1 sm:flex-none whitespace-nowrap px-4 py-2.5 text-sm font-semibold rounded-t-lg border border-b-0 transition-colors bg-emerald-50 border-emerald-200 text-emerald-800">
                 Tur Kontenjanlari
             </button>
             <button id="tab-satis" onclick="sekmeAc('satis')"
-                class="sekme-btn px-5 py-2.5 text-sm font-semibold rounded-t-lg border border-b-0 transition-colors flex items-center gap-2
+                class="sekme-btn flex-1 sm:flex-none whitespace-nowrap px-4 py-2.5 text-sm font-semibold rounded-t-lg border border-b-0 transition-colors flex items-center justify-center gap-2
                 {% if satis_alertleri %}bg-amber-50 border-amber-400 text-amber-800 hover:bg-amber-100{% else %}bg-gray-100 border-gray-200 text-gray-500 hover:text-glob-dark{% endif %}">
                 Kritik Satış Uyarısı
                 {% if satis_alertleri %}
@@ -86,8 +105,8 @@
         <!-- SEKME 1: TUR KONTENJANLARI -->
         <div id="panel-kontenjan">
             <div class="bg-white rounded-lg rounded-tl-none shadow-sm border border-gray-200 p-5 mb-4">
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div class="md:col-span-3">
+                <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                    <div class="sm:col-span-2 md:col-span-3">
                         <label class="block text-xs font-medium text-gray-600 mb-1">Arama</label>
                         <input type="text" id="aramaInput" placeholder="Tur adi, JT kodu, havayolu..." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-glob-dark"/>
                     </div>
@@ -123,11 +142,13 @@
             </div>
 
             <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                <div class="flex justify-between items-center px-5 py-3 border-b border-gray-200 bg-gray-50">
-                    <h2 class="text-lg font-semibold text-glob-dark">Tur Kontenjanlari</h2>
+                <div class="flex justify-between items-center px-4 py-3 border-b border-gray-200 bg-gray-50">
+                    <h2 class="text-base sm:text-lg font-semibold text-glob-dark">Tur Kontenjanlari</h2>
                     <span id="sonucSayisi" class="text-sm text-gray-500">{{ toplam }} tur</span>
                 </div>
-                <div class="overflow-x-auto">
+
+                <!-- MASAÜSTÜ TABLO -->
+                <div class="hidden md:block overflow-x-auto">
                     <table class="min-w-full divide-y divide-gray-200" id="turTablosu">
                         <thead class="bg-glob-dark" id="turBaslik">
                             <tr>
@@ -171,7 +192,6 @@
                         <tfoot class="bg-glob-dark border-t-2 border-glob-accent">
                             <tr>
                                 <td colspan="4" class="px-4 py-3 text-xs font-semibold text-gray-300 uppercase tracking-wider">Toplam</td>
-
                                 <td id="toplamPax" class="px-4 py-3 text-sm font-bold text-white text-right"></td>
                                 <td id="toplamSatilan" class="px-4 py-3 text-sm font-bold text-white text-right"></td>
                                 <td id="toplamKalan" class="px-4 py-3 text-sm font-bold text-white text-right"></td>
@@ -181,21 +201,68 @@
                         </tfoot>
                     </table>
                 </div>
+
+                <!-- MOBİL KART GÖRÜNÜMÜ -->
+                <div class="md:hidden divide-y divide-gray-100" id="turKartlar">
+                    {% for tur in turlar %}
+                    <div class="tur-kart p-4" data-havayolu="{{ tur[3] }}" data-kalan="{{ tur[6] if tur[6] is not none else 0 }}" data-tarih="{{ tur[2] }}">
+                        <div class="flex justify-between items-start mb-2">
+                            <div>
+                                <span class="text-xs font-bold text-glob-dark bg-gray-100 px-2 py-0.5 rounded">{{ tur[0] }}</span>
+                                <p class="text-sm font-medium text-gray-800 mt-1">{{ tur[1] }}</p>
+                            </div>
+                            <div class="text-right flex-shrink-0 ml-2">
+                                {% if tur[6] is none %}
+                                <span class="text-lg font-bold text-gray-400">-</span>
+                                {% elif tur[6] <= 3 %}
+                                <span class="text-lg font-bold text-red-600">{{ tur[6] }}</span>
+                                {% elif tur[6] <= 10 %}
+                                <span class="text-lg font-bold text-amber-600">{{ tur[6] }}</span>
+                                {% else %}
+                                <span class="text-lg font-bold text-green-600">{{ tur[6] }}</span>
+                                {% endif %}
+                                <p class="text-xs text-gray-400">kalan</p>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-3 gap-2 text-xs text-gray-500 mb-2">
+                            <div><span class="font-medium text-gray-700">{{ tur[2] }}</span><br>Tarih</div>
+                            <div><span class="font-medium text-gray-700">{{ tur[3] }}</span><br>Havayolu</div>
+                            <div><span class="font-medium text-gray-700">{{ tur[7] or '-' }}</span><br>Fiyat</div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 text-xs text-gray-500 mb-2">
+                            <div><span class="font-medium text-gray-700">{{ tur[4] }}</span> kontenjan / <span class="font-medium text-gray-700">{{ tur[5] }}</span> satılan</div>
+                        </div>
+                        <div class="rehber-hucre" data-jt="{{ tur[0] }}">
+                            <span class="rehber-metin text-xs cursor-pointer hover:text-glob-dark {% if not tur[8] %}text-gray-400 italic{% endif %}">
+                                Rehber: {{ tur[8] or 'Ekle...' }}
+                            </span>
+                            <input type="text" class="rehber-input hidden border border-glob-dark rounded px-2 py-1 text-sm w-full focus:outline-none focus:ring-1 focus:ring-glob-dark" value="{{ tur[8] or '' }}" placeholder="Rehber adı..."/>
+                        </div>
+                    </div>
+                    {% endfor %}
+                    <!-- Mobil toplam -->
+                    <div class="bg-glob-dark px-4 py-3 grid grid-cols-3 gap-2 text-center">
+                        <div><p id="mToplamPax" class="text-white font-bold text-sm"></p><p class="text-gray-400 text-xs">Kontenjan</p></div>
+                        <div><p id="mToplamSatilan" class="text-white font-bold text-sm"></p><p class="text-gray-400 text-xs">Satılan</p></div>
+                        <div><p id="mToplamKalan" class="text-white font-bold text-sm"></p><p class="text-gray-400 text-xs">Kalan</p></div>
+                    </div>
+                </div>
             </div>
         </div>
 
         <!-- SEKME 2: KRİTİK SATIS UYARISI -->
         <div id="panel-satis" class="hidden">
             <div class="bg-white rounded-lg rounded-tl-none shadow-sm border border-gray-200 overflow-hidden">
-                <div class="flex justify-between items-center px-5 py-3 border-b border-gray-200 bg-gray-50">
+                <div class="flex justify-between items-center px-4 py-3 border-b border-gray-200 bg-gray-50">
                     <div>
-                        <h2 class="text-lg font-semibold text-glob-dark">Kritik Satis Uyarisi</h2>
+                        <h2 class="text-base sm:text-lg font-semibold text-glob-dark">Kritik Satis Uyarisi</h2>
                         <p class="text-xs text-gray-400 mt-0.5">35–60 gün içinde kalkışı olan, doluluk %50 altındaki turlar</p>
                     </div>
                     <span class="text-sm text-gray-500">{{ satis_alertleri|length }} tur</span>
                 </div>
                 {% if satis_alertleri %}
-                <div class="overflow-x-auto">
+                <!-- Masaüstü tablo -->
+                <div class="hidden md:block overflow-x-auto">
                     <table class="min-w-full divide-y divide-gray-200">
                         <thead class="bg-glob-dark">
                             <tr>
@@ -222,6 +289,28 @@
                             {% endfor %}
                         </tbody>
                     </table>
+                </div>
+                <!-- Mobil kart görünümü -->
+                <div class="md:hidden divide-y divide-gray-100">
+                    {% for a in satis_alertleri %}
+                    <div class="p-4">
+                        <div class="flex justify-between items-start mb-2">
+                            <div>
+                                <span class="text-xs font-bold text-glob-dark bg-gray-100 px-2 py-0.5 rounded">{{ a.jt_kodu }}</span>
+                                <p class="text-sm font-medium text-gray-800 mt-1">{{ a.tur_adi }}</p>
+                            </div>
+                            <div class="text-right flex-shrink-0 ml-2">
+                                <span class="text-lg font-bold text-red-600">%{{ a.doluluk }}</span>
+                                <p class="text-xs text-gray-400">doluluk</p>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-3 gap-2 text-xs text-gray-500">
+                            <div><span class="font-medium text-gray-700">{{ a.kalkis }}</span><br>Tarih</div>
+                            <div><span class="font-medium text-amber-600">{{ a.days_left }}</span><br>Kalan Gün</div>
+                            <div><span class="font-medium text-gray-700">{{ a.satilan }}/{{ a.pax }}</span><br>Satılan/Kont.</div>
+                        </div>
+                    </div>
+                    {% endfor %}
                 </div>
                 {% else %}
                 <div class="px-5 py-12 text-center text-gray-400 text-sm">Kritik satış uyarısı bulunmuyor.</div>
@@ -278,6 +367,11 @@
     </div>
 
     <script>
+        function kullaniciMenuToggle() {
+            const menu = document.getElementById('kullaniciMenu');
+            menu.classList.toggle('hidden');
+        }
+
         function sekmeAc(sekme) {
             const aktifBtn = 'bg-white border-gray-200 text-glob-dark';
             const pasifBtn = 'bg-gray-100 border-gray-200 text-gray-500 hover:text-glob-dark';
@@ -343,6 +437,25 @@
                 if (goster) gorunen++;
             });
 
+            // Mobil kartları da filtrele
+            document.querySelectorAll('.tur-kart').forEach(function(kart) {
+                const metin = kart.textContent.toLowerCase();
+                const kartHavayolu = kart.dataset.havayolu;
+                const kalan = parseInt(kart.dataset.kalan);
+                const kartTarihi = tarihParse(kart.dataset.tarih);
+
+                let goster = true;
+                if (arama && !metin.includes(arama)) goster = false;
+                if (havayolu && kartHavayolu !== havayolu) goster = false;
+                if (doluluk === 'kritik' && kalan > 3) goster = false;
+                if (doluluk === 'orta' && (kalan <= 3 || kalan > 10)) goster = false;
+                if (doluluk === 'bol' && kalan <= 10) goster = false;
+                if (baslangic && (!kartTarihi || kartTarihi < baslangic)) goster = false;
+                if (bitis && (!kartTarihi || kartTarihi > bitis)) goster = false;
+
+                kart.style.display = goster ? '' : 'none';
+            });
+
             sonucSayisi.textContent = gorunen + ' tur';
 
             let topPax = 0, topSatilan = 0, topKalan = 0;
@@ -357,6 +470,13 @@
             document.getElementById('toplamKalan').textContent   = topKalan.toLocaleString('tr-TR');
             document.getElementById('toplamOran').textContent      = topPax > 0 ? '%' + (topSatilan / topPax * 100).toFixed(1) : '';
             document.getElementById('toplamKalanOran').textContent = topPax > 0 ? '%' + (topKalan  / topPax * 100).toFixed(1) : '';
+
+            // Mobil toplam güncelle
+            if (document.getElementById('mToplamPax')) {
+                document.getElementById('mToplamPax').textContent     = topPax.toLocaleString('tr-TR');
+                document.getElementById('mToplamSatilan').textContent = topSatilan.toLocaleString('tr-TR');
+                document.getElementById('mToplamKalan').textContent   = topKalan.toLocaleString('tr-TR');
+            }
         }
 
         // Sayfa açılınca tarihi bugüne set et ve filtrele
@@ -447,8 +567,8 @@
             window.addEventListener('scroll', stickyBaslik, { passive: true });
         })();
 
-        // REHBER INLINE EDIT
-        document.getElementById('turGovde').addEventListener('click', function(e) {
+        // REHBER INLINE EDIT (masaüstü + mobil)
+        document.addEventListener('click', function(e) {
             const metin = e.target.closest('.rehber-metin');
             if (!metin) return;
 
@@ -461,13 +581,13 @@
             input.select();
         });
 
-        document.getElementById('turGovde').addEventListener('focusout', function(e) {
+        document.addEventListener('focusout', function(e) {
             const input = e.target.closest('.rehber-input');
             if (!input) return;
             rehberKaydet(input);
         });
 
-        document.getElementById('turGovde').addEventListener('keydown', function(e) {
+        document.addEventListener('keydown', function(e) {
             const input = e.target.closest('.rehber-input');
             if (!input) return;
             if (e.key === 'Enter') rehberKaydet(input);
