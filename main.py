@@ -231,6 +231,17 @@ class RehberGuncelle(BaseModel):
     rehber: str
 
 
+@app.get("/api/debug")
+def debug():
+    sa = os.environ.get("SERVICE_ACCOUNT_JSON")
+    db = os.environ.get("DATABASE_URL")
+    return JSONResponse({
+        "SERVICE_ACCOUNT_JSON": "VAR" if sa else "YOK",
+        "SA_uzunluk": len(sa) if sa else 0,
+        "DATABASE_URL": "VAR" if db else "YOK",
+    })
+
+
 @app.get("/api/sync")
 def manuel_sync():
     try:
