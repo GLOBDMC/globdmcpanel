@@ -272,7 +272,13 @@ def rehber_guncelle(jt_kodu: str, body: RehberGuncelle):
 def anasayfa(request: Request):
     select_sql = """
         SELECT jt_kodu, tur_adi, kalkis_tarihi, havayolu, pax, satilan, kalan, guncel_fiyat, rehber
-        FROM turlar ORDER BY id DESC
+        FROM turlar
+        ORDER BY
+            CASE
+                WHEN kalkis_tarihi ~ E'^\\d{2}-\\d{2}-\\d{4}$' THEN TO_DATE(kalkis_tarihi, 'DD-MM-YYYY')
+                WHEN kalkis_tarihi ~ E'^\\d{2}\\.\\d{2}\\.\\d{4}$' THEN TO_DATE(kalkis_tarihi, 'DD.MM.YYYY')
+                ELSE NULL
+            END ASC NULLS LAST
     """
     with db_engine.connect() as conn:
         sonuc = conn.execute(text(select_sql))
