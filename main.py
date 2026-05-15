@@ -203,12 +203,23 @@ def satis_aleri_getir():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     tablo_olustur()
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(sheets_den_postgresql_kopyala, 'interval', hours=1)
-    scheduler.start()
-    print("Otomatik senkronizasyon aktif: her 1 saatte bir")
+    try:
+        sheets_den_postgresql_kopyala()
+        print("Baslangic sync tamamlandi")
+    except Exception as e:
+        print(f"Baslangic sync hatasi: {e}")
+    try:
+        scheduler = BackgroundScheduler()
+        scheduler.add_job(sheets_den_postgresql_kopyala, 'interval', hours=1)
+        scheduler.start()
+        print("Otomatik senkronizasyon aktif: her 1 saatte bir")
+    except Exception as e:
+        print(f"Scheduler baslatılamadı: {e}")
     yield
-    scheduler.shutdown()
+    try:
+        scheduler.shutdown()
+    except Exception:
+        pass
 
 
 app = FastAPI(lifespan=lifespan)
@@ -218,6 +229,15 @@ templates = Jinja2Templates(directory="templates")
 
 class RehberGuncelle(BaseModel):
     rehber: str
+
+
+@app.get("/api/sync")
+def manuel_sync():
+    try:
+        sheets_den_postgresql_kopyala()
+        return JSONResponse({"ok": True, "mesaj": "Sync tamamlandi"})
+    except Exception as e:
+        return JSONResponse({"ok": False, "hata": str(e)}, status_code=500)
 
 
 @app.patch("/api/tur/{jt_kodu}/rehber")
