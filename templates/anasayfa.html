@@ -66,7 +66,7 @@
                 <p class="text-3xl font-bold text-glob-dark mt-1">{{ toplam }}</p>
             </div>
             <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
-                <p class="text-sm text-gray-500">Kritik</p>
+                <p class="text-sm text-gray-500">Az Kontenjan</p>
                 <p class="text-3xl font-bold text-red-600 mt-1">{{ kritik }}</p>
             </div>
             <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
@@ -93,6 +93,11 @@
                 <span class="bg-amber-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">{{ satis_alertleri|length }}</span>
                 {% endif %}
             </button>
+            <button id="tab-alarm" onclick="sekmeAc('alarm')"
+                class="sekme-btn flex-1 sm:flex-none whitespace-nowrap px-4 py-2.5 text-sm font-semibold rounded-t-lg border border-b-0 transition-colors flex items-center justify-center gap-2 bg-gray-100 border-gray-200 text-gray-500 hover:text-glob-dark">
+                Kontenjan Alarmı
+                <span id="alarm-badge" class="bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">0</span>
+            </button>
         </div>
 
         <!-- SEKME 1: TUR KONTENJANLARI -->
@@ -116,7 +121,7 @@
                         <label class="block text-xs font-medium text-gray-600 mb-1">Doluluk</label>
                         <select id="dolulukFiltre" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-glob-dark">
                             <option value="">Tumu</option>
-                            <option value="kritik">Kritik</option>
+                            <option value="kritik">Az Kontenjan (≤3)</option>
                             <option value="orta">Orta</option>
                             <option value="bol">Bol</option>
                         </select>
@@ -311,6 +316,51 @@
             </div>
         </div>
 
+        <!-- SEKME 3: KONTENJAN ALARMI -->
+        <div id="panel-alarm" class="hidden">
+            <div class="bg-white rounded-lg rounded-tl-none shadow-sm border border-gray-200 p-5 mb-4">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Tarih Aralığı</label>
+                        <div class="flex gap-2">
+                            <input type="date" id="alarmBaslangic" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-glob-dark"/>
+                            <input type="date" id="alarmBitis" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-glob-dark"/>
+                        </div>
+                    </div>
+                </div>
+                <div class="mt-3 flex justify-end">
+                    <button onclick="alarmTarihleriTemizle()" class="text-xs text-glob-dark hover:underline font-medium">Tarihleri Temizle</button>
+                </div>
+            </div>
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                <div class="flex justify-between items-center px-4 py-3 border-b border-gray-200 bg-gray-50">
+                    <div>
+                        <h2 class="text-base sm:text-lg font-semibold text-glob-dark">Kontenjan Alarmı</h2>
+                        <p class="text-xs text-gray-400 mt-0.5">Kalan kontenjani 5'in altına düşen turlar</p>
+                    </div>
+                    <span id="alarmSayisi" class="text-sm text-gray-500">0 tur</span>
+                </div>
+                <div class="hidden md:block overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-glob-dark">
+                            <tr>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider">Tur Kodu</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider">Tur İsmi</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider">Tur Tarihi</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider">Havayolu</th>
+                                <th class="px-4 py-3 text-right text-xs font-semibold text-white uppercase tracking-wider">Toplam</th>
+                                <th class="px-4 py-3 text-right text-xs font-semibold text-white uppercase tracking-wider">Satılan</th>
+                                <th class="px-4 py-3 text-right text-xs font-semibold text-white uppercase tracking-wider">Kalan</th>
+                            </tr>
+                        </thead>
+                        <tbody id="alarmGovde" class="divide-y divide-gray-100"></tbody>
+                    </table>
+                </div>
+                <!-- Mobil -->
+                <div class="md:hidden divide-y divide-gray-100" id="alarmKartlar"></div>
+            </div>
+        </div>
+
     </main>
 
     <!-- ADMİN KULLANICI PANELİ -->
@@ -366,13 +416,8 @@
         }
 
         function sekmeAc(sekme) {
-            const aktifBtn = 'bg-white border-gray-200 text-glob-dark';
-            const pasifBtn = 'bg-gray-100 border-gray-200 text-gray-500 hover:text-glob-dark';
-
-            document.getElementById('panel-kontenjan').classList.toggle('hidden', sekme !== 'kontenjan');
-            document.getElementById('panel-satis').classList.toggle('hidden', sekme !== 'satis');
-
-            ['kontenjan', 'satis'].forEach(function(s) {
+            ['kontenjan', 'satis', 'alarm'].forEach(function(s) {
+                document.getElementById('panel-' + s).classList.toggle('hidden', s !== sekme);
                 const btn = document.getElementById('tab-' + s);
                 btn.className = btn.className.replace(/bg-\S+|text-\S+/g, '').trim();
                 if (s === sekme) {
@@ -381,6 +426,68 @@
                     btn.classList.add('bg-gray-100', 'text-gray-500');
                 }
             });
+            if (sekme === 'alarm') alarmFiltrele();
+        }
+
+        function alarmFiltrele() {
+            const bas = document.getElementById('alarmBaslangic').value ? new Date(document.getElementById('alarmBaslangic').value) : null;
+            const bit = document.getElementById('alarmBitis').value ? new Date(document.getElementById('alarmBitis').value) : null;
+            const tbody = document.getElementById('alarmGovde');
+            const kartlar = document.getElementById('alarmKartlar');
+            tbody.innerHTML = '';
+            kartlar.innerHTML = '';
+            let sayac = 0;
+
+            document.querySelectorAll('.tur-satir').forEach(function(satir) {
+                const kalan = parseInt(satir.dataset.kalan);
+                if (kalan >= 5) return;
+                const turTarihi = tarihParse(satir.dataset.tarih);
+                if (bas && (!turTarihi || turTarihi < bas)) return;
+                if (bit && (!turTarihi || turTarihi > bit)) return;
+
+                const c = satir.cells;
+                const kalanClass = kalan <= 0 ? 'text-red-700 font-bold' : 'text-red-600 font-semibold';
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-gray-50 transition-colors';
+                tr.innerHTML = `
+                    <td class="px-4 py-3 text-sm font-medium text-glob-dark whitespace-nowrap">${c[0].textContent.trim()}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700">${c[1].textContent.trim()}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">${c[2].textContent.trim()}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">${c[3].textContent.trim()}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700 text-right">${c[4].textContent.trim()}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700 text-right">${c[5].textContent.trim()}</td>
+                    <td class="px-4 py-3 text-sm ${kalanClass} text-right">${kalan}</td>`;
+                tbody.appendChild(tr);
+
+                const kart = document.createElement('div');
+                kart.className = 'p-4';
+                kart.innerHTML = `
+                    <div class="flex justify-between items-start mb-2">
+                        <div>
+                            <span class="text-xs font-bold text-glob-dark bg-gray-100 px-2 py-0.5 rounded">${c[0].textContent.trim()}</span>
+                            <p class="text-sm font-medium text-gray-800 mt-1">${c[1].textContent.trim()}</p>
+                        </div>
+                        <div class="text-right flex-shrink-0 ml-2">
+                            <span class="text-lg font-bold text-red-600">${kalan}</span>
+                            <p class="text-xs text-gray-400">kalan</p>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2 text-xs text-gray-500">
+                        <div><span class="font-medium text-gray-700">${c[2].textContent.trim()}</span><br>Tarih</div>
+                        <div><span class="font-medium text-gray-700">${c[3].textContent.trim()}</span><br>Havayolu</div>
+                        <div><span class="font-medium text-gray-700">${c[4].textContent.trim()} / ${c[5].textContent.trim()}</span><br>Kont/Satılan</div>
+                    </div>`;
+                kartlar.appendChild(kart);
+                sayac++;
+            });
+
+            document.getElementById('alarmSayisi').textContent = sayac + ' tur';
+        }
+
+        function alarmTarihleriTemizle() {
+            document.getElementById('alarmBaslangic').value = '';
+            document.getElementById('alarmBitis').value = '';
+            alarmFiltrele();
         }
 
         const aramaInput = document.getElementById('aramaInput');
@@ -476,6 +583,16 @@
         const bugun = new Date().toISOString().split('T')[0];
         tarihBaslangic.value = bugun;
         filtrele();
+
+        // Alarm badge: kalan < 5 olan tur sayısı
+        let alarmToplamSayisi = 0;
+        document.querySelectorAll('.tur-satir').forEach(function(s) {
+            if (parseInt(s.dataset.kalan) < 5) alarmToplamSayisi++;
+        });
+        document.getElementById('alarm-badge').textContent = alarmToplamSayisi;
+
+        document.getElementById('alarmBaslangic').addEventListener('change', alarmFiltrele);
+        document.getElementById('alarmBitis').addEventListener('change', alarmFiltrele);
 
         aramaInput.addEventListener('input', filtrele);
         havayoluFiltre.addEventListener('change', filtrele);
