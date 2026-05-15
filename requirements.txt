@@ -8,4 +8,5 @@ oauth2client
 apscheduler
 python-multipart
 passlib[bcrypt]
+bcrypt
 itsdangerous
