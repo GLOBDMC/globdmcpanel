@@ -19,6 +19,13 @@
     .filter-input:focus { border-color: rgba(59,130,246,0.5); }
     .filter-input::placeholder { color: #475569; }
 
+    /* Tablo kendi içinde scroll eder — sticky thead güvenilir çalışır */
+    .table-scroll-container {
+        height: calc(100vh - 310px);
+        min-height: 400px;
+        overflow: auto;
+    }
+
     .data-table { width: 100%; border-collapse: separate; border-spacing: 0; }
     .data-table thead th {
         background: #111827;
@@ -32,14 +39,14 @@
         border-bottom: 1px solid rgba(255,255,255,0.06);
         white-space: nowrap;
         position: sticky;
-        top: 56px;
+        top: 0;          /* container'a göre — topbar sorunu yok */
         z-index: 10;
         cursor: pointer;
         user-select: none;
     }
     .data-table thead th:hover { color: #94A3B8; }
     .data-table thead th.sorted { color: #60A5FA; }
-    .data-table thead th.text-right { text-align: right; }
+    .data-table thead th.th-right { text-align: right !important; }
     .data-table tbody tr {
         border-bottom: 1px solid rgba(255,255,255,0.04);
         transition: background 0.1s;
@@ -51,6 +58,7 @@
         color: #CBD5E1;
         white-space: nowrap;
     }
+    .data-table tbody td.td-right { text-align: right; }
     .data-table tfoot td {
         background: #111827;
         padding: 10px 14px;
@@ -159,18 +167,19 @@
 
     <!-- Table -->
     <div class="card" style="padding: 0; overflow: hidden;">
-        <div style="overflow-x: auto; overflow-y: clip;">
+        <div class="table-scroll-container">
             <table class="data-table" id="turTablosu">
-                <thead class="sticky-table-head">
+                <thead>
                     <tr>
                         <th data-kolon="0" class="sirala">Tur Kodu</th>
                         <th data-kolon="1" class="sirala">Tur İsmi</th>
-                        <th data-kolon="2" data-tip="tarih" class="sirala">Tur Tarihi</th>
-                        <th data-kolon="3" class="sirala">Havayolu</th>
-                        <th data-kolon="4" data-tip="sayi" class="sirala text-right">Kontenjan</th>
-                        <th data-kolon="5" data-tip="sayi" class="sirala text-right">Satılan</th>
-                        <th data-kolon="6" data-tip="sayi" class="sirala text-right">Kalan</th>
-                        <th class="text-right">Fiyat</th>
+                        <th data-kolon="2" data-tip="tarih" class="sirala">Kalkış</th>
+                        <th data-kolon="3" data-tip="tarih" class="sirala">Dönüş</th>
+                        <th data-kolon="4" class="sirala">Havayolu</th>
+                        <th data-kolon="5" data-tip="sayi" class="sirala th-right">Kontenjan</th>
+                        <th data-kolon="6" data-tip="sayi" class="sirala th-right">Satılan</th>
+                        <th data-kolon="7" data-tip="sayi" class="sirala th-right">Kalan</th>
+                        <th class="th-right">Fiyat</th>
                         <th>Rehber</th>
                     </tr>
                 </thead>
@@ -178,19 +187,20 @@
                     {% for tur in turlar %}
                     <tr class="tur-satir" data-havayolu="{{ tur[3] }}" data-kalan="{{ tur[6] if tur[6] is not none else 0 }}" data-tarih="{{ tur[2] }}">
                         <td class="font-medium text-white">{{ tur[0] }}</td>
-                        <td class="text-slate-300" style="max-width:220px; overflow:hidden; text-overflow:ellipsis;">{{ tur[1] }}</td>
+                        <td class="text-slate-300" style="max-width:200px; overflow:hidden; text-overflow:ellipsis;">{{ tur[1] }}</td>
                         <td>{{ tur[2] }}</td>
+                        <td class="text-slate-400">{{ tur[9] or '—' }}</td>
                         <td class="text-slate-400">{{ tur[3] }}</td>
-                        <td class="text-right">{{ tur[4] }}</td>
-                        <td class="text-right">{{ tur[5] }}</td>
-                        <td class="text-right">
+                        <td class="td-right">{{ tur[4] }}</td>
+                        <td class="td-right">{{ tur[5] }}</td>
+                        <td class="td-right">
                             {% if tur[6] is none or tur[6] == 0 %}<span class="badge-dolu">—</span>
                             {% elif tur[6] <= 5 %}<span class="badge-son-yer">{{ tur[6] }}</span>
                             {% elif tur[6] <= 10 %}<span class="badge-yakin">{{ tur[6] }}</span>
                             {% else %}<span class="badge-bol">{{ tur[6] }}</span>
                             {% endif %}
                         </td>
-                        <td class="text-right text-slate-400">{{ tur[7] or '—' }}</td>
+                        <td class="td-right text-slate-400">{{ tur[7] or '—' }}</td>
                         <td class="rehber-hucre" data-jt="{{ tur[0] }}">
                             <span class="rehber-metin {% if not tur[8] %}text-slate-600 italic{% else %}text-slate-300{% endif %}">
                                 {{ tur[8] or 'Ekle...' }}
@@ -202,12 +212,12 @@
                 </tbody>
                 <tfoot>
                     <tr>
-                        <td colspan="4" class="text-slate-400 text-xs uppercase tracking-wider font-semibold">Toplam</td>
-                        <td id="toplamPax" class="text-right text-white"></td>
-                        <td id="toplamSatilan" class="text-right text-white"></td>
-                        <td id="toplamKalan" class="text-right text-white"></td>
-                        <td id="toplamOran" class="text-right text-green-400"></td>
-                        <td id="toplamKalanOran" class="text-right text-red-400"></td>
+                        <td colspan="5" class="text-slate-400 text-xs uppercase tracking-wider font-semibold">Toplam</td>
+                        <td id="toplamPax" class="td-right text-white"></td>
+                        <td id="toplamSatilan" class="td-right text-white"></td>
+                        <td id="toplamKalan" class="td-right text-white"></td>
+                        <td id="toplamOran" class="td-right text-green-400"></td>
+                        <td id="toplamKalanOran" class="td-right text-red-400"></td>
                     </tr>
                 </tfoot>
             </table>
@@ -323,9 +333,9 @@
         let topPax = 0, topSatilan = 0, topKalan = 0;
         satirlar.forEach(satir => {
             if (satir.style.display === 'none') return;
-            topPax     += parseInt(satir.cells[4].textContent.trim()) || 0;
-            topSatilan += parseInt(satir.cells[5].textContent.trim()) || 0;
-            topKalan   += parseInt(satir.cells[6].textContent.trim()) || 0;
+            topPax     += parseInt(satir.cells[5].textContent.trim()) || 0;
+            topSatilan += parseInt(satir.cells[6].textContent.trim()) || 0;
+            topKalan   += parseInt(satir.cells[7].textContent.trim()) || 0;
         });
         document.getElementById('toplamPax').textContent     = topPax.toLocaleString('tr-TR');
         document.getElementById('toplamSatilan').textContent = topSatilan.toLocaleString('tr-TR');

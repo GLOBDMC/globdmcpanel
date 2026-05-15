@@ -71,6 +71,7 @@ def tablo_olustur():
         conn.execute(text(sql_turlar))
         conn.execute(text(sql_kullanicilar))
         conn.execute(text("ALTER TABLE turlar ADD COLUMN IF NOT EXISTS rehber VARCHAR(200) DEFAULT ''"))
+        conn.execute(text("ALTER TABLE turlar ADD COLUMN IF NOT EXISTS bitis_tarihi VARCHAR(50) DEFAULT ''"))
         conn.execute(text("ALTER TABLE kullanicilar ADD COLUMN IF NOT EXISTS sifre_hash VARCHAR(200)"))
         conn.execute(text("ALTER TABLE kullanicilar ADD COLUMN IF NOT EXISTS sifre_degistir BOOLEAN DEFAULT FALSE"))
         # Admin hesabı — ilk kurulumda varsayılan şifre: Glob2025!
@@ -410,7 +411,7 @@ def sifre_degistir_yap(request: Request, yeni_sifre: str = Form(...), yeni_sifre
 
 def tur_verileri_getir():
     select_sql = """
-        SELECT jt_kodu, tur_adi, kalkis_tarihi, havayolu, pax, satilan, kalan, guncel_fiyat, rehber
+        SELECT jt_kodu, tur_adi, kalkis_tarihi, havayolu, pax, satilan, kalan, guncel_fiyat, rehber, bitis_tarihi
         FROM turlar
         ORDER BY
             CASE
