@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}GlobDMC{% endblock %} — Operations Intelligence</title>
+    <link rel="icon" type="image/jpeg" href="/static/logo.jpg">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'surface':     '#0F1117',
+                        'surface-2':   '#161D2F',
+                        'surface-3':   '#1A2035',
+                        'sidebar':     '#111827',
+                        'sidebar-hover':'#1a2235',
+                        'border':      'rgba(255,255,255,0.06)',
+                        'blue-accent': '#3B82F6',
+                        'cyan-accent': '#06B6D4',
+                        'text-primary':'#F1F5F9',
+                        'text-muted':  '#94A3B8',
+                        'text-dim':    '#475569',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background: #0F1117; color: #F1F5F9; }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+        /* Sidebar */
+        #sidebar {
+            width: 240px;
+            min-height: 100vh;
+            background: #111827;
+            border-right: 1px solid rgba(255,255,255,0.06);
+            position: fixed;
+            top: 0; left: 0;
+            display: flex;
+            flex-direction: column;
+            z-index: 40;
+            transition: transform 0.25s ease;
+        }
+
+        #main-content {
+            margin-left: 240px;
+            min-height: 100vh;
+            transition: margin-left 0.25s ease;
+        }
+
+        /* Nav items */
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 13.5px;
+            color: #94A3B8;
+            cursor: pointer;
+            transition: all 0.15s;
+            text-decoration: none;
+            margin: 1px 8px;
+        }
+        .nav-item:hover { background: #1a2235; color: #F1F5F9; }
+        .nav-item.active {
+            background: rgba(59,130,246,0.12);
+            color: #60A5FA;
+            border: 1px solid rgba(59,130,246,0.2);
+        }
+        .nav-item svg { width: 16px; height: 16px; flex-shrink: 0; }
+        .nav-item .badge {
+            margin-left: auto;
+            background: #EF4444;
+            color: white;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 1px 6px;
+            border-radius: 999px;
+        }
+        .nav-item .badge-amber {
+            background: #D97706;
+        }
+
+        .nav-section {
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: #334155;
+            padding: 16px 24px 6px;
+        }
+
+        /* Card */
+        .card {
+            background: #161D2F;
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 12px;
+            padding: 20px;
+        }
+        .card-sm { padding: 14px 18px; }
+
+        /* KPI Card */
+        .kpi-card {
+            background: #161D2F;
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 12px;
+            padding: 18px 20px;
+            position: relative;
+            overflow: hidden;
+            transition: border-color 0.2s, transform 0.2s;
+        }
+        .kpi-card:hover {
+            border-color: rgba(59,130,246,0.25);
+            transform: translateY(-1px);
+        }
+        .kpi-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(59,130,246,0.4), transparent);
+        }
+
+        /* Top bar */
+        #topbar {
+            height: 56px;
+            background: rgba(17,24,39,0.8);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+            position: sticky;
+            top: 0;
+            z-index: 30;
+            display: flex;
+            align-items: center;
+            padding: 0 24px;
+            gap: 16px;
+        }
+
+        /* Status pill */
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 3px 10px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+        .status-pill .dot {
+            width: 5px; height: 5px;
+            border-radius: 50%;
+        }
+        .status-online  { background: rgba(16,185,129,0.12); color: #34D399; border: 1px solid rgba(16,185,129,0.2); }
+        .status-online .dot  { background: #10B981; box-shadow: 0 0 6px #10B981; animation: blink 2s infinite; }
+        .status-warning { background: rgba(245,158,11,0.12); color: #FBBF24; border: 1px solid rgba(245,158,11,0.2); }
+        .status-warning .dot { background: #F59E0B; }
+        .status-critical{ background: rgba(239,68,68,0.12);  color: #F87171; border: 1px solid rgba(239,68,68,0.2); }
+        .status-critical .dot{ background: #EF4444; box-shadow: 0 0 6px #EF4444; animation: blink 1s infinite; }
+
+        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+        /* Mobile overlay */
+        #sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.6);
+            z-index: 39;
+        }
+
+        /* Mobile */
+        @media (max-width: 768px) {
+            #sidebar { transform: translateX(-100%); }
+            #sidebar.open { transform: translateX(0); }
+            #sidebar-overlay.show { display: block; }
+            #main-content { margin-left: 0; }
+        }
+
+        /* Placeholder pages */
+        .coming-soon {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 60vh;
+            gap: 12px;
+            color: #475569;
+        }
+        .coming-soon svg { width: 48px; height: 48px; stroke: #1E3A5F; }
+    </style>
+    {% block head %}{% endblock %}
+</head>
+<body>
+
+<!-- Sidebar overlay (mobile) -->
+<div id="sidebar-overlay" onclick="closeSidebar()"></div>
+
+<!-- SIDEBAR -->
+<aside id="sidebar">
+    <!-- Logo -->
+    <div class="flex items-center gap-3 px-5 py-4 border-b border-white border-opacity-5">
+        <img src="/static/logo.jpg" alt="GlobDMC" class="w-8 h-8 rounded-lg"/>
+        <div>
+            <div class="text-sm font-bold text-white tracking-wide">GlobDMC</div>
+            <div class="text-xs text-slate-500 leading-none">Intelligence Platform</div>
+        </div>
+    </div>
+
+    <!-- Nav -->
+    <nav class="flex-1 overflow-y-auto py-3">
+
+        <div class="nav-section">Genel Bakış</div>
+        <a href="/dashboard" class="nav-item {% if aktif_sayfa == 'dashboard' %}active{% endif %}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+                <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+            </svg>
+            Dashboard
+        </a>
+
+        <div class="nav-section">Operasyon</div>
+        <a href="/turlar" class="nav-item {% if aktif_sayfa == 'turlar' %}active{% endif %}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 17l3-9 3 4 3-6 3 4 3-7"/><path d="M3 21h18"/>
+            </svg>
+            Turlar
+            {% if kritik_sayi and kritik_sayi > 0 %}
+            <span class="badge">{{ kritik_sayi }}</span>
+            {% endif %}
+        </a>
+        <a href="/kontenjan" class="nav-item {% if aktif_sayfa == 'kontenjan' %}active{% endif %}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+            Kontenjan
+        </a>
+        <a href="#" class="nav-item opacity-40 cursor-not-allowed" title="Yakında">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/>
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+            Vitrin Takibi
+            <span class="ml-auto text-xs text-slate-600 font-medium">Yakında</span>
+        </a>
+
+        <div class="nav-section">Analiz</div>
+        <a href="#" class="nav-item opacity-40 cursor-not-allowed" title="Yakında">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+            </svg>
+            Rakip Analizi
+            <span class="ml-auto text-xs text-slate-600 font-medium">Yakında</span>
+        </a>
+        <a href="#" class="nav-item opacity-40 cursor-not-allowed" title="Yakında">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/>
+                <path d="M12 8v4l3 3"/>
+            </svg>
+            AI Önerileri
+            <span class="ml-auto text-xs text-slate-600 font-medium">Yakında</span>
+        </a>
+        <a href="#" class="nav-item opacity-40 cursor-not-allowed" title="Yakında">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
+            </svg>
+            Raporlar
+            <span class="ml-auto text-xs text-slate-600 font-medium">Yakında</span>
+        </a>
+
+        <div class="nav-section">Sistem</div>
+        <a href="#" class="nav-item opacity-40 cursor-not-allowed" title="Yakında">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
+                <line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>
+            </svg>
+            Scraper Durumu
+            <span class="ml-auto text-xs text-slate-600 font-medium">Yakında</span>
+        </a>
+        <a href="#" class="nav-item opacity-40 cursor-not-allowed" title="Yakında">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
+            </svg>
+            Operasyonlar
+            <span class="ml-auto text-xs text-slate-600 font-medium">Yakında</span>
+        </a>
+    </nav>
+
+    <!-- User -->
+    <div class="border-t border-white border-opacity-5 px-4 py-3">
+        <div class="flex items-center gap-3">
+            <div class="w-8 h-8 rounded-full bg-blue-900 flex items-center justify-center text-xs font-bold text-blue-300 flex-shrink-0">
+                {{ kullanici.bas_harfler }}
+            </div>
+            <div class="flex-1 min-w-0">
+                <div class="text-sm font-medium text-slate-200 truncate">{{ kullanici.ad_soyad }}</div>
+                <div class="text-xs text-slate-500 truncate">{{ kullanici.pozisyon }}</div>
+            </div>
+            <div class="flex gap-1">
+                {% if kullanici.rol == 'admin' %}
+                <button onclick="adminPanelAc()" title="Kullanıcılar"
+                    class="w-7 h-7 rounded-lg hover:bg-slate-700 flex items-center justify-center text-slate-400 hover:text-slate-200 transition-colors">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                    </svg>
+                </button>
+                {% endif %}
+                <a href="/logout" title="Çıkış"
+                    class="w-7 h-7 rounded-lg hover:bg-slate-700 flex items-center justify-center text-slate-400 hover:text-red-400 transition-colors">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+                    </svg>
+                </a>
+            </div>
+        </div>
+    </div>
+</aside>
+
+<!-- MAIN -->
+<div id="main-content">
+
+    <!-- Top bar -->
+    <header id="topbar">
+        <!-- Mobile menu -->
+        <button onclick="toggleSidebar()" class="md:hidden w-8 h-8 flex items-center justify-center text-slate-400 hover:text-white">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/>
+            </svg>
+        </button>
+
+        <!-- Breadcrumb -->
+        <div class="flex items-center gap-2 text-sm">
+            <span class="text-slate-500">GlobDMC</span>
+            <span class="text-slate-600">/</span>
+            <span class="text-slate-200 font-medium">{% block breadcrumb %}Dashboard{% endblock %}</span>
+        </div>
+
+        <div class="ml-auto flex items-center gap-3">
+            <!-- Sync status -->
+            <div class="status-pill status-online hidden sm:flex">
+                <span class="dot"></span>
+                Canlı Veri
+            </div>
+
+            <!-- Last sync -->
+            <span class="text-xs text-slate-500 hidden md:block">Son sync: az önce</span>
+
+            <!-- Manual sync -->
+            <button onclick="manualSync()" title="Verileri Yenile"
+                class="w-8 h-8 rounded-lg border border-white border-opacity-10 hover:border-blue-500 hover:border-opacity-40 flex items-center justify-center text-slate-400 hover:text-blue-400 transition-all"
+                id="syncBtn">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="syncIcon">
+                    <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                </svg>
+            </button>
+        </div>
+    </header>
+
+    <!-- Page content -->
+    <main class="p-6">
+        {% block content %}{% endblock %}
+    </main>
+</div>
+
+<!-- ADMIN MODAL -->
+<div id="adminModal" class="hidden fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4">
+    <div class="bg-surface-2 border border-white border-opacity-10 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+        <div class="flex justify-between items-center px-6 py-4 border-b border-white border-opacity-5">
+            <h2 class="text-base font-semibold text-white">Kullanıcı Yönetimi</h2>
+            <button onclick="adminPanelKapat()" class="text-slate-500 hover:text-slate-300 transition-colors">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+        </div>
+        <div class="overflow-y-auto flex-1 px-6 py-4">
+            <table class="min-w-full text-sm" id="kullaniciTablosu">
+                <thead>
+                    <tr class="text-xs text-slate-500 uppercase border-b border-white border-opacity-5">
+                        <th class="text-left py-2 font-medium">Ad Soyad</th>
+                        <th class="text-left py-2 font-medium">Kullanıcı Adı</th>
+                        <th class="text-left py-2 font-medium">Ünvan</th>
+                        <th class="text-left py-2 font-medium">Rol</th>
+                        <th class="py-2"></th>
+                    </tr>
+                </thead>
+                <tbody id="kullaniciListesi"></tbody>
+            </table>
+        </div>
+        <div class="border-t border-white border-opacity-5 px-6 py-4 bg-surface rounded-b-xl">
+            <p class="text-xs font-semibold text-slate-500 uppercase mb-3">Yeni Kullanıcı Ekle</p>
+            <div class="grid grid-cols-2 gap-3">
+                <input id="yeniAd" type="text" placeholder="Ad Soyad" class="px-3 py-2 bg-surface-3 border border-white border-opacity-10 rounded-lg text-sm text-white placeholder-slate-600 focus:outline-none focus:border-blue-500 focus:border-opacity-50"/>
+                <input id="yeniKullanici" type="text" placeholder="Kullanıcı Adı" class="px-3 py-2 bg-surface-3 border border-white border-opacity-10 rounded-lg text-sm text-white placeholder-slate-600 focus:outline-none focus:border-blue-500 focus:border-opacity-50"/>
+                <input id="yeniUnvan" type="text" placeholder="Ünvan" class="px-3 py-2 bg-surface-3 border border-white border-opacity-10 rounded-lg text-sm text-white placeholder-slate-600 focus:outline-none focus:border-blue-500 focus:border-opacity-50"/>
+                <input id="yeniEmail" type="email" placeholder="E-posta" class="px-3 py-2 bg-surface-3 border border-white border-opacity-10 rounded-lg text-sm text-white placeholder-slate-600 focus:outline-none focus:border-blue-500 focus:border-opacity-50"/>
+                <input id="yeniSifre" type="password" placeholder="Şifre" class="px-3 py-2 bg-surface-3 border border-white border-opacity-10 rounded-lg text-sm text-white placeholder-slate-600 focus:outline-none focus:border-blue-500 focus:border-opacity-50"/>
+                <select id="yeniRol" class="px-3 py-2 bg-surface-3 border border-white border-opacity-10 rounded-lg text-sm text-white focus:outline-none focus:border-blue-500 focus:border-opacity-50">
+                    <option value="kullanici">Kullanıcı</option>
+                    <option value="admin">Admin</option>
+                </select>
+            </div>
+            <div class="flex items-center gap-3 mt-3">
+                <button onclick="kullaniciEkle()" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors">Ekle</button>
+                <span id="eklemesaj" class="text-sm"></span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Sidebar toggle
+    function toggleSidebar() {
+        document.getElementById('sidebar').classList.toggle('open');
+        document.getElementById('sidebar-overlay').classList.toggle('show');
+    }
+    function closeSidebar() {
+        document.getElementById('sidebar').classList.remove('open');
+        document.getElementById('sidebar-overlay').classList.remove('show');
+    }
+
+    // Manual sync
+    function manualSync() {
+        const btn = document.getElementById('syncBtn');
+        const icon = document.getElementById('syncIcon');
+        btn.disabled = true;
+        icon.style.animation = 'spin 1s linear infinite';
+        icon.style.transformOrigin = 'center';
+        const style = document.createElement('style');
+        style.textContent = '@keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }';
+        document.head.appendChild(style);
+        fetch('/api/sync').then(r => r.json()).then(data => {
+            btn.disabled = false;
+            icon.style.animation = '';
+        }).catch(() => { btn.disabled = false; icon.style.animation = ''; });
+    }
+
+    // Admin modal
+    function adminPanelAc() {
+        document.getElementById('adminModal').classList.remove('hidden');
+        kullanicilariYukle();
+    }
+    function adminPanelKapat() {
+        document.getElementById('adminModal').classList.add('hidden');
+        document.getElementById('eklemesaj').textContent = '';
+    }
+    document.getElementById('adminModal').addEventListener('click', function(e) {
+        if (e.target === this) adminPanelKapat();
+    });
+
+    function kullanicilariYukle() {
+        const liste = document.getElementById('kullaniciListesi');
+        liste.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-slate-500 text-xs">Yükleniyor...</td></tr>';
+        fetch('/api/admin/kullanicilar').then(r => r.json()).then(kullanicilar => {
+            liste.innerHTML = '';
+            kullanicilar.forEach(k => {
+                const tr = document.createElement('tr');
+                tr.className = 'border-b border-white border-opacity-5 hover:bg-surface-3';
+                tr.dataset.uid = k.id;
+                tr.innerHTML = `
+                    <td class="py-2.5 pr-3"><span class="ad-metin text-sm text-slate-200 font-medium">${k.ad_soyad}</span></td>
+                    <td class="py-2.5 pr-3 text-sm text-slate-400">${k.kullanici_adi}</td>
+                    <td class="py-2.5 pr-3"><span class="unvan-metin text-sm text-slate-400">${k.pozisyon || '-'}</span></td>
+                    <td class="py-2.5 pr-3">
+                        <span class="rol-badge text-xs px-2 py-0.5 rounded-full font-medium ${k.rol === 'admin' ? 'bg-blue-900 text-blue-300' : 'bg-slate-800 text-slate-400'}">${k.rol}</span>
+                    </td>
+                    <td class="py-2.5 text-right space-x-1 whitespace-nowrap">
+                        ${k.aktif ? `
+                        <button onclick="kullaniciDuzenle(${k.id})" class="text-xs text-blue-400 hover:text-blue-300 px-2 py-0.5 rounded border border-blue-900 hover:border-blue-700 transition-colors">Düzenle</button>
+                        <button onclick="sifreSifirla(${k.id})" class="text-xs text-amber-400 hover:text-amber-300 px-2 py-0.5 rounded border border-amber-900 hover:border-amber-700 transition-colors">Şifre</button>
+                        <button onclick="kullaniciSil(${k.id}, '${k.ad_soyad}')" class="text-xs text-red-400 hover:text-red-300 px-2 py-0.5 rounded border border-red-900 hover:border-red-700 transition-colors">Sil</button>
+                        ` : `<span class="text-xs text-slate-600 italic">Pasif</span>`}
+                    </td>`;
+                liste.appendChild(tr);
+            });
+        }).catch(() => {
+            liste.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-red-400 text-xs">Yüklenemedi</td></tr>';
+        });
+    }
+
+    function kullaniciEkle() {
+        const ad = document.getElementById('yeniAd').value.trim();
+        const kullanici = document.getElementById('yeniKullanici').value.trim();
+        const unvan = document.getElementById('yeniUnvan').value.trim();
+        const email = document.getElementById('yeniEmail').value.trim();
+        const sifre = document.getElementById('yeniSifre').value;
+        const rol = document.getElementById('yeniRol').value;
+        const mesaj = document.getElementById('eklemesaj');
+        if (!ad || !kullanici || !sifre) { mesaj.textContent = 'Ad, kullanıcı adı ve şifre zorunlu.'; mesaj.className = 'text-sm text-red-400'; return; }
+        const form = new FormData();
+        form.append('kullanici_adi', kullanici); form.append('ad_soyad', ad);
+        form.append('pozisyon', unvan); form.append('email', email);
+        form.append('rol', rol); form.append('sifre', sifre);
+        fetch('/api/admin/kullanicilar/ekle', { method: 'POST', body: form }).then(r => r.json()).then(data => {
+            if (data.ok) {
+                mesaj.textContent = '✓ Kullanıcı eklendi.'; mesaj.className = 'text-sm text-green-400';
+                ['yeniAd','yeniKullanici','yeniUnvan','yeniEmail','yeniSifre'].forEach(id => document.getElementById(id).value = '');
+                kullanicilariYukle();
+                setTimeout(() => { mesaj.textContent = ''; }, 3000);
+            } else { mesaj.textContent = data.hata || 'Hata.'; mesaj.className = 'text-sm text-red-400'; }
+        });
+    }
+
+    function kullaniciDuzenle(uid) {
+        const tr = document.querySelector(`tr[data-uid="${uid}"]`);
+        const adEl = tr.querySelector('.ad-metin');
+        const unvanEl = tr.querySelector('.unvan-metin');
+        const rolEl = tr.querySelector('.rol-badge');
+        const btns = tr.querySelector('td:last-child');
+        const mevcutAd = adEl.textContent;
+        const mevcutUnvan = unvanEl.textContent === '-' ? '' : unvanEl.textContent;
+        const mevcutRol = rolEl.textContent;
+        adEl.outerHTML = `<input class="duzenle-ad bg-surface-3 border border-blue-800 rounded px-2 py-0.5 text-sm text-white w-28 focus:outline-none" value="${mevcutAd}"/>`;
+        unvanEl.outerHTML = `<input class="duzenle-unvan bg-surface-3 border border-blue-800 rounded px-2 py-0.5 text-sm text-white w-24 focus:outline-none" value="${mevcutUnvan}"/>`;
+        rolEl.outerHTML = `<select class="duzenle-rol bg-surface-3 border border-blue-800 rounded px-1 py-0.5 text-xs text-white focus:outline-none">
+            <option value="kullanici" ${mevcutRol==='kullanici'?'selected':''}>kullanici</option>
+            <option value="admin" ${mevcutRol==='admin'?'selected':''}>admin</option>
+        </select>`;
+        btns.innerHTML = `
+            <button onclick="kullaniciKaydet(${uid})" class="text-xs text-green-400 hover:text-green-300 px-2 py-0.5 rounded border border-green-900 transition-colors">Kaydet</button>
+            <button onclick="kullanicilariYukle()" class="text-xs text-slate-400 hover:text-slate-300 px-2 py-0.5 rounded border border-slate-700 transition-colors ml-1">İptal</button>`;
+    }
+
+    function kullaniciKaydet(uid) {
+        const tr = document.querySelector(`tr[data-uid="${uid}"]`);
+        const ad = tr.querySelector('.duzenle-ad').value.trim();
+        const unvan = tr.querySelector('.duzenle-unvan').value.trim();
+        const rol = tr.querySelector('.duzenle-rol').value;
+        if (!ad) return;
+        const form = new FormData();
+        form.append('ad_soyad', ad); form.append('pozisyon', unvan);
+        form.append('email', ''); form.append('rol', rol);
+        fetch(`/api/admin/kullanicilar/${uid}/guncelle`, { method: 'POST', body: form }).then(r => r.json()).then(data => { if (data.ok) kullanicilariYukle(); });
+    }
+
+    function sifreSifirla(uid) {
+        const yeni = prompt('Yeni şifre girin:');
+        if (!yeni || yeni.length < 4) return;
+        const form = new FormData(); form.append('yeni_sifre', yeni);
+        fetch(`/api/admin/kullanicilar/${uid}/sifre`, { method: 'POST', body: form }).then(r => r.json()).then(data => {
+            if (data.ok) { const m = document.getElementById('eklemesaj'); m.textContent = '✓ Şifre güncellendi.'; m.className = 'text-sm text-green-400'; setTimeout(() => { m.textContent = ''; }, 3000); }
+        });
+    }
+
+    function kullaniciSil(uid, ad) {
+        if (!confirm(`"${ad}" kullanıcısını devre dışı bırakmak istiyor musunuz?`)) return;
+        fetch(`/api/admin/kullanicilar/${uid}/sil`, { method: 'POST' }).then(r => r.json()).then(data => { if (data.ok) kullanicilariYukle(); });
+    }
+</script>
+
+{% block scripts %}{% endblock %}
+</body>
+</html>

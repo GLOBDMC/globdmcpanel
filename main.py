@@ -408,13 +408,7 @@ def sifre_degistir_yap(request: Request, yeni_sifre: str = Form(...), yeni_sifre
     return RedirectResponse("/", status_code=302)
 
 
-@app.get("/")
-def anasayfa(request: Request):
-    kullanici = oturum_kullanicisi(request)
-    if not kullanici:
-        return RedirectResponse("/login", status_code=302)
-    if kullanici.get("sifre_degistir"):
-        return RedirectResponse("/sifre-degistir", status_code=302)
+def tur_verileri_getir():
     select_sql = """
         SELECT jt_kodu, tur_adi, kalkis_tarihi, havayolu, pax, satilan, kalan, guncel_fiyat, rehber
         FROM turlar
@@ -426,28 +420,98 @@ def anasayfa(request: Request):
             END ASC NULLS LAST
     """
     with db_engine.connect() as conn:
-        sonuc = conn.execute(text(select_sql))
-        turlar = sonuc.fetchall()
+        return conn.execute(text(select_sql)).fetchall()
 
-    havayollari = sorted(set([t[3] for t in turlar if t[3]]))
+
+@app.get("/")
+def anasayfa(request: Request):
+    return RedirectResponse("/dashboard", status_code=302)
+
+
+@app.get("/dashboard")
+def dashboard(request: Request):
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici:
+        return RedirectResponse("/login", status_code=302)
+
+    turlar = tur_verileri_getir()
     toplam = len(turlar)
     kritik = sum(1 for t in turlar if t[6] is not None and t[6] <= 3)
-    orta = sum(1 for t in turlar if t[6] is not None and 3 < t[6] <= 10)
-    bol = sum(1 for t in turlar if t[6] is not None and t[6] > 10)
+    orta   = sum(1 for t in turlar if t[6] is not None and 3 < t[6] <= 10)
+    bol    = sum(1 for t in turlar if t[6] is not None and t[6] > 10)
 
     satis_alertleri = satis_aleri_getir()
 
+    # Havayolu bazlı özet
+    from collections import defaultdict
+    hy_sayi   = defaultdict(int)
+    hy_kritik = defaultdict(int)
+    for t in turlar:
+        hy = t[3] or "Diğer"
+        hy_sayi[hy] += 1
+        if t[6] is not None and t[6] <= 3:
+            hy_kritik[hy] += 1
+    havayolu_ozet = sorted(
+        [(hy, hy_sayi[hy], hy_kritik[hy]) for hy in hy_sayi],
+        key=lambda x: x[1], reverse=True
+    )[:8]
+
+    # Kritik turlar (dashboard için)
+    kritik_turlar = [t for t in turlar if t[6] is not None and t[6] <= 3][:6]
+
+    bugun = datetime.today().strftime("%d %B %Y")
+
     return templates.TemplateResponse(
         request=request,
-        name="anasayfa.html",
+        name="dashboard.html",
         context={
-            "turlar": turlar,
-            "havayollari": havayollari,
+            "kullanici": kullanici,
+            "aktif_sayfa": "dashboard",
             "toplam": toplam,
             "kritik": kritik,
             "orta": orta,
             "bol": bol,
-            "kullanici": kullanici,
             "satis_alertleri": satis_alertleri,
+            "satis_alert_sayisi": len(satis_alertleri),
+            "havayolu_ozet": havayolu_ozet,
+            "kritik_turlar": kritik_turlar,
+            "kritik_sayi": kritik,
+            "bugun": bugun,
         }
     )
+
+
+@app.get("/turlar")
+def turlar_sayfasi(request: Request):
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici:
+        return RedirectResponse("/login", status_code=302)
+
+    turlar = tur_verileri_getir()
+    havayollari = sorted(set([t[3] for t in turlar if t[3]]))
+    toplam = len(turlar)
+    kritik = sum(1 for t in turlar if t[6] is not None and t[6] <= 3)
+    satis_alertleri = satis_aleri_getir()
+
+    return templates.TemplateResponse(
+        request=request,
+        name="turlar.html",
+        context={
+            "kullanici": kullanici,
+            "aktif_sayfa": "turlar",
+            "turlar": turlar,
+            "havayollari": havayollari,
+            "toplam": toplam,
+            "kritik": kritik,
+            "satis_alertleri": satis_alertleri,
+            "kritik_sayi": kritik,
+        }
+    )
+
+
+@app.get("/kontenjan")
+def kontenjan_sayfasi(request: Request):
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici:
+        return RedirectResponse("/login", status_code=302)
+    return RedirectResponse("/turlar", status_code=302)
