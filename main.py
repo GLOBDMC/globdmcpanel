@@ -18,13 +18,19 @@ db_engine = create_engine(
 
 
 def sheets_baglan():
+    import json as _json
     scope = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive"
     ]
-    creds = ServiceAccountCredentials.from_json_keyfile_name(
-        "service_account.json", scope
-    )
+    sa_json = os.environ.get("SERVICE_ACCOUNT_JSON")
+    if not sa_json:
+        raise Exception("SERVICE_ACCOUNT_JSON env var bulunamadi")
+    try:
+        info = _json.loads(sa_json)
+    except _json.JSONDecodeError as e:
+        raise Exception(f"SERVICE_ACCOUNT_JSON gecersiz JSON: {e}")
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(info, scope)
     return gspread.authorize(creds)
 
 
