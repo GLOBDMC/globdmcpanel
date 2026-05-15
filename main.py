@@ -77,13 +77,36 @@ def tablo_olustur():
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS jolly_sonuc (
                 id SERIAL PRIMARY KEY,
-                grup_adi TEXT UNIQUE,
+                grup_adi TEXT,
+                kalkis_tarihi VARCHAR(50) DEFAULT '',
                 vitrinde VARCHAR(10),
                 eslesen_jolly_tur TEXT,
                 jt_kodu_jolly VARCHAR(50),
                 skor VARCHAR(20),
                 kontrol_tarihi VARCHAR(50)
             )
+        """))
+        # Mevcut tabloya kalkis_tarihi ekle (ilk kurulumda yoksa)
+        conn.execute(text(
+            "ALTER TABLE jolly_sonuc ADD COLUMN IF NOT EXISTS kalkis_tarihi VARCHAR(50) DEFAULT ''"
+        ))
+        # Unique constraint migrasyonu: grup_adi tek → (grup_adi, kalkis_tarihi) composite
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                BEGIN
+                    ALTER TABLE jolly_sonuc DROP CONSTRAINT jolly_sonuc_grup_adi_key;
+                EXCEPTION WHEN undefined_object THEN NULL;
+                END;
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'jolly_sonuc_grup_tarih_uniq'
+                ) THEN
+                    ALTER TABLE jolly_sonuc
+                        ADD CONSTRAINT jolly_sonuc_grup_tarih_uniq
+                        UNIQUE (grup_adi, kalkis_tarihi);
+                END IF;
+            END $$;
         """))
         # Admin hesabı — ilk kurulumda varsayılan şifre: Glob2025!
         default_hash = pwd.hash("Glob2025!")
@@ -222,23 +245,28 @@ def jolly_sonuc_kopyala():
                 grup_adi = str(row.get("Grup Adı", "") or row.get("Grup Adi", "")).strip()
                 if not grup_adi:
                     continue
+                kalkis_tarihi = str(
+                    row.get("Gidiş Tarihi", "") or row.get("Gidis Tarihi", "")
+                ).strip()
                 conn.execute(text("""
                     INSERT INTO jolly_sonuc
-                        (grup_adi, vitrinde, eslesen_jolly_tur, jt_kodu_jolly, skor, kontrol_tarihi)
-                    VALUES (:g, :v, :e, :j, :s, :k)
-                    ON CONFLICT (grup_adi) DO UPDATE SET
+                        (grup_adi, kalkis_tarihi, vitrinde, eslesen_jolly_tur,
+                         jt_kodu_jolly, skor, kontrol_tarihi)
+                    VALUES (:g, :kt, :v, :e, :j, :s, :k)
+                    ON CONFLICT (grup_adi, kalkis_tarihi) DO UPDATE SET
                         vitrinde          = EXCLUDED.vitrinde,
                         eslesen_jolly_tur = EXCLUDED.eslesen_jolly_tur,
                         jt_kodu_jolly     = EXCLUDED.jt_kodu_jolly,
                         skor              = EXCLUDED.skor,
                         kontrol_tarihi    = EXCLUDED.kontrol_tarihi
                 """), {
-                    "g": grup_adi,
-                    "v": str(row.get("Vitrinde", "")).strip(),
-                    "e": str(row.get("Eşleşen Jolly Tur", "")).strip(),
-                    "j": str(row.get("JT Kodu", "")).strip(),
-                    "s": str(row.get("Skor", "")).strip(),
-                    "k": str(row.get("Kontrol Tarihi", "")).strip(),
+                    "g":  grup_adi,
+                    "kt": kalkis_tarihi,
+                    "v":  str(row.get("Vitrinde", "")).strip(),
+                    "e":  str(row.get("Eşleşen Jolly Tur", "")).strip(),
+                    "j":  str(row.get("JT Kodu", "")).strip(),
+                    "s":  str(row.get("Skor", "")).strip(),
+                    "k":  str(row.get("Kontrol Tarihi", "")).strip(),
                 })
             conn.commit()
         print(f"Jolly Sonuc: {len(rows)} kayit senkronize edildi")
@@ -632,7 +660,9 @@ def vitrin_takibi_sayfasi(request: Request):
             COALESCE(j.jt_kodu_jolly, '') AS jt_kodu_jolly,
             COALESCE(j.kontrol_tarihi, '') AS kontrol_tarihi
         FROM turlar t
-        LEFT JOIN jolly_sonuc j ON LOWER(TRIM(t.tur_adi)) = LOWER(TRIM(j.grup_adi))
+        LEFT JOIN jolly_sonuc j ON
+            LOWER(TRIM(t.tur_adi)) = LOWER(TRIM(j.grup_adi))
+            AND COALESCE(t.kalkis_tarihi, '') = COALESCE(j.kalkis_tarihi, '')
         ORDER BY
             CASE
                 WHEN t.kalkis_tarihi ~ E'^\\d{2}-\\d{2}-\\d{4}$' THEN TO_DATE(t.kalkis_tarihi, 'DD-MM-YYYY')

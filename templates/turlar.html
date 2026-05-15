@@ -236,17 +236,17 @@
             <span class="text-xs text-slate-500">{{ satis_alertleri|length }} tur</span>
         </div>
         {% if satis_alertleri %}
-        <div class="overflow-x-auto">
+        <div class="table-scroll-container">
             <table class="data-table">
                 <thead>
                     <tr>
                         <th>Tur Kodu</th>
                         <th>Tur İsmi</th>
                         <th>Tur Tarihi</th>
-                        <th class="text-right">Kalan Gün</th>
-                        <th class="text-right">Kontenjan</th>
-                        <th class="text-right">Satılan</th>
-                        <th class="text-right">Doluluk</th>
+                        <th class="th-right">Kalan Gün</th>
+                        <th class="th-right">Kontenjan</th>
+                        <th class="th-right">Satılan</th>
+                        <th class="th-right">Doluluk</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -255,10 +255,10 @@
                         <td class="font-medium text-white">{{ a.jt_kodu }}</td>
                         <td class="text-slate-300" style="max-width:220px; overflow:hidden; text-overflow:ellipsis;">{{ a.tur_adi }}</td>
                         <td>{{ a.kalkis }}</td>
-                        <td class="text-right font-semibold {% if a.days_left <= 40 %}text-red-400{% else %}text-amber-400{% endif %}">{{ a.days_left }}</td>
-                        <td class="text-right">{{ a.pax }}</td>
-                        <td class="text-right">{{ a.satilan }}</td>
-                        <td class="text-right font-semibold text-red-400">%{{ a.doluluk }}</td>
+                        <td class="td-right font-semibold {% if a.days_left <= 40 %}text-red-400{% else %}text-amber-400{% endif %}">{{ a.days_left }}</td>
+                        <td class="td-right">{{ a.pax }}</td>
+                        <td class="td-right">{{ a.satilan }}</td>
+                        <td class="td-right font-bold" style="color:#F87171;">%{{ a.doluluk }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
