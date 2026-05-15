@@ -259,14 +259,14 @@ class RehberGuncelle(BaseModel):
 def login_sayfasi(request: Request):
     if request.session.get("kullanici_adi"):
         return RedirectResponse("/", status_code=302)
-    return templates.TemplateResponse("login.html", {"request": request, "hata": None})
+    return templates.TemplateResponse(request=request, name="login.html", context={"hata": None})
 
 
 @app.post("/login")
 def login_yap(request: Request, kullanici_adi: str = Form(...), sifre: str = Form(...)):
     k = kullanici_getir(kullanici_adi)
     if not k or not k["sifre_hash"] or not pwd.verify(sifre, k["sifre_hash"]):
-        return templates.TemplateResponse("login.html", {"request": request, "hata": "Kullanıcı adı veya şifre hatalı"})
+        return templates.TemplateResponse(request=request, name="login.html", context={"hata": "Kullanıcı adı veya şifre hatalı"})
     request.session["kullanici_adi"] = k["kullanici_adi"]
     return RedirectResponse("/", status_code=302)
 
