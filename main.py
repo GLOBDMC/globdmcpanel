@@ -74,6 +74,17 @@ def tablo_olustur():
         conn.execute(text("ALTER TABLE turlar ADD COLUMN IF NOT EXISTS bitis_tarihi VARCHAR(50) DEFAULT ''"))
         conn.execute(text("ALTER TABLE kullanicilar ADD COLUMN IF NOT EXISTS sifre_hash VARCHAR(200)"))
         conn.execute(text("ALTER TABLE kullanicilar ADD COLUMN IF NOT EXISTS sifre_degistir BOOLEAN DEFAULT FALSE"))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS jolly_sonuc (
+                id SERIAL PRIMARY KEY,
+                grup_adi TEXT UNIQUE,
+                vitrinde VARCHAR(10),
+                eslesen_jolly_tur TEXT,
+                jt_kodu_jolly VARCHAR(50),
+                skor VARCHAR(20),
+                kontrol_tarihi VARCHAR(50)
+            )
+        """))
         # Admin hesabı — ilk kurulumda varsayılan şifre: Glob2025!
         default_hash = pwd.hash("Glob2025!")
         conn.execute(text("""
@@ -177,6 +188,64 @@ def sheets_den_postgresql_kopyala():
     print(f"Eklenen: {eklenen}, Guncellenen: {guncellenen}")
 
 
+def jolly_sonuc_kopyala():
+    """Jolly Sonuc worksheet'inden PostgreSQL jolly_sonuc tablosuna senkronize eder."""
+    try:
+        client = sheets_baglan()
+        # TUR KONTENJANLARI ile aynı spreadsheet içinde "Jolly Sonuc" sekmesini ara
+        sheet_name = os.environ.get("JOLLY_SPREADSHEET_NAME", "TUR KONTENJANLARI")
+        try:
+            spreadsheet = client.open(sheet_name)
+        except Exception:
+            try:
+                spreadsheet = client.open("fiyat test")
+            except Exception as e2:
+                print(f"Jolly Sonuc: spreadsheet acilamadi: {e2}")
+                return
+
+        ws = None
+        for sheet in spreadsheet.worksheets():
+            if sheet.title.strip().lower() == "jolly sonuc":
+                ws = sheet
+                break
+        if ws is None:
+            print("Jolly Sonuc worksheet bulunamadi (Jolly Matcher henuz calistirilmamis)")
+            return
+
+        rows = ws.get_all_records()
+        if not rows:
+            print("Jolly Sonuc bos")
+            return
+
+        with db_engine.connect() as conn:
+            for row in rows:
+                grup_adi = str(row.get("Grup Adı", "") or row.get("Grup Adi", "")).strip()
+                if not grup_adi:
+                    continue
+                conn.execute(text("""
+                    INSERT INTO jolly_sonuc
+                        (grup_adi, vitrinde, eslesen_jolly_tur, jt_kodu_jolly, skor, kontrol_tarihi)
+                    VALUES (:g, :v, :e, :j, :s, :k)
+                    ON CONFLICT (grup_adi) DO UPDATE SET
+                        vitrinde          = EXCLUDED.vitrinde,
+                        eslesen_jolly_tur = EXCLUDED.eslesen_jolly_tur,
+                        jt_kodu_jolly     = EXCLUDED.jt_kodu_jolly,
+                        skor              = EXCLUDED.skor,
+                        kontrol_tarihi    = EXCLUDED.kontrol_tarihi
+                """), {
+                    "g": grup_adi,
+                    "v": str(row.get("Vitrinde", "")).strip(),
+                    "e": str(row.get("Eşleşen Jolly Tur", "")).strip(),
+                    "j": str(row.get("JT Kodu", "")).strip(),
+                    "s": str(row.get("Skor", "")).strip(),
+                    "k": str(row.get("Kontrol Tarihi", "")).strip(),
+                })
+            conn.commit()
+        print(f"Jolly Sonuc: {len(rows)} kayit senkronize edildi")
+    except Exception as e:
+        print(f"Jolly Sonuc sync hatasi: {e}")
+
+
 def kullanici_getir(kullanici_adi: str):
     with db_engine.connect() as conn:
         row = conn.execute(text("""
@@ -261,10 +330,16 @@ async def lifespan(app: FastAPI):
         print("Baslangic sync tamamlandi")
     except Exception as e:
         print(f"Baslangic sync hatasi: {e}")
+    try:
+        jolly_sonuc_kopyala()
+        print("Jolly Sonuc baslangic sync tamamlandi")
+    except Exception as e:
+        print(f"Jolly Sonuc baslangic sync hatasi: {e}")
     scheduler = None
     try:
         scheduler = BackgroundScheduler()
         scheduler.add_job(sheets_den_postgresql_kopyala, 'interval', hours=1)
+        scheduler.add_job(jolly_sonuc_kopyala, 'interval', hours=1)
         scheduler.start()
         print("Otomatik senkronizasyon aktif: her 1 saatte bir")
     except Exception as e:
@@ -540,3 +615,61 @@ def kontenjan_sayfasi(request: Request):
     if not kullanici:
         return RedirectResponse("/login", status_code=302)
     return RedirectResponse("/turlar", status_code=302)
+
+
+@app.get("/vitrin-takibi")
+def vitrin_takibi_sayfasi(request: Request):
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici:
+        return RedirectResponse("/login", status_code=302)
+
+    vitrin_sql = """
+        SELECT
+            t.tur_adi,
+            t.kalkis_tarihi,
+            COALESCE(j.vitrinde, '') AS vitrinde,
+            COALESCE(j.eslesen_jolly_tur, '') AS eslesen_jolly_tur,
+            COALESCE(j.jt_kodu_jolly, '') AS jt_kodu_jolly,
+            COALESCE(j.kontrol_tarihi, '') AS kontrol_tarihi
+        FROM turlar t
+        LEFT JOIN jolly_sonuc j ON LOWER(TRIM(t.tur_adi)) = LOWER(TRIM(j.grup_adi))
+        ORDER BY
+            CASE
+                WHEN t.kalkis_tarihi ~ E'^\\d{2}-\\d{2}-\\d{4}$' THEN TO_DATE(t.kalkis_tarihi, 'DD-MM-YYYY')
+                WHEN t.kalkis_tarihi ~ E'^\\d{2}\\.\\d{2}\\.\\d{4}$' THEN TO_DATE(t.kalkis_tarihi, 'DD.MM.YYYY')
+                ELSE NULL
+            END ASC NULLS LAST
+    """
+    with db_engine.connect() as conn:
+        vitrin_verileri = conn.execute(text(vitrin_sql)).fetchall()
+
+    toplam   = len(vitrin_verileri)
+    var_sayi = sum(1 for v in vitrin_verileri if v[2] == "VAR")
+    yok_sayi = sum(1 for v in vitrin_verileri if v[2] == "YOK")
+    son_yerler = sum(1 for t in tur_verileri_getir() if t[6] is not None and 1 <= t[6] <= 5)
+
+    return templates.TemplateResponse(
+        request=request,
+        name="vitrin_takibi.html",
+        context={
+            "kullanici": kullanici,
+            "aktif_sayfa": "vitrin",
+            "vitrin_verileri": vitrin_verileri,
+            "toplam": toplam,
+            "var_sayi": var_sayi,
+            "yok_sayi": yok_sayi,
+            "kritik_sayi": son_yerler,
+        }
+    )
+
+
+@app.get("/api/vitrin-sync")
+def vitrin_sync(request: Request):
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici:
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=401)
+    try:
+        jolly_sonuc_kopyala()
+        return JSONResponse({"ok": True, "mesaj": "Jolly Sonuc sync tamamlandi"})
+    except Exception as e:
+        return JSONResponse({"ok": False, "hata": str(e)}, status_code=500)
