@@ -220,12 +220,16 @@ def satis_aleri_getir():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    tablo_olustur()
+    try:
+        tablo_olustur()
+    except Exception as e:
+        print(f"Tablo olusturma hatasi: {e}")
     try:
         sheets_den_postgresql_kopyala()
         print("Baslangic sync tamamlandi")
     except Exception as e:
         print(f"Baslangic sync hatasi: {e}")
+    scheduler = None
     try:
         scheduler = BackgroundScheduler()
         scheduler.add_job(sheets_den_postgresql_kopyala, 'interval', hours=1)
@@ -234,10 +238,11 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Scheduler baslatılamadı: {e}")
     yield
-    try:
-        scheduler.shutdown()
-    except Exception:
-        pass
+    if scheduler:
+        try:
+            scheduler.shutdown()
+        except Exception:
+            pass
 
 
 app = FastAPI(lifespan=lifespan)
