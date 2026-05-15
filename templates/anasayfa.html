@@ -403,7 +403,7 @@
         }
 
         function filtrele() {
-            const arama = aramaInput.value.toLowerCase();
+            const arama = aramaInput.value.toLocaleLowerCase('tr');
             const havayolu = havayoluFiltre.value;
             const doluluk = dolulukFiltre.value;
             const baslangic = tarihBaslangic.value ? new Date(tarihBaslangic.value) : null;
@@ -412,7 +412,7 @@
             let gorunen = 0;
 
             satirlar.forEach(function(satir) {
-                const metin = satir.textContent.toLowerCase();
+                const metin = satir.textContent.toLocaleLowerCase('tr');
                 const satirHavayolu = satir.dataset.havayolu;
                 const kalan = parseInt(satir.dataset.kalan);
                 const satirTarihi = tarihParse(satir.dataset.tarih);
@@ -432,7 +432,7 @@
 
             // Mobil kartları da filtrele
             document.querySelectorAll('.tur-kart').forEach(function(kart) {
-                const metin = kart.textContent.toLowerCase();
+                const metin = kart.textContent.toLocaleLowerCase('tr');
                 const kartHavayolu = kart.dataset.havayolu;
                 const kalan = parseInt(kart.dataset.kalan);
                 const kartTarihi = tarihParse(kart.dataset.tarih);
