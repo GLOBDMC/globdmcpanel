@@ -247,11 +247,14 @@ def jolly_sonuc_kopyala():
                 grup_adi = str(row.get("Grup Adı", "") or row.get("Grup Adi", "")).strip()
                 if not grup_adi:
                     continue
+                kalkis_tarihi = str(
+                    row.get("Gidiş Tarihi", "") or row.get("Gidis Tarihi", "")
+                ).strip()
                 conn.execute(text("""
                     INSERT INTO jolly_sonuc
-                        (grup_adi, vitrinde, eslesen_jolly_tur,
+                        (grup_adi, kalkis_tarihi, vitrinde, eslesen_jolly_tur,
                          jt_kodu_jolly, skor, kontrol_tarihi)
-                    VALUES (:g, :v, :e, :j, :s, :k)
+                    VALUES (:g, :kt, :v, :e, :j, :s, :k)
                     ON CONFLICT (grup_adi, kalkis_tarihi) DO UPDATE SET
                         vitrinde          = EXCLUDED.vitrinde,
                         eslesen_jolly_tur = EXCLUDED.eslesen_jolly_tur,
@@ -260,6 +263,7 @@ def jolly_sonuc_kopyala():
                         kontrol_tarihi    = EXCLUDED.kontrol_tarihi
                 """), {
                     "g":  grup_adi,
+                    "kt": kalkis_tarihi,
                     "v":  str(row.get("Vitrinde", "")).strip(),
                     "e":  str(row.get("Eşleşen Jolly Tur", "")).strip(),
                     "j":  str(row.get("JT Kodu", "")).strip(),
@@ -658,7 +662,9 @@ def vitrin_takibi_sayfasi(request: Request):
             COALESCE(j.jt_kodu_jolly, '') AS jt_kodu_jolly,
             COALESCE(j.kontrol_tarihi, '') AS kontrol_tarihi
         FROM turlar t
-        LEFT JOIN jolly_sonuc j ON LOWER(TRIM(t.tur_adi)) = LOWER(TRIM(j.grup_adi))
+        LEFT JOIN jolly_sonuc j ON
+            LOWER(TRIM(t.tur_adi)) = LOWER(TRIM(j.grup_adi))
+            AND COALESCE(t.kalkis_tarihi, '') = COALESCE(j.kalkis_tarihi, '')
         ORDER BY
             CASE
                 WHEN t.kalkis_tarihi ~ E'^\\d{2}-\\d{2}-\\d{4}$' THEN TO_DATE(t.kalkis_tarihi, 'DD-MM-YYYY')
