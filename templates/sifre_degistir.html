@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <title>Şifre Değiştir – GlobDMC</title>
+    <link rel="icon" type="image/jpeg" href="/static/logo.jpg">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'glob-dark': '#252D45',
+                        'glob-accent': '#3B4663'
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-gray-50 min-h-screen flex items-center justify-center">
+
+    <div class="w-full max-w-sm">
+        <div class="text-center mb-6">
+            <img src="/static/logo.jpg" alt="GlobDMC" class="h-12 rounded-md mx-auto mb-3"/>
+            <h1 class="text-xl font-bold text-glob-dark">Şifrenizi Değiştirin</h1>
+            <p class="text-sm text-gray-500 mt-1">İlk girişte şifrenizi güncellemeniz gerekiyor.</p>
+        </div>
+
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            {% if hata %}
+            <div class="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
+                {{ hata }}
+            </div>
+            {% endif %}
+
+            <form method="post" action="/sifre-degistir">
+                <div class="mb-4">
+                    <label class="block text-xs font-medium text-gray-600 mb-1">Yeni Şifre</label>
+                    <input type="password" name="yeni_sifre" required minlength="6"
+                           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-glob-dark"
+                           placeholder="En az 6 karakter"/>
+                </div>
+                <div class="mb-5">
+                    <label class="block text-xs font-medium text-gray-600 mb-1">Yeni Şifre (Tekrar)</label>
+                    <input type="password" name="yeni_sifre_tekrar" required minlength="6"
+                           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-glob-dark"
+                           placeholder="Şifreyi tekrar girin"/>
+                </div>
+                <button type="submit"
+                        class="w-full bg-glob-dark text-white py-2 rounded-lg text-sm font-medium hover:bg-glob-accent transition-colors">
+                    Şifremi Güncelle
+                </button>
+            </form>
+        </div>
+
+        <p class="text-center text-xs text-gray-400 mt-4">
+            {{ kullanici.ad_soyad }} olarak giriş yaptınız.
+            <a href="/logout" class="text-gray-500 hover:text-gray-700 underline">Çıkış</a>
+        </p>
+    </div>
+
+</body>
+</html>

@@ -72,6 +72,7 @@ def tablo_olustur():
         conn.execute(text(sql_kullanicilar))
         conn.execute(text("ALTER TABLE turlar ADD COLUMN IF NOT EXISTS rehber VARCHAR(200) DEFAULT ''"))
         conn.execute(text("ALTER TABLE kullanicilar ADD COLUMN IF NOT EXISTS sifre_hash VARCHAR(200)"))
+        conn.execute(text("ALTER TABLE kullanicilar ADD COLUMN IF NOT EXISTS sifre_degistir BOOLEAN DEFAULT FALSE"))
         # Admin hesabı — ilk kurulumda varsayılan şifre: Glob2025!
         default_hash = pwd.hash("Glob2025!")
         conn.execute(text("""
@@ -149,7 +150,7 @@ def sheets_den_postgresql_kopyala():
 def kullanici_getir(kullanici_adi: str):
     with db_engine.connect() as conn:
         row = conn.execute(text("""
-            SELECT kullanici_adi, ad_soyad, pozisyon, email, rol, sifre_hash
+            SELECT kullanici_adi, ad_soyad, pozisyon, email, rol, sifre_hash, sifre_degistir
             FROM kullanicilar WHERE kullanici_adi = :k AND aktif = TRUE LIMIT 1
         """), {"k": kullanici_adi}).fetchone()
         if row:
@@ -162,6 +163,7 @@ def kullanici_getir(kullanici_adi: str):
                 "email": row[3],
                 "rol": row[4],
                 "sifre_hash": row[5],
+                "sifre_degistir": row[6] if len(row) > 6 else False,
                 "bas_harfler": bas_harfler,
             }
     return None
@@ -268,6 +270,8 @@ def login_yap(request: Request, kullanici_adi: str = Form(...), sifre: str = For
     if not k or not k["sifre_hash"] or not pwd.verify(sifre, k["sifre_hash"]):
         return templates.TemplateResponse(request=request, name="login.html", context={"hata": "Kullanıcı adı veya şifre hatalı"})
     request.session["kullanici_adi"] = k["kullanici_adi"]
+    if k.get("sifre_degistir"):
+        return RedirectResponse("/sifre-degistir", status_code=302)
     return RedirectResponse("/", status_code=302)
 
 
@@ -301,8 +305,8 @@ def kullanici_ekle(request: Request, kullanici_adi: str = Form(...), ad_soyad: s
     try:
         with db_engine.connect() as conn:
             conn.execute(text("""
-                INSERT INTO kullanicilar (kullanici_adi, ad_soyad, pozisyon, email, rol, sifre_hash)
-                VALUES (:k, :a, :p, :e, :r, :h)
+                INSERT INTO kullanicilar (kullanici_adi, ad_soyad, pozisyon, email, rol, sifre_hash, sifre_degistir)
+                VALUES (:k, :a, :p, :e, :r, :h, TRUE)
             """), {"k": kullanici_adi, "a": ad_soyad, "p": pozisyon, "e": email, "r": rol, "h": h})
             conn.commit()
         return JSONResponse({"ok": True})
@@ -330,7 +334,7 @@ def sifre_sifirla(uid: int, request: Request, yeni_sifre: str = Form(...)):
     if not k or k["rol"] != "admin":
         return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
     with db_engine.connect() as conn:
-        conn.execute(text("UPDATE kullanicilar SET sifre_hash=:h WHERE id=:id"),
+        conn.execute(text("UPDATE kullanicilar SET sifre_hash=:h, sifre_degistir=TRUE WHERE id=:id"),
                      {"h": pwd.hash(yeni_sifre), "id": uid})
         conn.commit()
     return JSONResponse({"ok": True})
@@ -378,11 +382,39 @@ def rehber_guncelle(jt_kodu: str, body: RehberGuncelle):
     return JSONResponse({"ok": True, "rehber": body.rehber.strip()})
 
 
+@app.get("/sifre-degistir")
+def sifre_degistir_sayfasi(request: Request):
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici:
+        return RedirectResponse("/login", status_code=302)
+    return templates.TemplateResponse(request=request, name="sifre_degistir.html", context={"hata": None, "kullanici": kullanici})
+
+
+@app.post("/sifre-degistir")
+def sifre_degistir_yap(request: Request, yeni_sifre: str = Form(...), yeni_sifre_tekrar: str = Form(...)):
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici:
+        return RedirectResponse("/login", status_code=302)
+    if yeni_sifre != yeni_sifre_tekrar:
+        return templates.TemplateResponse(request=request, name="sifre_degistir.html",
+                                          context={"hata": "Şifreler eşleşmiyor.", "kullanici": kullanici})
+    if len(yeni_sifre) < 6:
+        return templates.TemplateResponse(request=request, name="sifre_degistir.html",
+                                          context={"hata": "Şifre en az 6 karakter olmalı.", "kullanici": kullanici})
+    with db_engine.connect() as conn:
+        conn.execute(text("UPDATE kullanicilar SET sifre_hash=:h, sifre_degistir=FALSE WHERE kullanici_adi=:k"),
+                     {"h": pwd.hash(yeni_sifre), "k": kullanici["kullanici_adi"]})
+        conn.commit()
+    return RedirectResponse("/", status_code=302)
+
+
 @app.get("/")
 def anasayfa(request: Request):
     kullanici = oturum_kullanicisi(request)
     if not kullanici:
         return RedirectResponse("/login", status_code=302)
+    if kullanici.get("sifre_degistir"):
+        return RedirectResponse("/sifre-degistir", status_code=302)
     select_sql = """
         SELECT jt_kodu, tur_adi, kalkis_tarihi, havayolu, pax, satilan, kalan, guncel_fiyat, rehber
         FROM turlar
