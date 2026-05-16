@@ -94,6 +94,13 @@ def tablo_olustur():
         conn.execute(text(
             "ALTER TABLE jolly_sonuc ADD COLUMN IF NOT EXISTS platform VARCHAR(50) DEFAULT 'jolly'"
         ))
+        # Durum değişim takibi kolonları
+        conn.execute(text(
+            "ALTER TABLE jolly_sonuc ADD COLUMN IF NOT EXISTS onceki_vitrinde VARCHAR(10)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE jolly_sonuc ADD COLUMN IF NOT EXISTS degisim_tarihi VARCHAR(50)"
+        ))
         # Unique constraint migrasyonu: (grup_adi, kalkis_tarihi, platform)
         conn.execute(text("""
             DO $$
@@ -254,9 +261,20 @@ def jolly_sonuc_kopyala():
 
         data_rows = all_values[1:]
         with db_engine.connect() as conn:
-            conn.execute(text("DELETE FROM jolly_sonuc"))
+            # Önce mevcut durumu kaydet (değişim tespiti için)
+            mevcut = {}
+            for r in conn.execute(text(
+                "SELECT grup_adi, kalkis_tarihi, platform, vitrinde, onceki_vitrinde, degisim_tarihi "
+                "FROM jolly_sonuc"
+            )).fetchall():
+                mevcut[(r[0], r[1], r[2])] = {
+                    "vitrinde": r[3], "onceki": r[4], "degisim": r[5]
+                }
+
+            simdi = datetime.now().strftime("%Y-%m-%d %H:%M")
+            islenen_keyler = set()
+
             for row in data_rows:
-                # Yeterli kolon yoksa atla
                 if len(row) < 3:
                     continue
                 grup_adi = str(row[0]).strip()
@@ -268,26 +286,53 @@ def jolly_sonuc_kopyala():
                 jt_kodu       = str(row[4]).strip() if len(row) > 4 else ""
                 skor          = str(row[5]).strip() if len(row) > 5 else ""
                 kontrol       = str(row[7]).strip() if len(row) > 7 else ""
+
+                key = (grup_adi, kalkis_tarihi, "jolly")
+                islenen_keyler.add(key)
+                eski = mevcut.get(key)
+
+                # Değişim tespiti
+                if eski and eski["vitrinde"] and eski["vitrinde"] != vitrinde:
+                    yeni_onceki   = eski["vitrinde"]
+                    yeni_degisim  = simdi
+                elif eski:
+                    # Değişim yok — önceki bilgileri koru
+                    yeni_onceki  = eski["onceki"]
+                    yeni_degisim = eski["degisim"]
+                else:
+                    yeni_onceki  = None
+                    yeni_degisim = None
+
                 conn.execute(text("""
                     INSERT INTO jolly_sonuc
                         (grup_adi, kalkis_tarihi, platform, vitrinde, eslesen_jolly_tur,
-                         jt_kodu_jolly, skor, kontrol_tarihi)
-                    VALUES (:g, :kt, 'jolly', :v, :e, :j, :s, :k)
+                         jt_kodu_jolly, skor, kontrol_tarihi, onceki_vitrinde, degisim_tarihi)
+                    VALUES (:g, :kt, 'jolly', :v, :e, :j, :s, :k, :ov, :dt)
                     ON CONFLICT (grup_adi, kalkis_tarihi, platform) DO UPDATE SET
+                        onceki_vitrinde   = EXCLUDED.onceki_vitrinde,
+                        degisim_tarihi    = EXCLUDED.degisim_tarihi,
                         vitrinde          = EXCLUDED.vitrinde,
                         eslesen_jolly_tur = EXCLUDED.eslesen_jolly_tur,
                         jt_kodu_jolly     = EXCLUDED.jt_kodu_jolly,
                         skor              = EXCLUDED.skor,
                         kontrol_tarihi    = EXCLUDED.kontrol_tarihi
                 """), {
-                    "g":  grup_adi,
-                    "kt": kalkis_tarihi,
-                    "v":  vitrinde,
-                    "e":  eslesen,
-                    "j":  jt_kodu,
-                    "s":  skor,
-                    "k":  kontrol,
+                    "g": grup_adi, "kt": kalkis_tarihi,
+                    "v": vitrinde, "e": eslesen, "j": jt_kodu,
+                    "s": skor, "k": kontrol,
+                    "ov": yeni_onceki, "dt": yeni_degisim,
                 })
+
+            # Artık listede olmayan kayıtları YOK yap (siteden kaldırıldı)
+            for key, eski in mevcut.items():
+                if key not in islenen_keyler and eski["vitrinde"] == "VAR":
+                    conn.execute(text("""
+                        UPDATE jolly_sonuc SET
+                            onceki_vitrinde = vitrinde,
+                            degisim_tarihi  = :simdi,
+                            vitrinde        = 'YOK'
+                        WHERE grup_adi=:g AND kalkis_tarihi=:kt AND platform=:p
+                    """), {"simdi": simdi, "g": key[0], "kt": key[1], "p": key[2]})
             conn.commit()
         print(f"Jolly Sonuc: {len(data_rows)} kayit senkronize edildi")
     except Exception as e:
@@ -683,13 +728,17 @@ def vitrin_takibi_sayfasi(request: Request):
             SELECT
                 t.tur_adi,
                 t.kalkis_tarihi,
-                MAX(CASE WHEN j.platform='jolly' THEN j.vitrinde       ELSE '' END) AS jolly_vitrinde,
+                MAX(CASE WHEN j.platform='jolly' THEN j.vitrinde          ELSE '' END) AS jolly_vitrinde,
                 MAX(CASE WHEN j.platform='jolly' THEN j.eslesen_jolly_tur ELSE '' END) AS jolly_eslesen,
-                MAX(CASE WHEN j.platform='jolly' THEN j.jt_kodu_jolly  ELSE '' END) AS jolly_kodu,
-                MAX(CASE WHEN j.platform='jolly' THEN j.kontrol_tarihi ELSE '' END) AS jolly_kontrol,
-                MAX(CASE WHEN j.platform='tatilsepeti' THEN j.vitrinde ELSE '' END) AS ts_vitrinde,
+                MAX(CASE WHEN j.platform='jolly' THEN j.jt_kodu_jolly     ELSE '' END) AS jolly_kodu,
+                MAX(CASE WHEN j.platform='jolly' THEN j.kontrol_tarihi    ELSE '' END) AS jolly_kontrol,
+                MAX(CASE WHEN j.platform='jolly' THEN j.onceki_vitrinde   ELSE '' END) AS jolly_onceki,
+                MAX(CASE WHEN j.platform='jolly' THEN j.degisim_tarihi    ELSE '' END) AS jolly_degisim,
+                MAX(CASE WHEN j.platform='tatilsepeti' THEN j.vitrinde          ELSE '' END) AS ts_vitrinde,
                 MAX(CASE WHEN j.platform='tatilsepeti' THEN j.eslesen_jolly_tur ELSE '' END) AS ts_eslesen,
-                MAX(CASE WHEN j.platform='tatilsepeti' THEN j.kontrol_tarihi ELSE '' END) AS ts_kontrol
+                MAX(CASE WHEN j.platform='tatilsepeti' THEN j.kontrol_tarihi    ELSE '' END) AS ts_kontrol,
+                MAX(CASE WHEN j.platform='tatilsepeti' THEN j.onceki_vitrinde   ELSE '' END) AS ts_onceki,
+                MAX(CASE WHEN j.platform='tatilsepeti' THEN j.degisim_tarihi    ELSE '' END) AS ts_degisim
             FROM turlar t
             LEFT JOIN jolly_sonuc j ON
                 LOWER(TRIM(t.tur_adi)) = LOWER(TRIM(j.grup_adi))
@@ -709,19 +758,32 @@ def vitrin_takibi_sayfasi(request: Request):
         {
             "tur_adi":       r[0],
             "kalkis_tarihi": r[1],
-            "jolly":    {"vitrinde": r[2], "eslesen": r[3], "kodu": r[4], "kontrol": r[5]},
-            "tatilsepeti": {"vitrinde": r[6], "eslesen": r[7], "kontrol": r[8]},
+            "jolly": {
+                "vitrinde": r[2], "eslesen": r[3], "kodu": r[4],
+                "kontrol": r[5], "onceki": r[6], "degisim": r[7],
+            },
+            "tatilsepeti": {
+                "vitrinde": r[8], "eslesen": r[9], "kontrol": r[10],
+                "onceki": r[11], "degisim": r[12],
+            },
         }
         for r in rows
     ]
 
     toplam = len(vitrin_verileri)
-    # Platform bazında VAR sayıları
+
+    # Platform bazında istatistikler
     platform_stats = {}
     for p in ["jolly", "tatilsepeti"]:
+        kapanan = sum(1 for v in vitrin_verileri
+                      if v[p]["onceki"] == "VAR" and v[p]["vitrinde"] == "YOK")
+        acilan  = sum(1 for v in vitrin_verileri
+                      if v[p]["onceki"] == "YOK" and v[p]["vitrinde"] == "VAR")
         platform_stats[p] = {
-            "var": sum(1 for v in vitrin_verileri if v[p]["vitrinde"] == "VAR"),
-            "yok": sum(1 for v in vitrin_verileri if v[p]["vitrinde"] == "YOK"),
+            "var":     sum(1 for v in vitrin_verileri if v[p]["vitrinde"] == "VAR"),
+            "yok":     sum(1 for v in vitrin_verileri if v[p]["vitrinde"] == "YOK"),
+            "kapanan": kapanan,
+            "acilan":  acilan,
         }
 
     son_yerler = sum(1 for t in tur_verileri_getir() if t[6] is not None and 1 <= t[6] <= 5)

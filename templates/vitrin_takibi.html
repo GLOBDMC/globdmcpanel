@@ -84,6 +84,27 @@
     body[data-platform="tatilsepeti"] .col-jolly { display: none; }
     body[data-platform="jolly"]       .col-jolly-detail { display: table-cell; }
     body:not([data-platform="jolly"]) .col-jolly-detail { display: none; }
+
+    /* Değişim satırı vurgusu */
+    .satir-kapandi { background: rgba(239,68,68,0.06) !important; }
+    .satir-acildi  { background: rgba(16,185,129,0.06) !important; }
+
+    .badge-kapandi {
+        display: inline-flex; align-items: center; gap: 3px;
+        font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 999px;
+        background: rgba(239,68,68,0.15); color: #F87171;
+        border: 1px solid rgba(239,68,68,0.25); white-space: nowrap;
+    }
+    .badge-acildi {
+        display: inline-flex; align-items: center; gap: 3px;
+        font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 999px;
+        background: rgba(16,185,129,0.15); color: #34D399;
+        border: 1px solid rgba(16,185,129,0.25); white-space: nowrap;
+    }
+
+    /* Değişimler sekmesi gizleme */
+    body:not([data-platform="degisimler"]) #degisimlerPanel { display: none; }
+    body[data-platform="degisimler"] #anaListe { display: none; }
 </style>
 {% endblock %}
 
@@ -131,10 +152,20 @@
             <span class="text-slate-600 text-xs">henüz veri yok</span>
             {% endif %}
         </button>
+        {% set toplam_degisim = platform_stats.jolly.kapanan + platform_stats.jolly.acilan + platform_stats.tatilsepeti.kapanan + platform_stats.tatilsepeti.acilan %}
+        <button class="platform-tab" data-p="degisimler" onclick="platformSec('degisimler', this)">
+            <span class="tab-dot" style="background:#A855F7;"></span>
+            Değişimler
+            {% if toplam_degisim > 0 %}
+            <span style="background:rgba(239,68,68,0.2);color:#F87171;font-size:10px;padding:1px 6px;border-radius:999px;font-weight:700;">{{ toplam_degisim }}</span>
+            {% else %}
+            <span class="text-slate-600 text-xs">yok</span>
+            {% endif %}
+        </button>
     </div>
 
     <!-- Filtreler -->
-    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+    <div id="filtreAlani" class="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div class="sm:col-span-2">
             <label class="block text-xs text-slate-500 mb-1 font-medium">Arama</label>
             <input type="text" id="vitrinArama" class="filter-input"
@@ -159,43 +190,105 @@
 <!-- Tablo -->
 <div class="card" style="padding:0; overflow:hidden;">
 {% if vitrin_verileri %}
+
+<!-- Değişimler Paneli -->
+<div id="degisimlerPanel" style="display:none;">
+    <div class="table-scroll-container">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Tur İsmi</th>
+                <th>Gidiş Tarihi</th>
+                <th>Platform</th>
+                <th class="th-center">Önceki</th>
+                <th class="th-center">Yeni</th>
+                <th class="th-center" style="color:#334155;">Değişim Tarihi</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for v in vitrin_verileri %}
+            {% if v.jolly.onceki and v.jolly.onceki != v.jolly.vitrinde %}
+            <tr class="{% if v.jolly.onceki == 'VAR' %}satir-kapandi{% else %}satir-acildi{% endif %}">
+                <td class="text-slate-200" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;">{{ v.tur_adi }}</td>
+                <td class="text-slate-400 font-mono text-xs">{{ v.kalkis_tarihi or '—' }}</td>
+                <td><span class="text-xs text-emerald-400 font-semibold">Jolly</span></td>
+                <td class="td-center">
+                    {% if v.jolly.onceki == 'VAR' %}<span class="pill-var">VAR</span>
+                    {% else %}<span class="pill-yok">YOK</span>{% endif %}
+                </td>
+                <td class="td-center">
+                    {% if v.jolly.vitrinde == 'VAR' %}<span class="pill-var">VAR</span>
+                    {% else %}<span class="pill-yok">YOK</span>{% endif %}
+                </td>
+                <td class="td-center text-slate-500" style="font-size:11px;">{{ v.jolly.degisim or '—' }}</td>
+            </tr>
+            {% endif %}
+            {% if v.tatilsepeti.onceki and v.tatilsepeti.onceki != v.tatilsepeti.vitrinde %}
+            <tr class="{% if v.tatilsepeti.onceki == 'VAR' %}satir-kapandi{% else %}satir-acildi{% endif %}">
+                <td class="text-slate-200" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;">{{ v.tur_adi }}</td>
+                <td class="text-slate-400 font-mono text-xs">{{ v.kalkis_tarihi or '—' }}</td>
+                <td><span class="text-xs text-amber-400 font-semibold">Tatil Sepeti</span></td>
+                <td class="td-center">
+                    {% if v.tatilsepeti.onceki == 'VAR' %}<span class="pill-var">VAR</span>
+                    {% else %}<span class="pill-yok">YOK</span>{% endif %}
+                </td>
+                <td class="td-center">
+                    {% if v.tatilsepeti.vitrinde == 'VAR' %}<span class="pill-var">VAR</span>
+                    {% else %}<span class="pill-yok">YOK</span>{% endif %}
+                </td>
+                <td class="td-center text-slate-500" style="font-size:11px;">{{ v.tatilsepeti.degisim or '—' }}</td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+<!-- Ana Liste -->
+<div id="anaListe">
 <div class="table-scroll-container">
 <table class="data-table" id="vitrinTablosu">
     <thead>
         <tr>
             <th>Tur İsmi</th>
             <th>Gidiş Tarihi</th>
-            <!-- Jolly sütunları -->
             <th class="th-center col-jolly">Jolly</th>
             <th class="col-jolly col-jolly-detail" style="display:none;">Eşleşen Jolly Tur</th>
-            <!-- Tatil Sepeti sütunları -->
             <th class="th-center col-ts">Tatil Sepeti</th>
-            <!-- Son kontrol (platform bazlı) -->
-            <th class="th-center" style="color:#334155;">Son Kontrol</th>
+            <th class="th-center" style="color:#334155; width:100px;">Son Kontrol</th>
         </tr>
     </thead>
     <tbody id="vitrinGovde">
         {% for v in vitrin_verileri %}
-        <tr class="vitrin-satir {% if v.jolly.vitrinde == 'VAR' %}satir-var-jolly{% elif v.jolly.vitrinde == 'YOK' %}satir-yok-jolly{% endif %}"
+        {% set jolly_degisti = v.jolly.onceki and v.jolly.onceki != v.jolly.vitrinde %}
+        {% set ts_degisti    = v.tatilsepeti.onceki and v.tatilsepeti.onceki != v.tatilsepeti.vitrinde %}
+        <tr class="vitrin-satir
+                   {% if jolly_degisti and v.jolly.onceki == 'VAR' %}satir-kapandi
+                   {% elif jolly_degisti and v.jolly.onceki == 'YOK' %}satir-acildi
+                   {% elif v.jolly.vitrinde == 'VAR' %}satir-var-jolly
+                   {% elif v.jolly.vitrinde == 'YOK' %}satir-yok-jolly{% endif %}"
             data-tur="{{ v.tur_adi|lower }}"
             data-jolly-eslesen="{{ v.jolly.eslesen|lower }}"
             data-jolly="{{ v.jolly.vitrinde }}"
             data-ts="{{ v.tatilsepeti.vitrinde }}">
 
-            <td class="text-slate-200" style="max-width:260px; overflow:hidden; text-overflow:ellipsis;">
+            <td class="text-slate-200" style="max-width:240px; overflow:hidden; text-overflow:ellipsis;">
                 {{ v.tur_adi }}
+                {% if jolly_degisti %}
+                    {% if v.jolly.onceki == 'VAR' %}<span class="badge-kapandi ml-1">↓ Kapandı</span>
+                    {% else %}<span class="badge-acildi ml-1">↑ Açıldı</span>{% endif %}
+                {% endif %}
             </td>
             <td class="text-slate-400 font-mono text-xs">{{ v.kalkis_tarihi or '—' }}</td>
 
-            <!-- Jolly VAR/YOK -->
             <td class="td-center col-jolly">
                 {% if v.jolly.vitrinde == 'VAR' %}<span class="pill-var">VAR</span>
                 {% elif v.jolly.vitrinde == 'YOK' %}<span class="pill-yok">YOK</span>
                 {% else %}<span class="pill-bilinmiyor">—</span>{% endif %}
             </td>
 
-            <!-- Jolly detay (sadece Jolly sekmesinde görünür) -->
-            <td class="col-jolly col-jolly-detail" style="display:none; max-width:240px; overflow:hidden; text-overflow:ellipsis;">
+            <td class="col-jolly col-jolly-detail" style="display:none; max-width:220px; overflow:hidden; text-overflow:ellipsis;">
                 {% if v.jolly.eslesen %}
                 <span class="text-slate-300 text-xs">{{ v.jolly.eslesen }}</span>
                 {% if v.jolly.kodu %}
@@ -204,14 +297,12 @@
                 {% else %}<span class="text-slate-600 italic text-xs">—</span>{% endif %}
             </td>
 
-            <!-- Tatil Sepeti VAR/YOK -->
             <td class="td-center col-ts">
                 {% if v.tatilsepeti.vitrinde == 'VAR' %}<span class="pill-var">VAR</span>
                 {% elif v.tatilsepeti.vitrinde == 'YOK' %}<span class="pill-yok">YOK</span>
                 {% else %}<span class="pill-bilinmiyor">—</span>{% endif %}
             </td>
 
-            <!-- Son kontrol -->
             <td class="td-center text-slate-600" style="font-size:11px;">
                 {{ v.jolly.kontrol or v.tatilsepeti.kontrol or '—' }}
             </td>
@@ -219,6 +310,7 @@
         {% endfor %}
     </tbody>
 </table>
+</div>
 </div>
 {% else %}
 <div class="coming-soon py-16">
@@ -241,12 +333,22 @@
     function platformSec(p, btn) {
         aktifPlatform = p;
         document.body.setAttribute('data-platform', p);
-
-        // Tab aktif stili
         document.querySelectorAll('.platform-tab').forEach(t => t.classList.remove('active'));
         btn.classList.add('active');
 
-        vitrinFiltrele();
+        const degPanel  = document.getElementById('degisimlerPanel');
+        const anaListe  = document.getElementById('anaListe');
+        const filtreler = document.getElementById('filtreAlani');
+        if (p === 'degisimler') {
+            if (degPanel)  degPanel.style.display  = '';
+            if (anaListe)  anaListe.style.display   = 'none';
+            if (filtreler) filtreler.style.display  = 'none';
+        } else {
+            if (degPanel)  degPanel.style.display  = 'none';
+            if (anaListe)  anaListe.style.display   = '';
+            if (filtreler) filtreler.style.display  = '';
+            vitrinFiltrele();
+        }
     }
 
     const vitrinArama       = document.getElementById('vitrinArama');
