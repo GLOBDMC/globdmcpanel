@@ -235,21 +235,34 @@ def jolly_sonuc_kopyala():
             print("Jolly Sonuc worksheet bulunamadi (Jolly Matcher henuz calistirilmamis)")
             return
 
-        rows = ws.get_all_records()
-        if not rows:
+        # get_all_values() kolon adı encoding sorununu bypass eder (pozisyon bazlı)
+        all_values = ws.get_all_values()
+        if len(all_values) < 2:
             print("Jolly Sonuc bos")
             return
 
+        # Beklenen sütun sırası (jolly_matcher _OUTPUT_HEADERS ile eşleşmeli):
+        # 0:Grup Adı  1:Gidiş Tarihi  2:Vitrinde  3:Eşleşen Jolly Tur
+        # 4:JT Kodu   5:Skor          6:Sebep      7:Kontrol Tarihi
+        header = all_values[0]
+        print(f"Jolly Sonuc header: {header}")
+
+        data_rows = all_values[1:]
         with db_engine.connect() as conn:
-            # Mevcut kayıtları temizle, taze veriyle doldur
             conn.execute(text("DELETE FROM jolly_sonuc"))
-            for row in rows:
-                grup_adi = str(row.get("Grup Adı", "") or row.get("Grup Adi", "")).strip()
+            for row in data_rows:
+                # Yeterli kolon yoksa atla
+                if len(row) < 3:
+                    continue
+                grup_adi = str(row[0]).strip()
                 if not grup_adi:
                     continue
-                kalkis_tarihi = str(
-                    row.get("Gidiş Tarihi", "") or row.get("Gidis Tarihi", "")
-                ).strip()
+                kalkis_tarihi = str(row[1]).strip() if len(row) > 1 else ""
+                vitrinde      = str(row[2]).strip() if len(row) > 2 else ""
+                eslesen       = str(row[3]).strip() if len(row) > 3 else ""
+                jt_kodu       = str(row[4]).strip() if len(row) > 4 else ""
+                skor          = str(row[5]).strip() if len(row) > 5 else ""
+                kontrol       = str(row[7]).strip() if len(row) > 7 else ""
                 conn.execute(text("""
                     INSERT INTO jolly_sonuc
                         (grup_adi, kalkis_tarihi, vitrinde, eslesen_jolly_tur,
@@ -264,14 +277,14 @@ def jolly_sonuc_kopyala():
                 """), {
                     "g":  grup_adi,
                     "kt": kalkis_tarihi,
-                    "v":  str(row.get("Vitrinde", "")).strip(),
-                    "e":  str(row.get("Eşleşen Jolly Tur", "")).strip(),
-                    "j":  str(row.get("JT Kodu", "")).strip(),
-                    "s":  str(row.get("Skor", "")).strip(),
-                    "k":  str(row.get("Kontrol Tarihi", "")).strip(),
+                    "v":  vitrinde,
+                    "e":  eslesen,
+                    "j":  jt_kodu,
+                    "s":  skor,
+                    "k":  kontrol,
                 })
             conn.commit()
-        print(f"Jolly Sonuc: {len(rows)} kayit senkronize edildi")
+        print(f"Jolly Sonuc: {len(data_rows)} kayit senkronize edildi")
     except Exception as e:
         print(f"Jolly Sonuc sync hatasi: {e}")
 
