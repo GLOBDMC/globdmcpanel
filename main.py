@@ -90,21 +90,26 @@ def tablo_olustur():
         conn.execute(text(
             "ALTER TABLE jolly_sonuc ADD COLUMN IF NOT EXISTS kalkis_tarihi VARCHAR(50) DEFAULT ''"
         ))
-        # Unique constraint migrasyonu: grup_adi tek → (grup_adi, kalkis_tarihi) composite
+        # Platform kolonu ekle (çok-platform desteği)
+        conn.execute(text(
+            "ALTER TABLE jolly_sonuc ADD COLUMN IF NOT EXISTS platform VARCHAR(50) DEFAULT 'jolly'"
+        ))
+        # Unique constraint migrasyonu: (grup_adi, kalkis_tarihi, platform)
         conn.execute(text("""
             DO $$
             BEGIN
-                BEGIN
-                    ALTER TABLE jolly_sonuc DROP CONSTRAINT jolly_sonuc_grup_adi_key;
-                EXCEPTION WHEN undefined_object THEN NULL;
-                END;
+                -- Eski constraint'leri düşür
+                BEGIN ALTER TABLE jolly_sonuc DROP CONSTRAINT jolly_sonuc_grup_adi_key;
+                EXCEPTION WHEN undefined_object THEN NULL; END;
+                BEGIN ALTER TABLE jolly_sonuc DROP CONSTRAINT jolly_sonuc_grup_tarih_uniq;
+                EXCEPTION WHEN undefined_object THEN NULL; END;
+                -- Yeni composite unique
                 IF NOT EXISTS (
-                    SELECT 1 FROM pg_constraint
-                    WHERE conname = 'jolly_sonuc_grup_tarih_uniq'
+                    SELECT 1 FROM pg_constraint WHERE conname = 'jolly_sonuc_platform_uniq'
                 ) THEN
                     ALTER TABLE jolly_sonuc
-                        ADD CONSTRAINT jolly_sonuc_grup_tarih_uniq
-                        UNIQUE (grup_adi, kalkis_tarihi);
+                        ADD CONSTRAINT jolly_sonuc_platform_uniq
+                        UNIQUE (grup_adi, kalkis_tarihi, platform);
                 END IF;
             END $$;
         """))
@@ -265,10 +270,10 @@ def jolly_sonuc_kopyala():
                 kontrol       = str(row[7]).strip() if len(row) > 7 else ""
                 conn.execute(text("""
                     INSERT INTO jolly_sonuc
-                        (grup_adi, kalkis_tarihi, vitrinde, eslesen_jolly_tur,
+                        (grup_adi, kalkis_tarihi, platform, vitrinde, eslesen_jolly_tur,
                          jt_kodu_jolly, skor, kontrol_tarihi)
-                    VALUES (:g, :kt, :v, :e, :j, :s, :k)
-                    ON CONFLICT (grup_adi, kalkis_tarihi) DO UPDATE SET
+                    VALUES (:g, :kt, 'jolly', :v, :e, :j, :s, :k)
+                    ON CONFLICT (grup_adi, kalkis_tarihi, platform) DO UPDATE SET
                         vitrinde          = EXCLUDED.vitrinde,
                         eslesen_jolly_tur = EXCLUDED.eslesen_jolly_tur,
                         jt_kodu_jolly     = EXCLUDED.jt_kodu_jolly,
@@ -666,31 +671,59 @@ def vitrin_takibi_sayfasi(request: Request):
     if not kullanici:
         return RedirectResponse("/login", status_code=302)
 
-    vitrin_sql = """
-        SELECT
-            t.tur_adi,
-            t.kalkis_tarihi,
-            COALESCE(j.vitrinde, '') AS vitrinde,
-            COALESCE(j.eslesen_jolly_tur, '') AS eslesen_jolly_tur,
-            COALESCE(j.jt_kodu_jolly, '') AS jt_kodu_jolly,
-            COALESCE(j.kontrol_tarihi, '') AS kontrol_tarihi
-        FROM turlar t
-        LEFT JOIN jolly_sonuc j ON
-            LOWER(TRIM(t.tur_adi)) = LOWER(TRIM(j.grup_adi))
-            AND COALESCE(t.kalkis_tarihi, '') = COALESCE(j.kalkis_tarihi, '')
-        ORDER BY
-            CASE
-                WHEN t.kalkis_tarihi ~ E'^\\d{2}-\\d{2}-\\d{4}$' THEN TO_DATE(t.kalkis_tarihi, 'DD-MM-YYYY')
-                WHEN t.kalkis_tarihi ~ E'^\\d{2}\\.\\d{2}\\.\\d{4}$' THEN TO_DATE(t.kalkis_tarihi, 'DD.MM.YYYY')
-                ELSE NULL
-            END ASC NULLS LAST
-    """
     with db_engine.connect() as conn:
-        vitrin_verileri = conn.execute(text(vitrin_sql)).fetchall()
+        # Hangi platformlar var?
+        platform_rows = conn.execute(text(
+            "SELECT DISTINCT platform FROM jolly_sonuc WHERE platform IS NOT NULL ORDER BY platform"
+        )).fetchall()
+        platformlar = [r[0] for r in platform_rows] or ["jolly"]
 
-    toplam   = len(vitrin_verileri)
-    var_sayi = sum(1 for v in vitrin_verileri if v[2] == "VAR")
-    yok_sayi = sum(1 for v in vitrin_verileri if v[2] == "YOK")
+        # Pivot sorgu: her tur+tarih için tüm platformların durumu
+        vitrin_sql = """
+            SELECT
+                t.tur_adi,
+                t.kalkis_tarihi,
+                MAX(CASE WHEN j.platform='jolly' THEN j.vitrinde       ELSE '' END) AS jolly_vitrinde,
+                MAX(CASE WHEN j.platform='jolly' THEN j.eslesen_jolly_tur ELSE '' END) AS jolly_eslesen,
+                MAX(CASE WHEN j.platform='jolly' THEN j.jt_kodu_jolly  ELSE '' END) AS jolly_kodu,
+                MAX(CASE WHEN j.platform='jolly' THEN j.kontrol_tarihi ELSE '' END) AS jolly_kontrol,
+                MAX(CASE WHEN j.platform='tatilsepeti' THEN j.vitrinde ELSE '' END) AS ts_vitrinde,
+                MAX(CASE WHEN j.platform='tatilsepeti' THEN j.eslesen_jolly_tur ELSE '' END) AS ts_eslesen,
+                MAX(CASE WHEN j.platform='tatilsepeti' THEN j.kontrol_tarihi ELSE '' END) AS ts_kontrol
+            FROM turlar t
+            LEFT JOIN jolly_sonuc j ON
+                LOWER(TRIM(t.tur_adi)) = LOWER(TRIM(j.grup_adi))
+                AND COALESCE(t.kalkis_tarihi, '') = COALESCE(j.kalkis_tarihi, '')
+            GROUP BY t.tur_adi, t.kalkis_tarihi
+            ORDER BY
+                CASE
+                    WHEN t.kalkis_tarihi ~ E'^\\d{2}-\\d{2}-\\d{4}$' THEN TO_DATE(t.kalkis_tarihi, 'DD-MM-YYYY')
+                    WHEN t.kalkis_tarihi ~ E'^\\d{2}\\.\\d{2}\\.\\d{4}$' THEN TO_DATE(t.kalkis_tarihi, 'DD.MM.YYYY')
+                    ELSE NULL
+                END ASC NULLS LAST
+        """
+        rows = conn.execute(text(vitrin_sql)).fetchall()
+
+    # Template için dict listesi
+    vitrin_verileri = [
+        {
+            "tur_adi":       r[0],
+            "kalkis_tarihi": r[1],
+            "jolly":    {"vitrinde": r[2], "eslesen": r[3], "kodu": r[4], "kontrol": r[5]},
+            "tatilsepeti": {"vitrinde": r[6], "eslesen": r[7], "kontrol": r[8]},
+        }
+        for r in rows
+    ]
+
+    toplam = len(vitrin_verileri)
+    # Platform bazında VAR sayıları
+    platform_stats = {}
+    for p in ["jolly", "tatilsepeti"]:
+        platform_stats[p] = {
+            "var": sum(1 for v in vitrin_verileri if v[p]["vitrinde"] == "VAR"),
+            "yok": sum(1 for v in vitrin_verileri if v[p]["vitrinde"] == "YOK"),
+        }
+
     son_yerler = sum(1 for t in tur_verileri_getir() if t[6] is not None and 1 <= t[6] <= 5)
 
     return templates.TemplateResponse(
@@ -700,9 +733,9 @@ def vitrin_takibi_sayfasi(request: Request):
             "kullanici": kullanici,
             "aktif_sayfa": "vitrin",
             "vitrin_verileri": vitrin_verileri,
+            "platformlar": platformlar,
+            "platform_stats": platform_stats,
             "toplam": toplam,
-            "var_sayi": var_sayi,
-            "yok_sayi": yok_sayi,
             "kritik_sayi": son_yerler,
         }
     )

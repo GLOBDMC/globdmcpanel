@@ -5,59 +5,54 @@
 
 {% block head %}
 <style>
-    .filter-input {
-        background: #1A2035;
+    /* Platform tabs */
+    .platform-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+    .platform-tab {
+        display: flex; align-items: center; gap: 8px;
+        padding: 7px 16px; border-radius: 8px; font-size: 13px; font-weight: 500;
         border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 8px;
-        padding: 8px 12px;
-        font-size: 13px;
-        color: #F1F5F9;
-        width: 100%;
-        outline: none;
-        transition: border-color 0.15s;
+        background: rgba(255,255,255,0.03);
+        color: #64748B; cursor: pointer; transition: all 0.15s;
+        white-space: nowrap;
+    }
+    .platform-tab:hover { border-color: rgba(59,130,246,0.3); color: #94A3B8; }
+    .platform-tab.active {
+        background: rgba(59,130,246,0.12);
+        border-color: rgba(59,130,246,0.4);
+        color: #60A5FA;
+    }
+    .platform-tab .tab-dot { width: 7px; height: 7px; border-radius: 50%; }
+
+    /* Filtreler */
+    .filter-input {
+        background: #1A2035; border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 8px; padding: 8px 12px; font-size: 13px;
+        color: #F1F5F9; width: 100%; outline: none; transition: border-color 0.15s;
     }
     .filter-input:focus { border-color: rgba(59,130,246,0.5); }
     .filter-input::placeholder { color: #475569; }
 
-    .table-scroll-container {
-        height: calc(100vh - 290px);
-        min-height: 400px;
-        overflow: auto;
-    }
-
+    /* Tablo */
+    .table-scroll-container { height: calc(100vh - 310px); min-height: 380px; overflow: auto; }
     .data-table { width: 100%; border-collapse: separate; border-spacing: 0; }
     .data-table thead th {
-        background: #111827;
-        padding: 10px 14px;
-        text-align: left;
-        font-size: 11px;
-        font-weight: 600;
-        letter-spacing: 0.07em;
-        text-transform: uppercase;
-        color: #475569;
+        background: #111827; padding: 10px 14px; text-align: left;
+        font-size: 11px; font-weight: 600; letter-spacing: 0.07em;
+        text-transform: uppercase; color: #475569;
         border-bottom: 1px solid rgba(255,255,255,0.06);
-        white-space: nowrap;
-        position: sticky;
-        top: 0;
-        z-index: 10;
-        cursor: pointer;
-        user-select: none;
+        white-space: nowrap; position: sticky; top: 0; z-index: 10;
+        cursor: pointer; user-select: none;
     }
     .data-table thead th:hover { color: #94A3B8; }
     .data-table thead th.th-center { text-align: center !important; }
     .data-table tbody tr {
-        border-bottom: 1px solid rgba(255,255,255,0.04);
-        transition: background 0.1s;
+        border-bottom: 1px solid rgba(255,255,255,0.04); transition: background 0.1s;
     }
     .data-table tbody tr:hover { background: rgba(59,130,246,0.04); }
-    .data-table tbody td {
-        padding: 10px 14px;
-        font-size: 13px;
-        color: #CBD5E1;
-        white-space: nowrap;
-    }
+    .data-table tbody td { padding: 10px 14px; font-size: 13px; color: #CBD5E1; white-space: nowrap; }
     .data-table tbody td.td-center { text-align: center !important; }
 
+    /* VAR/YOK pilleri */
     .pill-var {
         display: inline-flex; align-items: center; gap: 5px;
         padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
@@ -65,7 +60,6 @@
         border: 1px solid rgba(16,185,129,0.2);
     }
     .pill-var::before { content:''; width:5px; height:5px; border-radius:50%; background:#10B981; box-shadow:0 0 5px #10B981; display:inline-block; }
-
     .pill-yok {
         display: inline-flex; align-items: center; gap: 5px;
         padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
@@ -73,72 +67,86 @@
         border: 1px solid rgba(239,68,68,0.2);
     }
     .pill-yok::before { content:''; width:5px; height:5px; border-radius:50%; background:#EF4444; display:inline-block; }
-
     .pill-bilinmiyor {
         display: inline-flex; align-items: center; gap: 5px;
         padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 500;
-        background: rgba(71,85,105,0.2); color: #64748B;
+        background: rgba(71,85,105,0.2); color: #475569;
         border: 1px solid rgba(71,85,105,0.2);
     }
 
-    .vitrin-satir.row-var  { background: rgba(16,185,129,0.03); }
-    .vitrin-satir.row-yok  { background: rgba(239,68,68,0.03); }
+    /* Satır renklendirme */
+    .satir-var-jolly    { background: rgba(16,185,129,0.02); }
+    .satir-yok-jolly    { background: rgba(239,68,68,0.02); }
+
+    /* Gizli sütunlar (platform tab'ına göre) */
+    .col-jolly, .col-ts { transition: none; }
+    body[data-platform="jolly"]       .col-ts   { display: none; }
+    body[data-platform="tatilsepeti"] .col-jolly { display: none; }
+    body[data-platform="jolly"]       .col-jolly-detail { display: table-cell; }
+    body:not([data-platform="jolly"]) .col-jolly-detail { display: none; }
 </style>
 {% endblock %}
 
 {% block content %}
 
 <!-- Header -->
-<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
+<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
     <div>
         <h1 class="text-xl font-bold text-white">Vitrin Takibi</h1>
-        <p class="text-sm text-slate-500 mt-0.5">{{ toplam }} tur · JollyTur eşleşme durumu</p>
+        <p class="text-sm text-slate-500 mt-0.5">{{ toplam }} tur · platform bazlı eşleşme durumu</p>
     </div>
-    <div class="flex items-center gap-3">
-        <!-- Özet sayaçlar -->
-        <div class="flex items-center gap-1.5 text-xs">
-            <span class="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
-            <span class="text-emerald-400 font-semibold">{{ var_sayi }}</span>
-            <span class="text-slate-500">VAR</span>
-        </div>
-        <div class="flex items-center gap-1.5 text-xs">
-            <span class="w-2 h-2 rounded-full bg-red-500 inline-block"></span>
-            <span class="text-red-400 font-semibold">{{ yok_sayi }}</span>
-            <span class="text-slate-500">YOK</span>
-        </div>
-        {% if toplam - var_sayi - yok_sayi > 0 %}
-        <div class="flex items-center gap-1.5 text-xs">
-            <span class="w-2 h-2 rounded-full bg-slate-600 inline-block"></span>
-            <span class="text-slate-400 font-semibold">{{ toplam - var_sayi - yok_sayi }}</span>
-            <span class="text-slate-500">Kontrol edilmedi</span>
-        </div>
-        {% endif %}
-        <!-- Sync butonu -->
-        <button onclick="vitrinSync()" id="vitrinSyncBtn"
-            class="flex items-center gap-1.5 text-xs text-slate-400 hover:text-blue-400 border border-white border-opacity-10 hover:border-blue-500 hover:border-opacity-40 px-3 py-1.5 rounded-lg transition-all">
-            <svg id="vitrinSyncIcon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
-                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-            </svg>
-            Yenile
-        </button>
-    </div>
+    <button onclick="vitrinSync()" id="vitrinSyncBtn"
+        class="flex items-center gap-1.5 text-xs text-slate-400 hover:text-blue-400 border border-white border-opacity-10 hover:border-blue-500 hover:border-opacity-40 px-3 py-1.5 rounded-lg transition-all self-start sm:self-auto">
+        <svg id="vitrinSyncIcon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+        </svg>
+        Yenile
+    </button>
 </div>
 
-<!-- Filtre + Arama -->
+<!-- Platform Tabs -->
 <div class="card card-sm mb-4">
+    <div class="platform-tabs mb-3" id="platformTabs">
+        <button class="platform-tab active" data-p="tumu" onclick="platformSec('tumu', this)">
+            <span class="tab-dot" style="background:#60A5FA;"></span>
+            Tümü
+            <span class="text-slate-600 text-xs">{{ toplam }}</span>
+        </button>
+        <button class="platform-tab" data-p="jolly" onclick="platformSec('jolly', this)">
+            <span class="tab-dot" style="background:#10B981;"></span>
+            Jolly
+            <span class="text-emerald-400 text-xs font-semibold">{{ platform_stats.jolly.var }}</span>
+            <span class="text-slate-600 text-xs">/</span>
+            <span class="text-red-400 text-xs font-semibold">{{ platform_stats.jolly.yok }}</span>
+        </button>
+        <button class="platform-tab" data-p="tatilsepeti" onclick="platformSec('tatilsepeti', this)">
+            <span class="tab-dot" style="background:#F59E0B;"></span>
+            Tatil Sepeti
+            {% if platform_stats.tatilsepeti.var > 0 or platform_stats.tatilsepeti.yok > 0 %}
+            <span class="text-emerald-400 text-xs font-semibold">{{ platform_stats.tatilsepeti.var }}</span>
+            <span class="text-slate-600 text-xs">/</span>
+            <span class="text-red-400 text-xs font-semibold">{{ platform_stats.tatilsepeti.yok }}</span>
+            {% else %}
+            <span class="text-slate-600 text-xs">henüz veri yok</span>
+            {% endif %}
+        </button>
+    </div>
+
+    <!-- Filtreler -->
     <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div class="sm:col-span-2">
             <label class="block text-xs text-slate-500 mb-1 font-medium">Arama</label>
-            <input type="text" id="vitrinArama" class="filter-input" placeholder="Tur adı veya Jolly tur adı..." autocomplete="new-password" readonly onfocus="this.removeAttribute('readonly')"/>
+            <input type="text" id="vitrinArama" class="filter-input"
+                   placeholder="Tur adı veya eşleşen tur adı..."
+                   autocomplete="new-password" readonly onfocus="this.removeAttribute('readonly')"/>
         </div>
         <div>
             <label class="block text-xs text-slate-500 mb-1 font-medium">Durum</label>
             <select id="vitrinDurumFiltre" class="filter-input">
                 <option value="">Tümü</option>
-                <option value="VAR">VAR — Jolly'de mevcut</option>
-                <option value="YOK">YOK — Jolly'de yok</option>
-                <option value="">Kontrol edilmedi</option>
+                <option value="VAR">VAR — Vitrinde mevcut</option>
+                <option value="YOK">YOK — Vitrinde yok</option>
             </select>
         </div>
     </div>
@@ -149,71 +157,113 @@
 </div>
 
 <!-- Tablo -->
-<div class="card" style="padding: 0; overflow: hidden;">
-    {% if vitrin_verileri %}
-    <div class="table-scroll-container">
-        <table class="data-table" id="vitrinTablosu">
-            <thead>
-                <tr>
-                    <th>Tur İsmi</th>
-                    <th>Gidiş Tarihi</th>
-                    <th>Eşleşen Jolly Tur</th>
-                    <th class="th-center">Vitrinde</th>
-                    <th class="th-center" style="color:#334155;">Son Kontrol</th>
-                </tr>
-            </thead>
-            <tbody id="vitrinGovde">
-                {% for v in vitrin_verileri %}
-                <tr class="vitrin-satir {% if v[2] == 'VAR' %}row-var{% elif v[2] == 'YOK' %}row-yok{% endif %}"
-                    data-tur="{{ v[0]|lower }}"
-                    data-jolly="{{ v[3]|lower }}"
-                    data-durum="{{ v[2] }}">
-                    <td class="text-slate-200" style="max-width:240px; overflow:hidden; text-overflow:ellipsis;">{{ v[0] }}</td>
-                    <td class="text-slate-400 font-mono text-xs">{{ v[1] or '—' }}</td>
-                    <td style="max-width:260px; overflow:hidden; text-overflow:ellipsis;">
-                        {% if v[3] %}
-                        <span class="text-slate-300">{{ v[3] }}</span>
-                        {% if v[4] %}
-                        <span class="ml-2 text-xs text-slate-600 font-mono bg-slate-800 px-1.5 py-0.5 rounded">{{ v[4] }}</span>
-                        {% endif %}
-                        {% else %}
-                        <span class="text-slate-600 italic text-xs">—</span>
-                        {% endif %}
-                    </td>
-                    <td class="td-center">
-                        {% if v[2] == 'VAR' %}
-                        <span class="pill-var">VAR</span>
-                        {% elif v[2] == 'YOK' %}
-                        <span class="pill-yok">YOK</span>
-                        {% else %}
-                        <span class="pill-bilinmiyor">?</span>
-                        {% endif %}
-                    </td>
-                    <td class="td-center text-slate-600" style="font-size:11px;">{{ v[5] or '—' }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    {% else %}
-    <div class="coming-soon py-16">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/>
-            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-        </svg>
-        <p class="text-sm font-medium" style="color:#1E3A5F;">Vitrin verisi henüz yok</p>
-        <p class="text-xs" style="color:#1E3A5F;">Jolly Matcher'ı Apify'dan çalıştırınca bu tablo otomatik dolacak.</p>
-    </div>
-    {% endif %}
+<div class="card" style="padding:0; overflow:hidden;">
+{% if vitrin_verileri %}
+<div class="table-scroll-container">
+<table class="data-table" id="vitrinTablosu">
+    <thead>
+        <tr>
+            <th>Tur İsmi</th>
+            <th>Gidiş Tarihi</th>
+            <!-- Jolly sütunları -->
+            <th class="th-center col-jolly">Jolly</th>
+            <th class="col-jolly col-jolly-detail" style="display:none;">Eşleşen Jolly Tur</th>
+            <!-- Tatil Sepeti sütunları -->
+            <th class="th-center col-ts">Tatil Sepeti</th>
+            <!-- Son kontrol (platform bazlı) -->
+            <th class="th-center" style="color:#334155;">Son Kontrol</th>
+        </tr>
+    </thead>
+    <tbody id="vitrinGovde">
+        {% for v in vitrin_verileri %}
+        <tr class="vitrin-satir {% if v.jolly.vitrinde == 'VAR' %}satir-var-jolly{% elif v.jolly.vitrinde == 'YOK' %}satir-yok-jolly{% endif %}"
+            data-tur="{{ v.tur_adi|lower }}"
+            data-jolly-eslesen="{{ v.jolly.eslesen|lower }}"
+            data-jolly="{{ v.jolly.vitrinde }}"
+            data-ts="{{ v.tatilsepeti.vitrinde }}">
+
+            <td class="text-slate-200" style="max-width:260px; overflow:hidden; text-overflow:ellipsis;">
+                {{ v.tur_adi }}
+            </td>
+            <td class="text-slate-400 font-mono text-xs">{{ v.kalkis_tarihi or '—' }}</td>
+
+            <!-- Jolly VAR/YOK -->
+            <td class="td-center col-jolly">
+                {% if v.jolly.vitrinde == 'VAR' %}<span class="pill-var">VAR</span>
+                {% elif v.jolly.vitrinde == 'YOK' %}<span class="pill-yok">YOK</span>
+                {% else %}<span class="pill-bilinmiyor">—</span>{% endif %}
+            </td>
+
+            <!-- Jolly detay (sadece Jolly sekmesinde görünür) -->
+            <td class="col-jolly col-jolly-detail" style="display:none; max-width:240px; overflow:hidden; text-overflow:ellipsis;">
+                {% if v.jolly.eslesen %}
+                <span class="text-slate-300 text-xs">{{ v.jolly.eslesen }}</span>
+                {% if v.jolly.kodu %}
+                <span class="ml-1 text-xs text-slate-600 font-mono bg-slate-800 px-1.5 py-0.5 rounded">{{ v.jolly.kodu }}</span>
+                {% endif %}
+                {% else %}<span class="text-slate-600 italic text-xs">—</span>{% endif %}
+            </td>
+
+            <!-- Tatil Sepeti VAR/YOK -->
+            <td class="td-center col-ts">
+                {% if v.tatilsepeti.vitrinde == 'VAR' %}<span class="pill-var">VAR</span>
+                {% elif v.tatilsepeti.vitrinde == 'YOK' %}<span class="pill-yok">YOK</span>
+                {% else %}<span class="pill-bilinmiyor">—</span>{% endif %}
+            </td>
+
+            <!-- Son kontrol -->
+            <td class="td-center text-slate-600" style="font-size:11px;">
+                {{ v.jolly.kontrol or v.tatilsepeti.kontrol or '—' }}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<div class="coming-soon py-16">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/>
+        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+    </svg>
+    <p class="text-sm font-medium" style="color:#1E3A5F;">Vitrin verisi henüz yok</p>
+    <p class="text-xs" style="color:#1E3A5F;">Jolly Matcher'ı Apify'dan çalıştırınca bu tablo otomatik dolacak.</p>
+</div>
+{% endif %}
 </div>
 
 {% endblock %}
 
 {% block scripts %}
 <script>
+    let aktifPlatform = 'tumu';
+
+    function platformSec(p, btn) {
+        aktifPlatform = p;
+        document.body.setAttribute('data-platform', p);
+
+        // Tab aktif stili
+        document.querySelectorAll('.platform-tab').forEach(t => t.classList.remove('active'));
+        btn.classList.add('active');
+
+        vitrinFiltrele();
+    }
+
     const vitrinArama       = document.getElementById('vitrinArama');
     const vitrinDurumFiltre = document.getElementById('vitrinDurumFiltre');
     const vitrinSonucSayisi = document.getElementById('vitrinSonucSayisi');
+
+    function platformDurumu(satir, p) {
+        if (p === 'jolly')       return satir.dataset.jolly  || '';
+        if (p === 'tatilsepeti') return satir.dataset.ts      || '';
+        // tumu: herhangi birinde VAR varsa VAR, ikisi de YOK ise YOK
+        const j = satir.dataset.jolly || '';
+        const t = satir.dataset.ts    || '';
+        if (j === 'VAR' || t === 'VAR') return 'VAR';
+        if (j === 'YOK' && t === 'YOK') return 'YOK';
+        if (j === 'YOK' || t === 'YOK') return 'YOK';
+        return '';
+    }
 
     function vitrinFiltrele() {
         const arama = vitrinArama.value.toLowerCase();
@@ -222,12 +272,12 @@
         let gorunen = 0;
 
         satirlar.forEach(satir => {
-            const turAdi  = satir.dataset.tur  || '';
-            const jolly   = satir.dataset.jolly || '';
-            const satDurum = satir.dataset.durum || '';
+            const turAdi   = satir.dataset.tur  || '';
+            const eslesen  = satir.dataset.jollyEslesen || '';
+            const satDurum = platformDurumu(satir, aktifPlatform);
             let goster = true;
-            if (arama && !turAdi.includes(arama) && !jolly.includes(arama)) goster = false;
-            if (durum  && satDurum !== durum) goster = false;
+            if (arama && !turAdi.includes(arama) && !eslesen.includes(arama)) goster = false;
+            if (durum && satDurum !== durum) goster = false;
             satir.style.display = goster ? '' : 'none';
             if (goster) gorunen++;
         });
@@ -242,12 +292,15 @@
         vitrinFiltrele();
     });
 
+    // Başlangıçta tumu seçili
+    document.body.setAttribute('data-platform', 'tumu');
+
     function vitrinSync() {
         const btn  = document.getElementById('vitrinSyncBtn');
         const icon = document.getElementById('vitrinSyncIcon');
         btn.disabled = true;
         const style = document.createElement('style');
-        style.textContent = '@keyframes vspin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }';
+        style.textContent = '@keyframes vspin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}';
         document.head.appendChild(style);
         icon.style.animation = 'vspin 1s linear infinite';
         icon.style.transformOrigin = 'center';
@@ -257,17 +310,10 @@
             .then(data => {
                 btn.disabled = false;
                 icon.style.animation = '';
-                if (data.ok) {
-                    // Sayfayı yenile — yeni veri geldi
-                    location.reload();
-                } else {
-                    alert('Sync hatası: ' + (data.hata || 'Bilinmiyor'));
-                }
+                if (data.ok) location.reload();
+                else alert('Sync hatası: ' + (data.hata || 'Bilinmiyor'));
             })
-            .catch(() => {
-                btn.disabled = false;
-                icon.style.animation = '';
-            });
+            .catch(() => { btn.disabled = false; icon.style.animation = ''; });
     }
 </script>
 {% endblock %}
