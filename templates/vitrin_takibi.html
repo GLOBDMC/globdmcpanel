@@ -1,0 +1,421 @@
+{% extends "base.html" %}
+
+{% block title %}Vitrin Takibi{% endblock %}
+{% block breadcrumb %}Vitrin Takibi{% endblock %}
+
+{% block head %}
+<style>
+    /* Platform tabs */
+    .platform-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+    .platform-tab {
+        display: flex; align-items: center; gap: 8px;
+        padding: 7px 16px; border-radius: 8px; font-size: 13px; font-weight: 500;
+        border: 1px solid rgba(255,255,255,0.08);
+        background: rgba(255,255,255,0.03);
+        color: #64748B; cursor: pointer; transition: all 0.15s;
+        white-space: nowrap;
+    }
+    .platform-tab:hover { border-color: rgba(59,130,246,0.3); color: #94A3B8; }
+    .platform-tab.active {
+        background: rgba(59,130,246,0.12);
+        border-color: rgba(59,130,246,0.4);
+        color: #60A5FA;
+    }
+    .platform-tab .tab-dot { width: 7px; height: 7px; border-radius: 50%; }
+
+    /* Filtreler */
+    .filter-input {
+        background: #1A2035; border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 8px; padding: 8px 12px; font-size: 13px;
+        color: #F1F5F9; width: 100%; outline: none; transition: border-color 0.15s;
+    }
+    .filter-input:focus { border-color: rgba(59,130,246,0.5); }
+    .filter-input::placeholder { color: #475569; }
+
+    /* Tablo */
+    .table-scroll-container { height: calc(100vh - 310px); min-height: 380px; overflow: auto; }
+    .data-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+    .data-table thead th {
+        background: #111827; padding: 10px 14px; text-align: left;
+        font-size: 11px; font-weight: 600; letter-spacing: 0.07em;
+        text-transform: uppercase; color: #475569;
+        border-bottom: 1px solid rgba(255,255,255,0.06);
+        white-space: nowrap; position: sticky; top: 0; z-index: 10;
+        cursor: pointer; user-select: none;
+    }
+    .data-table thead th:hover { color: #94A3B8; }
+    .data-table thead th.th-center { text-align: center !important; }
+    .data-table tbody tr {
+        border-bottom: 1px solid rgba(255,255,255,0.04); transition: background 0.1s;
+    }
+    .data-table tbody tr:hover { background: rgba(59,130,246,0.04); }
+    .data-table tbody td { padding: 10px 14px; font-size: 13px; color: #CBD5E1; white-space: nowrap; }
+    .data-table tbody td.td-center { text-align: center !important; }
+
+    /* VAR/YOK pilleri */
+    .pill-var {
+        display: inline-flex; align-items: center; gap: 5px;
+        padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
+        background: rgba(16,185,129,0.12); color: #34D399;
+        border: 1px solid rgba(16,185,129,0.2);
+    }
+    .pill-var::before { content:''; width:5px; height:5px; border-radius:50%; background:#10B981; box-shadow:0 0 5px #10B981; display:inline-block; }
+    .pill-yok {
+        display: inline-flex; align-items: center; gap: 5px;
+        padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
+        background: rgba(239,68,68,0.1); color: #F87171;
+        border: 1px solid rgba(239,68,68,0.2);
+    }
+    .pill-yok::before { content:''; width:5px; height:5px; border-radius:50%; background:#EF4444; display:inline-block; }
+    .pill-bilinmiyor {
+        display: inline-flex; align-items: center; gap: 5px;
+        padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 500;
+        background: rgba(71,85,105,0.2); color: #475569;
+        border: 1px solid rgba(71,85,105,0.2);
+    }
+
+    /* Satır renklendirme */
+    .satir-var-jolly    { background: rgba(16,185,129,0.02); }
+    .satir-yok-jolly    { background: rgba(239,68,68,0.02); }
+
+    /* Gizli sütunlar (platform tab'ına göre) */
+    .col-jolly, .col-ts { transition: none; }
+    body[data-platform="jolly"]       .col-ts   { display: none; }
+    body[data-platform="tatilsepeti"] .col-jolly { display: none; }
+    body[data-platform="jolly"]       .col-jolly-detail { display: table-cell; }
+    body:not([data-platform="jolly"]) .col-jolly-detail { display: none; }
+
+    /* Değişim satırı vurgusu */
+    .satir-kapandi { background: rgba(239,68,68,0.06) !important; }
+    .satir-acildi  { background: rgba(16,185,129,0.06) !important; }
+
+    .badge-kapandi {
+        display: inline-flex; align-items: center; gap: 3px;
+        font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 999px;
+        background: rgba(239,68,68,0.15); color: #F87171;
+        border: 1px solid rgba(239,68,68,0.25); white-space: nowrap;
+    }
+    .badge-acildi {
+        display: inline-flex; align-items: center; gap: 3px;
+        font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 999px;
+        background: rgba(16,185,129,0.15); color: #34D399;
+        border: 1px solid rgba(16,185,129,0.25); white-space: nowrap;
+    }
+
+    /* Değişimler sekmesi gizleme */
+    body:not([data-platform="degisimler"]) #degisimlerPanel { display: none; }
+    body[data-platform="degisimler"] #anaListe { display: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Header -->
+<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+    <div>
+        <h1 class="text-xl font-bold text-white">Vitrin Takibi</h1>
+        <p class="text-sm text-slate-500 mt-0.5">{{ toplam }} tur · platform bazlı eşleşme durumu</p>
+    </div>
+    <button onclick="vitrinSync()" id="vitrinSyncBtn"
+        class="flex items-center gap-1.5 text-xs text-slate-400 hover:text-blue-400 border border-white border-opacity-10 hover:border-blue-500 hover:border-opacity-40 px-3 py-1.5 rounded-lg transition-all self-start sm:self-auto">
+        <svg id="vitrinSyncIcon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+        </svg>
+        Yenile
+    </button>
+</div>
+
+<!-- Platform Tabs -->
+<div class="card card-sm mb-4">
+    <div class="platform-tabs mb-3" id="platformTabs">
+        <button class="platform-tab active" data-p="tumu" onclick="platformSec('tumu', this)">
+            <span class="tab-dot" style="background:#60A5FA;"></span>
+            Tümü
+            <span class="text-slate-600 text-xs">{{ toplam }}</span>
+        </button>
+        <button class="platform-tab" data-p="jolly" onclick="platformSec('jolly', this)">
+            <span class="tab-dot" style="background:#10B981;"></span>
+            Jolly
+            <span class="text-emerald-400 text-xs font-semibold">{{ platform_stats.jolly.var }}</span>
+            <span class="text-slate-600 text-xs">/</span>
+            <span class="text-red-400 text-xs font-semibold">{{ platform_stats.jolly.yok }}</span>
+        </button>
+        <button class="platform-tab" data-p="tatilsepeti" onclick="platformSec('tatilsepeti', this)">
+            <span class="tab-dot" style="background:#F59E0B;"></span>
+            Tatil Sepeti
+            {% if platform_stats.tatilsepeti.var > 0 or platform_stats.tatilsepeti.yok > 0 %}
+            <span class="text-emerald-400 text-xs font-semibold">{{ platform_stats.tatilsepeti.var }}</span>
+            <span class="text-slate-600 text-xs">/</span>
+            <span class="text-red-400 text-xs font-semibold">{{ platform_stats.tatilsepeti.yok }}</span>
+            {% else %}
+            <span class="text-slate-600 text-xs">henüz veri yok</span>
+            {% endif %}
+        </button>
+        {% set toplam_degisim = platform_stats.jolly.kapanan + platform_stats.jolly.acilan + platform_stats.tatilsepeti.kapanan + platform_stats.tatilsepeti.acilan %}
+        <button class="platform-tab" data-p="degisimler" onclick="platformSec('degisimler', this)">
+            <span class="tab-dot" style="background:#A855F7;"></span>
+            Değişimler
+            {% if toplam_degisim > 0 %}
+            <span style="background:rgba(239,68,68,0.2);color:#F87171;font-size:10px;padding:1px 6px;border-radius:999px;font-weight:700;">{{ toplam_degisim }}</span>
+            {% else %}
+            <span class="text-slate-600 text-xs">yok</span>
+            {% endif %}
+        </button>
+    </div>
+
+    <!-- Filtreler -->
+    <div id="filtreAlani" class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div class="sm:col-span-2">
+            <label class="block text-xs text-slate-500 mb-1 font-medium">Arama</label>
+            <input type="text" id="vitrinArama" class="filter-input"
+                   placeholder="Tur adı veya eşleşen tur adı..."
+                   autocomplete="new-password" readonly onfocus="this.removeAttribute('readonly')"/>
+        </div>
+        <div>
+            <label class="block text-xs text-slate-500 mb-1 font-medium">Durum</label>
+            <select id="vitrinDurumFiltre" class="filter-input">
+                <option value="">Tümü</option>
+                <option value="VAR">VAR — Vitrinde mevcut</option>
+                <option value="YOK">YOK — Vitrinde yok</option>
+            </select>
+        </div>
+    </div>
+    <div class="flex items-center justify-between mt-3">
+        <span id="vitrinSonucSayisi" class="text-xs text-slate-500">{{ toplam }} tur gösteriliyor</span>
+        <button id="vitrinTemizle" class="text-xs text-slate-500 hover:text-blue-400 transition-colors font-medium">Filtreleri Temizle</button>
+    </div>
+</div>
+
+<!-- Tablo -->
+<div class="card" style="padding:0; overflow:hidden;">
+{% if vitrin_verileri %}
+
+<!-- Değişimler Paneli -->
+<div id="degisimlerPanel" style="display:none;">
+    <div class="table-scroll-container">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Tur İsmi</th>
+                <th>Gidiş Tarihi</th>
+                <th>Platform</th>
+                <th class="th-center">Önceki</th>
+                <th class="th-center">Yeni</th>
+                <th class="th-center" style="color:#334155;">Değişim Tarihi</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for v in vitrin_verileri %}
+            {% if v.jolly.onceki and v.jolly.onceki != v.jolly.vitrinde %}
+            <tr class="{% if v.jolly.onceki == 'VAR' %}satir-kapandi{% else %}satir-acildi{% endif %}">
+                <td class="text-slate-200" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;">{{ v.tur_adi }}</td>
+                <td class="text-slate-400 font-mono text-xs">{{ v.kalkis_tarihi or '—' }}</td>
+                <td><span class="text-xs text-emerald-400 font-semibold">Jolly</span></td>
+                <td class="td-center">
+                    {% if v.jolly.onceki == 'VAR' %}<span class="pill-var">VAR</span>
+                    {% else %}<span class="pill-yok">YOK</span>{% endif %}
+                </td>
+                <td class="td-center">
+                    {% if v.jolly.vitrinde == 'VAR' %}<span class="pill-var">VAR</span>
+                    {% else %}<span class="pill-yok">YOK</span>{% endif %}
+                </td>
+                <td class="td-center text-slate-500" style="font-size:11px;">{{ v.jolly.degisim or '—' }}</td>
+            </tr>
+            {% endif %}
+            {% if v.tatilsepeti.onceki and v.tatilsepeti.onceki != v.tatilsepeti.vitrinde %}
+            <tr class="{% if v.tatilsepeti.onceki == 'VAR' %}satir-kapandi{% else %}satir-acildi{% endif %}">
+                <td class="text-slate-200" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;">{{ v.tur_adi }}</td>
+                <td class="text-slate-400 font-mono text-xs">{{ v.kalkis_tarihi or '—' }}</td>
+                <td><span class="text-xs text-amber-400 font-semibold">Tatil Sepeti</span></td>
+                <td class="td-center">
+                    {% if v.tatilsepeti.onceki == 'VAR' %}<span class="pill-var">VAR</span>
+                    {% else %}<span class="pill-yok">YOK</span>{% endif %}
+                </td>
+                <td class="td-center">
+                    {% if v.tatilsepeti.vitrinde == 'VAR' %}<span class="pill-var">VAR</span>
+                    {% else %}<span class="pill-yok">YOK</span>{% endif %}
+                </td>
+                <td class="td-center text-slate-500" style="font-size:11px;">{{ v.tatilsepeti.degisim or '—' }}</td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+<!-- Ana Liste -->
+<div id="anaListe">
+<div class="table-scroll-container">
+<table class="data-table" id="vitrinTablosu">
+    <thead>
+        <tr>
+            <th>Tur İsmi</th>
+            <th>Gidiş Tarihi</th>
+            <th class="th-center col-jolly">Jolly</th>
+            <th class="col-jolly col-jolly-detail" style="display:none;">Eşleşen Jolly Tur</th>
+            <th class="th-center col-ts">Tatil Sepeti</th>
+            <th class="th-center" style="color:#334155; width:100px;">Son Kontrol</th>
+        </tr>
+    </thead>
+    <tbody id="vitrinGovde">
+        {% for v in vitrin_verileri %}
+        {% set jolly_degisti = v.jolly.onceki and v.jolly.onceki != v.jolly.vitrinde %}
+        {% set ts_degisti    = v.tatilsepeti.onceki and v.tatilsepeti.onceki != v.tatilsepeti.vitrinde %}
+        <tr class="vitrin-satir
+                   {% if jolly_degisti and v.jolly.onceki == 'VAR' %}satir-kapandi
+                   {% elif jolly_degisti and v.jolly.onceki == 'YOK' %}satir-acildi
+                   {% elif v.jolly.vitrinde == 'VAR' %}satir-var-jolly
+                   {% elif v.jolly.vitrinde == 'YOK' %}satir-yok-jolly{% endif %}"
+            data-tur="{{ v.tur_adi|lower }}"
+            data-jolly-eslesen="{{ v.jolly.eslesen|lower }}"
+            data-jolly="{{ v.jolly.vitrinde }}"
+            data-ts="{{ v.tatilsepeti.vitrinde }}">
+
+            <td class="text-slate-200" style="max-width:240px; overflow:hidden; text-overflow:ellipsis;">
+                {{ v.tur_adi }}
+                {% if jolly_degisti %}
+                    {% if v.jolly.onceki == 'VAR' %}<span class="badge-kapandi ml-1">↓ Kapandı</span>
+                    {% else %}<span class="badge-acildi ml-1">↑ Açıldı</span>{% endif %}
+                {% endif %}
+            </td>
+            <td class="text-slate-400 font-mono text-xs">{{ v.kalkis_tarihi or '—' }}</td>
+
+            <td class="td-center col-jolly">
+                {% if v.jolly.vitrinde == 'VAR' %}<span class="pill-var">VAR</span>
+                {% elif v.jolly.vitrinde == 'YOK' %}<span class="pill-yok">YOK</span>
+                {% else %}<span class="pill-bilinmiyor">—</span>{% endif %}
+            </td>
+
+            <td class="col-jolly col-jolly-detail" style="display:none; max-width:220px; overflow:hidden; text-overflow:ellipsis;">
+                {% if v.jolly.eslesen %}
+                <span class="text-slate-300 text-xs">{{ v.jolly.eslesen }}</span>
+                {% if v.jolly.kodu %}
+                <span class="ml-1 text-xs text-slate-600 font-mono bg-slate-800 px-1.5 py-0.5 rounded">{{ v.jolly.kodu }}</span>
+                {% endif %}
+                {% else %}<span class="text-slate-600 italic text-xs">—</span>{% endif %}
+            </td>
+
+            <td class="td-center col-ts">
+                {% if v.tatilsepeti.vitrinde == 'VAR' %}<span class="pill-var">VAR</span>
+                {% elif v.tatilsepeti.vitrinde == 'YOK' %}<span class="pill-yok">YOK</span>
+                {% else %}<span class="pill-bilinmiyor">—</span>{% endif %}
+            </td>
+
+            <td class="td-center text-slate-600" style="font-size:11px;">
+                {{ v.jolly.kontrol or v.tatilsepeti.kontrol or '—' }}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+</div>
+{% else %}
+<div class="coming-soon py-16">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/>
+        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+    </svg>
+    <p class="text-sm font-medium" style="color:#1E3A5F;">Vitrin verisi henüz yok</p>
+    <p class="text-xs" style="color:#1E3A5F;">Jolly Matcher'ı Apify'dan çalıştırınca bu tablo otomatik dolacak.</p>
+</div>
+{% endif %}
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let aktifPlatform = 'tumu';
+
+    function platformSec(p, btn) {
+        aktifPlatform = p;
+        document.body.setAttribute('data-platform', p);
+        document.querySelectorAll('.platform-tab').forEach(t => t.classList.remove('active'));
+        btn.classList.add('active');
+
+        const degPanel  = document.getElementById('degisimlerPanel');
+        const anaListe  = document.getElementById('anaListe');
+        const filtreler = document.getElementById('filtreAlani');
+        if (p === 'degisimler') {
+            if (degPanel)  degPanel.style.display  = '';
+            if (anaListe)  anaListe.style.display   = 'none';
+            if (filtreler) filtreler.style.display  = 'none';
+        } else {
+            if (degPanel)  degPanel.style.display  = 'none';
+            if (anaListe)  anaListe.style.display   = '';
+            if (filtreler) filtreler.style.display  = '';
+            vitrinFiltrele();
+        }
+    }
+
+    const vitrinArama       = document.getElementById('vitrinArama');
+    const vitrinDurumFiltre = document.getElementById('vitrinDurumFiltre');
+    const vitrinSonucSayisi = document.getElementById('vitrinSonucSayisi');
+
+    function platformDurumu(satir, p) {
+        if (p === 'jolly')       return satir.dataset.jolly  || '';
+        if (p === 'tatilsepeti') return satir.dataset.ts      || '';
+        // tumu: herhangi birinde VAR varsa VAR, ikisi de YOK ise YOK
+        const j = satir.dataset.jolly || '';
+        const t = satir.dataset.ts    || '';
+        if (j === 'VAR' || t === 'VAR') return 'VAR';
+        if (j === 'YOK' && t === 'YOK') return 'YOK';
+        if (j === 'YOK' || t === 'YOK') return 'YOK';
+        return '';
+    }
+
+    function vitrinFiltrele() {
+        const arama = vitrinArama.value.toLowerCase();
+        const durum = vitrinDurumFiltre.value;
+        const satirlar = document.querySelectorAll('.vitrin-satir');
+        let gorunen = 0;
+
+        satirlar.forEach(satir => {
+            const turAdi   = satir.dataset.tur  || '';
+            const eslesen  = satir.dataset.jollyEslesen || '';
+            const satDurum = platformDurumu(satir, aktifPlatform);
+            let goster = true;
+            if (arama && !turAdi.includes(arama) && !eslesen.includes(arama)) goster = false;
+            if (durum && satDurum !== durum) goster = false;
+            satir.style.display = goster ? '' : 'none';
+            if (goster) gorunen++;
+        });
+        vitrinSonucSayisi.textContent = gorunen + ' tur gösteriliyor';
+    }
+
+    vitrinArama.addEventListener('input', vitrinFiltrele);
+    vitrinDurumFiltre.addEventListener('change', vitrinFiltrele);
+    document.getElementById('vitrinTemizle').addEventListener('click', () => {
+        vitrinArama.value = '';
+        vitrinDurumFiltre.value = '';
+        vitrinFiltrele();
+    });
+
+    // Başlangıçta tumu seçili
+    document.body.setAttribute('data-platform', 'tumu');
+
+    function vitrinSync() {
+        const btn  = document.getElementById('vitrinSyncBtn');
+        const icon = document.getElementById('vitrinSyncIcon');
+        btn.disabled = true;
+        const style = document.createElement('style');
+        style.textContent = '@keyframes vspin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}';
+        document.head.appendChild(style);
+        icon.style.animation = 'vspin 1s linear infinite';
+        icon.style.transformOrigin = 'center';
+
+        fetch('/api/vitrin-sync')
+            .then(r => r.json())
+            .then(data => {
+                btn.disabled = false;
+                icon.style.animation = '';
+                if (data.ok) location.reload();
+                else alert('Sync hatası: ' + (data.hata || 'Bilinmiyor'));
+            })
+            .catch(() => { btn.disabled = false; icon.style.animation = ''; });
+    }
+</script>
+{% endblock %}

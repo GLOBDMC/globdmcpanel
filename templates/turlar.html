@@ -1,0 +1,431 @@
+{% extends "base.html" %}
+
+{% block title %}Turlar{% endblock %}
+{% block breadcrumb %}Turlar{% endblock %}
+
+{% block head %}
+<style>
+    .filter-input {
+        background: #1A2035;
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 8px;
+        padding: 8px 12px;
+        font-size: 13px;
+        color: #F1F5F9;
+        width: 100%;
+        outline: none;
+        transition: border-color 0.15s;
+    }
+    .filter-input:focus { border-color: rgba(59,130,246,0.5); }
+    .filter-input::placeholder { color: #475569; }
+
+    /* Tablo kendi içinde scroll eder — sticky thead güvenilir çalışır */
+    .table-scroll-container {
+        height: calc(100vh - 310px);
+        min-height: 400px;
+        overflow: auto;
+    }
+
+    .data-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+    .data-table thead th {
+        background: #111827;
+        padding: 10px 14px;
+        text-align: left;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: #475569;
+        border-bottom: 1px solid rgba(255,255,255,0.06);
+        white-space: nowrap;
+        position: sticky;
+        top: 0;          /* container'a göre — topbar sorunu yok */
+        z-index: 10;
+        cursor: pointer;
+        user-select: none;
+    }
+    .data-table thead th:hover { color: #94A3B8; }
+    .data-table thead th.sorted { color: #60A5FA; }
+    .data-table thead th.th-right { text-align: right !important; }
+    .data-table tbody tr {
+        border-bottom: 1px solid rgba(255,255,255,0.04);
+        transition: background 0.1s;
+    }
+    .data-table tbody tr:hover { background: rgba(59,130,246,0.04); }
+    .data-table tbody td {
+        padding: 10px 14px;
+        font-size: 13px;
+        color: #CBD5E1;
+        white-space: nowrap;
+    }
+    .data-table tbody td.td-right  { text-align: right !important; }
+    .data-table tfoot td.td-right  { text-align: right !important; }
+    .data-table tfoot td {
+        background: #111827;
+        padding: 10px 14px;
+        font-size: 13px;
+        font-weight: 600;
+        border-top: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .badge-son-yer  { color: #FBBF24; font-weight: 700; }
+    .badge-yakin    { color: #FDE047; font-weight: 600; }
+    .badge-bol      { color: #34D399; font-weight: 600; }
+    .badge-dolu     { color: #475569; font-weight: 400; }
+
+    .rehber-metin { cursor: pointer; transition: color 0.1s; }
+    .rehber-metin:hover { color: #60A5FA; }
+    .rehber-input {
+        background: #1A2035;
+        border: 1px solid rgba(59,130,246,0.4);
+        border-radius: 6px;
+        padding: 4px 8px;
+        font-size: 13px;
+        color: #F1F5F9;
+        width: 140px;
+        outline: none;
+    }
+
+    .tab-btn {
+        padding: 8px 16px;
+        font-size: 13px;
+        font-weight: 500;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.15s;
+        border: 1px solid transparent;
+        background: transparent;
+        color: #475569;
+    }
+    .tab-btn:hover { color: #94A3B8; background: rgba(255,255,255,0.04); }
+    .tab-btn.active { background: rgba(59,130,246,0.12); border-color: rgba(59,130,246,0.25); color: #60A5FA; }
+    .tab-btn.active-amber { background: rgba(245,158,11,0.1); border-color: rgba(245,158,11,0.2); color: #FBBF24; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Header -->
+<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
+    <div>
+        <h1 class="text-xl font-bold text-white">Tur Yönetimi</h1>
+        <p class="text-sm text-slate-500 mt-0.5">{{ toplam }} tur · Gerçek zamanlı kontenjan takibi</p>
+    </div>
+</div>
+
+<!-- Tabs -->
+<div class="flex gap-1.5 mb-4">
+    <button id="tab-kontenjan" class="tab-btn active" onclick="sekmeAc('kontenjan')">
+        Tur Kontenjanlari
+    </button>
+    <button id="tab-satis" class="tab-btn {% if satis_alertleri %}active-amber{% endif %}" onclick="sekmeAc('satis')">
+        Kritik Satış Uyarısı
+        {% if satis_alertleri %}
+        <span class="ml-1.5 bg-amber-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">{{ satis_alertleri|length }}</span>
+        {% endif %}
+    </button>
+</div>
+
+<!-- TAB 1: Kontenjanlar -->
+<div id="panel-kontenjan">
+    <!-- Filters -->
+    <div class="card card-sm mb-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div class="sm:col-span-2 lg:col-span-1">
+                <label class="block text-xs text-slate-500 mb-1 font-medium">Arama</label>
+                <input type="text" id="aramaInput" class="filter-input" placeholder="Tur adı, JT kodu, havayolu..."/>
+            </div>
+            <div>
+                <label class="block text-xs text-slate-500 mb-1 font-medium">Havayolu</label>
+                <select id="havayoluFiltre" class="filter-input">
+                    <option value="">Tümü</option>
+                    {% for hy in havayollari %}<option value="{{ hy }}">{{ hy }}</option>{% endfor %}
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs text-slate-500 mb-1 font-medium">Doluluk</label>
+                <select id="dolulukFiltre" class="filter-input">
+                    <option value="">Tümü</option>
+                    <option value="kritik">Kritik (0–3)</option>
+                    <option value="orta">Orta (4–10)</option>
+                    <option value="bol">İyi (11+)</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs text-slate-500 mb-1 font-medium">Tarih Aralığı</label>
+                <div class="flex gap-2">
+                    <input type="date" id="tarihBaslangic" class="filter-input"/>
+                    <input type="date" id="tarihBitis" class="filter-input"/>
+                </div>
+            </div>
+        </div>
+        <div class="flex items-center justify-between mt-3">
+            <span id="sonucSayisi" class="text-xs text-slate-500">{{ toplam }} tur gösteriliyor</span>
+            <button id="temizleBtn" class="text-xs text-slate-500 hover:text-blue-400 transition-colors font-medium">Filtreleri Temizle</button>
+        </div>
+    </div>
+
+    <!-- Table -->
+    <div class="card" style="padding: 0; overflow: hidden;">
+        <div class="table-scroll-container">
+            <table class="data-table" id="turTablosu">
+                <thead>
+                    <tr>
+                        <th data-kolon="0" class="sirala">Tur Kodu</th>
+                        <th data-kolon="1" class="sirala">Tur İsmi</th>
+                        <th data-kolon="2" data-tip="tarih" class="sirala">Kalkış</th>
+                        <th data-kolon="3" data-tip="tarih" class="sirala">Dönüş</th>
+                        <th data-kolon="4" class="sirala">Havayolu</th>
+                        <th data-kolon="5" data-tip="sayi" class="sirala th-right">Kontenjan</th>
+                        <th data-kolon="6" data-tip="sayi" class="sirala th-right">Satılan</th>
+                        <th data-kolon="7" data-tip="sayi" class="sirala th-right">Kalan</th>
+                        <th class="th-right">Fiyat</th>
+                        <th>Rehber</th>
+                    </tr>
+                </thead>
+                <tbody id="turGovde">
+                    {% for tur in turlar %}
+                    <tr class="tur-satir" data-havayolu="{{ tur[3] }}" data-kalan="{{ tur[6] if tur[6] is not none else 0 }}" data-tarih="{{ tur[2] }}">
+                        <td class="font-medium text-white">{{ tur[0] }}</td>
+                        <td class="text-slate-300" style="max-width:200px; overflow:hidden; text-overflow:ellipsis;">{{ tur[1] }}</td>
+                        <td>{{ tur[2] }}</td>
+                        <td class="text-slate-400">{{ tur[9] or '—' }}</td>
+                        <td class="text-slate-400">{{ tur[3] }}</td>
+                        <td class="td-right">{{ tur[4] }}</td>
+                        <td class="td-right">{{ tur[5] }}</td>
+                        <td class="td-right">
+                            {% if tur[6] is none or tur[6] == 0 %}<span class="badge-dolu">—</span>
+                            {% elif tur[6] <= 5 %}<span class="badge-son-yer">{{ tur[6] }}</span>
+                            {% elif tur[6] <= 10 %}<span class="badge-yakin">{{ tur[6] }}</span>
+                            {% else %}<span class="badge-bol">{{ tur[6] }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="td-right text-slate-400">{{ tur[7] or '—' }}</td>
+                        <td class="rehber-hucre" data-jt="{{ tur[0] }}">
+                            <span class="rehber-metin {% if not tur[8] %}text-slate-600 italic{% else %}text-slate-300{% endif %}">
+                                {{ tur[8] or 'Ekle...' }}
+                            </span>
+                            <input type="text" class="rehber-input hidden" value="{{ tur[8] or '' }}" placeholder="Rehber adı..."/>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="5" style="color:#475569; font-size:11px; text-transform:uppercase; letter-spacing:.07em;">Toplam</td>
+                        <td id="toplamPax"       class="td-right" style="color:#F1F5F9;"></td>
+                        <td id="toplamSatilan"   class="td-right" style="color:#F1F5F9;"></td>
+                        <td id="toplamKalan"     class="td-right" style="color:#F1F5F9;"></td>
+                        <td id="toplamOran"      class="td-right" style="color:#34D399;"></td>
+                        <td id="toplamKalanOran" class="td-right" style="color:#F87171;"></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- TAB 2: Kritik Satış -->
+<div id="panel-satis" class="hidden">
+    <div class="card" style="padding: 0; overflow: hidden;">
+        <div class="flex items-center justify-between px-5 py-3 border-b border-white border-opacity-5">
+            <div>
+                <h2 class="text-sm font-semibold text-white">Kritik Satış Uyarısı</h2>
+                <p class="text-xs text-slate-500 mt-0.5">35–60 gün içinde kalkışı olan, doluluk %50 altındaki turlar</p>
+            </div>
+            <span class="text-xs text-slate-500">{{ satis_alertleri|length }} tur</span>
+        </div>
+        {% if satis_alertleri %}
+        <div class="table-scroll-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Tur Kodu</th>
+                        <th>Tur İsmi</th>
+                        <th>Tur Tarihi</th>
+                        <th class="th-right">Kalan Gün</th>
+                        <th class="th-right">Kontenjan</th>
+                        <th class="th-right">Satılan</th>
+                        <th class="th-right">Doluluk</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for a in satis_alertleri %}
+                    <tr>
+                        <td class="font-medium text-white">{{ a.jt_kodu }}</td>
+                        <td class="text-slate-300" style="max-width:220px; overflow:hidden; text-overflow:ellipsis;">{{ a.tur_adi }}</td>
+                        <td>{{ a.kalkis }}</td>
+                        <td class="td-right font-semibold {% if a.days_left <= 40 %}text-red-400{% else %}text-amber-400{% endif %}">{{ a.days_left }}</td>
+                        <td class="td-right">{{ a.pax }}</td>
+                        <td class="td-right">{{ a.satilan }}</td>
+                        <td class="td-right font-bold" style="color:#F87171;">%{{ a.doluluk }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-12 text-slate-600 text-sm">Kritik satış uyarısı bulunmuyor.</div>
+        {% endif %}
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function sekmeAc(sekme) {
+        document.getElementById('panel-kontenjan').classList.toggle('hidden', sekme !== 'kontenjan');
+        document.getElementById('panel-satis').classList.toggle('hidden', sekme !== 'satis');
+        document.getElementById('tab-kontenjan').classList.toggle('active', sekme === 'kontenjan');
+        const satisBtn = document.getElementById('tab-satis');
+        if (sekme === 'satis') {
+            satisBtn.classList.remove('active-amber'); satisBtn.classList.add('active');
+        } else {
+            satisBtn.classList.remove('active');
+            if ({{ 'true' if satis_alertleri else 'false' }}) satisBtn.classList.add('active-amber');
+        }
+    }
+
+    // Filters
+    const aramaInput     = document.getElementById('aramaInput');
+    const havayoluFiltre = document.getElementById('havayoluFiltre');
+    const dolulukFiltre  = document.getElementById('dolulukFiltre');
+    const tarihBaslangic = document.getElementById('tarihBaslangic');
+    const tarihBitis     = document.getElementById('tarihBitis');
+    const sonucSayisi    = document.getElementById('sonucSayisi');
+
+    function tarihParse(t) {
+        if (!t) return null;
+        const p = t.split(/[-./]/);
+        if (p.length !== 3) return null;
+        return new Date(parseInt(p[2]), parseInt(p[1]) - 1, parseInt(p[0]));
+    }
+
+    function filtrele() {
+        const arama    = aramaInput.value.toLowerCase();
+        const havayolu = havayoluFiltre.value;
+        const doluluk  = dolulukFiltre.value;
+        const bas      = tarihBaslangic.value ? new Date(tarihBaslangic.value) : null;
+        const bit      = tarihBitis.value     ? new Date(tarihBitis.value)     : null;
+        const satirlar = document.querySelectorAll('.tur-satir');
+        let gorunen = 0;
+
+        satirlar.forEach(satir => {
+            const metin     = satir.textContent.toLowerCase();
+            const hy        = satir.dataset.havayolu;
+            const kalan     = parseInt(satir.dataset.kalan);
+            const sTarih    = tarihParse(satir.dataset.tarih);
+            let goster = true;
+            if (arama    && !metin.includes(arama))                    goster = false;
+            if (havayolu && hy !== havayolu)                           goster = false;
+            if (doluluk  === 'kritik' && kalan > 3)                    goster = false;
+            if (doluluk  === 'orta'   && (kalan <= 3 || kalan > 10))   goster = false;
+            if (doluluk  === 'bol'    && kalan <= 10)                  goster = false;
+            if (bas && (!sTarih || sTarih < bas))                      goster = false;
+            if (bit && (!sTarih || sTarih > bit))                      goster = false;
+            satir.style.display = goster ? '' : 'none';
+            if (goster) gorunen++;
+        });
+
+        sonucSayisi.textContent = gorunen + ' tur gösteriliyor';
+
+        let topPax = 0, topSatilan = 0, topKalan = 0;
+        satirlar.forEach(satir => {
+            if (satir.style.display === 'none') return;
+            topPax     += parseInt(satir.cells[5].textContent.trim()) || 0;
+            topSatilan += parseInt(satir.cells[6].textContent.trim()) || 0;
+            topKalan   += parseInt(satir.cells[7].textContent.trim()) || 0;
+        });
+        document.getElementById('toplamPax').textContent     = topPax.toLocaleString('tr-TR');
+        document.getElementById('toplamSatilan').textContent = topSatilan.toLocaleString('tr-TR');
+        document.getElementById('toplamKalan').textContent   = topKalan.toLocaleString('tr-TR');
+        document.getElementById('toplamOran').textContent      = topPax > 0 ? '%' + (topSatilan / topPax * 100).toFixed(1) : '';
+        document.getElementById('toplamKalanOran').textContent = topPax > 0 ? '%' + (topKalan  / topPax * 100).toFixed(1) : '';
+    }
+
+    // Default: today
+    tarihBaslangic.value = new Date().toISOString().split('T')[0];
+    filtrele();
+
+    aramaInput.addEventListener('input', filtrele);
+    havayoluFiltre.addEventListener('change', filtrele);
+    dolulukFiltre.addEventListener('change', filtrele);
+    tarihBaslangic.addEventListener('change', filtrele);
+    tarihBitis.addEventListener('change', filtrele);
+    document.getElementById('temizleBtn').addEventListener('click', () => {
+        aramaInput.value = ''; havayoluFiltre.value = ''; dolulukFiltre.value = '';
+        tarihBaslangic.value = ''; tarihBitis.value = '';
+        filtrele();
+    });
+
+    // Sort
+    const siralamaYon = {};
+    document.querySelectorAll('th.sirala').forEach(th => {
+        th.addEventListener('click', () => {
+            const kolon = parseInt(th.dataset.kolon);
+            const tip   = th.dataset.tip || 'metin';
+            const govde = document.getElementById('turGovde');
+            const rows  = Array.from(govde.querySelectorAll('.tur-satir'));
+            siralamaYon[kolon] = !siralamaYon[kolon];
+            document.querySelectorAll('th.sirala').forEach(t => t.classList.remove('sorted'));
+            th.classList.add('sorted');
+            rows.sort((a, b) => {
+                let av = a.cells[kolon].textContent.trim();
+                let bv = b.cells[kolon].textContent.trim();
+                if (tip === 'tarih') {
+                    const fmt = t => { const p = t.split(/[-./]/); return p.length === 3 ? p[2]+'-'+p[1].padStart(2,'0')+'-'+p[0].padStart(2,'0') : ''; };
+                    av = fmt(av); bv = fmt(bv);
+                    return siralamaYon[kolon] ? av.localeCompare(bv) : bv.localeCompare(av);
+                }
+                if (tip === 'sayi') {
+                    return siralamaYon[kolon] ? (parseFloat(av)||0)-(parseFloat(bv)||0) : (parseFloat(bv)||0)-(parseFloat(av)||0);
+                }
+                return siralamaYon[kolon] ? av.localeCompare(bv, 'tr') : bv.localeCompare(av, 'tr');
+            });
+            rows.forEach(r => govde.appendChild(r));
+        });
+    });
+
+    // Rehber inline edit
+    document.getElementById('turGovde').addEventListener('click', e => {
+        const metin = e.target.closest('.rehber-metin');
+        if (!metin) return;
+        const hucre = metin.closest('.rehber-hucre');
+        const input = hucre.querySelector('.rehber-input');
+        metin.classList.add('hidden');
+        input.classList.remove('hidden');
+        input.focus(); input.select();
+    });
+    document.getElementById('turGovde').addEventListener('focusout', e => {
+        const input = e.target.closest('.rehber-input');
+        if (input) rehberKaydet(input);
+    });
+    document.getElementById('turGovde').addEventListener('keydown', e => {
+        const input = e.target.closest('.rehber-input');
+        if (!input) return;
+        if (e.key === 'Enter') rehberKaydet(input);
+        if (e.key === 'Escape') rehberIptal(input);
+    });
+    function rehberKaydet(input) {
+        const hucre = input.closest('.rehber-hucre');
+        const metin = hucre.querySelector('.rehber-metin');
+        const jt    = hucre.dataset.jt;
+        const deger = input.value.trim();
+        fetch('/api/tur/' + encodeURIComponent(jt) + '/rehber', {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rehber: deger })
+        }).then(r => r.json()).then(() => {
+            if (deger) { metin.textContent = deger; metin.classList.remove('text-slate-600','italic'); }
+            else { metin.textContent = 'Ekle...'; metin.classList.add('text-slate-600','italic'); }
+            input.classList.add('hidden'); metin.classList.remove('hidden');
+        });
+    }
+    function rehberIptal(input) {
+        const hucre = input.closest('.rehber-hucre');
+        const metin = hucre.querySelector('.rehber-metin');
+        input.value = metin.textContent === 'Ekle...' ? '' : metin.textContent;
+        input.classList.add('hidden'); metin.classList.remove('hidden');
+    }
+</script>
+{% endblock %}
