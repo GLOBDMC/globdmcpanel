@@ -654,6 +654,24 @@ def dashboard(request: Request):
         key=lambda x: x[1], reverse=True
     )[:8]
 
+    # Tur bazlı satış dağılımı (pasta grafik)
+    tur_satis: dict = {}
+    for t in turlar:
+        tur_adi = t[1] or "Bilinmeyen"
+        satilan  = int(t[5]) if t[5] is not None else 0
+        if satilan > 0:
+            tur_satis[tur_adi] = tur_satis.get(tur_adi, 0) + satilan
+
+    tur_satis_sorted = sorted(tur_satis.items(), key=lambda x: x[1], reverse=True)
+    top_turlar = tur_satis_sorted[:9]
+    diger_toplam = sum(v for _, v in tur_satis_sorted[9:])
+    if diger_toplam > 0:
+        top_turlar.append(("Diğer", diger_toplam))
+
+    toplam_satilan      = sum(v for _, v in top_turlar)
+    satis_pasta_labels  = [item[0] for item in top_turlar]
+    satis_pasta_data    = [item[1] for item in top_turlar]
+
     bugun = datetime.today().strftime("%d %B %Y")
 
     return templates.TemplateResponse(
@@ -671,6 +689,9 @@ def dashboard(request: Request):
             "havayolu_ozet": havayolu_ozet,
             "kritik_sayi": son_yerler,
             "bugun": bugun,
+            "satis_pasta_labels": satis_pasta_labels,
+            "satis_pasta_data": satis_pasta_data,
+            "toplam_satilan": toplam_satilan,
         }
     )
 
