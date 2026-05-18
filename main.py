@@ -1,6 +1,9 @@
 import os
+import time
+import secrets
+from collections import defaultdict
 from fastapi import FastAPI, Request, Form
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, PlainTextResponse
 from pydantic import BaseModel
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -8,12 +11,96 @@ from sqlalchemy import create_engine, text
 from apscheduler.schedulers.background import BackgroundScheduler
 from contextlib import asynccontextmanager
 from datetime import datetime
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from passlib.context import CryptContext
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# ── Production config ────────────────────────────────────────────────────────
+_CANONICAL_DOMAIN = os.environ.get("CANONICAL_DOMAIN", "").strip()
+_ENFORCE_HTTPS    = os.environ.get("ENFORCE_HTTPS", "1") == "1"
+_SECRET_KEY       = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+
+# ── Security Headers Middleware ──────────────────────────────────────────────
+_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' cdn.tailwindcss.com cdn.jsdelivr.net; "
+    "style-src 'self' 'unsafe-inline' cdn.tailwindcss.com; "
+    "img-src 'self' data: blob:; "
+    "font-src 'self' data:; "
+    "connect-src 'self'; "
+    "frame-ancestors 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self';"
+)
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    _SKIP = {"/health", "/robots.txt"}
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+
+        # 1 — HTTP → HTTPS redirect (Cloudflare / Railway proxy)
+        if _ENFORCE_HTTPS and path not in self._SKIP:
+            if request.headers.get("x-forwarded-proto") == "http":
+                url = str(request.url).replace("http://", "https://", 1)
+                return RedirectResponse(url=url, status_code=301)
+
+        # 2 — Canonical domain redirect (Railway raw domain → custom domain)
+        if _CANONICAL_DOMAIN and path not in self._SKIP:
+            host = request.headers.get("host", "").split(":")[0]
+            if host and host != _CANONICAL_DOMAIN:
+                target = f"https://{_CANONICAL_DOMAIN}{request.url.path}"
+                if request.url.query:
+                    target += f"?{request.url.query}"
+                return RedirectResponse(url=target, status_code=301)
+
+        response = await call_next(request)
+
+        # 3 — Security headers
+        h = response.headers
+        h["X-Frame-Options"]           = "DENY"
+        h["X-Content-Type-Options"]    = "nosniff"
+        h["X-XSS-Protection"]          = "1; mode=block"
+        h["Referrer-Policy"]           = "strict-origin-when-cross-origin"
+        h["Permissions-Policy"]        = "camera=(), microphone=(), geolocation=(), payment=()"
+        h["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        h["Content-Security-Policy"]   = _CSP
+
+        # 4 — Hide server fingerprint
+        if "server" in h:
+            del h["server"]
+        if "x-powered-by" in h:
+            del h["x-powered-by"]
+
+        return response
+
+# ── Login rate limiter (in-memory, resets on restart) ───────────────────────
+_login_attempts: dict = defaultdict(list)
+_LOGIN_MAX    = int(os.environ.get("LOGIN_MAX_ATTEMPTS",   "10"))
+_LOGIN_WINDOW = int(os.environ.get("LOGIN_WINDOW_SECONDS", "300"))  # 5 dakika
+
+def _client_ip(request: Request) -> str:
+    # Cloudflare gerçek IP başlığı
+    cf = request.headers.get("cf-connecting-ip")
+    if cf:
+        return cf
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return (request.client.host if request.client else "unknown")
+
+def _is_rate_limited(ip: str) -> bool:
+    now  = time.time()
+    hits = [t for t in _login_attempts[ip] if now - t < _LOGIN_WINDOW]
+    _login_attempts[ip] = hits
+    return len(hits) >= _LOGIN_MAX
+
+def _record_login_attempt(ip: str) -> None:
+    _login_attempts[ip].append(time.time())
 
 
 db_engine = create_engine(
@@ -446,8 +533,23 @@ async def lifespan(app: FastAPI):
             pass
 
 
-app = FastAPI(lifespan=lifespan)
-app.add_middleware(SessionMiddleware, secret_key=os.environ.get("SECRET_KEY", "glob-gizli-anahtar-2025"))
+app = FastAPI(
+    lifespan=lifespan,
+    docs_url=None,        # Swagger UI kapalı
+    redoc_url=None,       # ReDoc kapalı
+    openapi_url=None,     # OpenAPI schema kapalı
+)
+
+# Middleware sırası: son eklenen = en dışta (request'i ilk karşılar)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=_SECRET_KEY,
+    https_only=_ENFORCE_HTTPS,
+    same_site="lax",
+    max_age=28800,        # 8 saat
+)
+app.add_middleware(SecurityHeadersMiddleware)
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
@@ -465,8 +567,16 @@ def login_sayfasi(request: Request):
 
 @app.post("/login")
 def login_yap(request: Request, kullanici_adi: str = Form(...), sifre: str = Form(...)):
+    ip = _client_ip(request)
+    if _is_rate_limited(ip):
+        return templates.TemplateResponse(
+            request=request, name="login.html",
+            context={"hata": "Çok fazla hatalı deneme. Lütfen birkaç dakika bekleyin."},
+            status_code=429,
+        )
     k = kullanici_getir(kullanici_adi)
     if not k or not k["sifre_hash"] or not pwd.verify(sifre, k["sifre_hash"]):
+        _record_login_attempt(ip)
         return templates.TemplateResponse(request=request, name="login.html", context={"hata": "Kullanıcı adı veya şifre hatalı"})
     request.session["kullanici_adi"] = k["kullanici_adi"]
     if k.get("sifre_degistir"):
@@ -550,19 +660,21 @@ def kullanici_sil(uid: int, request: Request):
     return JSONResponse({"ok": True})
 
 
-@app.get("/api/debug")
-def debug():
-    sa = os.environ.get("SERVICE_ACCOUNT_JSON")
-    db = os.environ.get("DATABASE_URL")
-    return JSONResponse({
-        "SERVICE_ACCOUNT_JSON": "VAR" if sa else "YOK",
-        "SA_uzunluk": len(sa) if sa else 0,
-        "DATABASE_URL": "VAR" if db else "YOK",
-    })
+@app.get("/health", include_in_schema=False)
+def health():
+    return JSONResponse({"status": "ok"})
+
+
+@app.get("/robots.txt", include_in_schema=False)
+def robots_txt():
+    return PlainTextResponse("User-agent: *\nDisallow: /\n")
 
 
 @app.get("/api/sync")
-def manuel_sync():
+def manuel_sync(request: Request):
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici:
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=401)
     try:
         sheets_den_postgresql_kopyala()
         return JSONResponse({"ok": True, "mesaj": "Sync tamamlandi"})
