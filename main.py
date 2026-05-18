@@ -702,7 +702,8 @@ def turlar_sayfasi(request: Request):
     # Now Boarding — önümüzdeki 10 gün içinde kalkışı olan, en az 1 satışı olan turlar
     from datetime import timedelta as _td
     bugun_dt = datetime.today().date()
-    limit_dt = bugun_dt + _td(days=10)
+    baslangic_dt = bugun_dt - _td(days=2)
+    limit_dt     = bugun_dt + _td(days=7)
 
     def _tarih_parse(s):
         if not s:
@@ -718,7 +719,7 @@ def turlar_sayfasi(request: Request):
     for _t in turlar:
         _d = _tarih_parse(_t[2])
         _satilan = int(_t[5]) if _t[5] is not None else 0
-        if _d is not None and bugun_dt <= _d <= limit_dt and _satilan >= 1:
+        if _d is not None and baslangic_dt <= _d <= limit_dt and _satilan >= 1:
             now_boarding.append(_t)
     now_boarding.sort(key=lambda x: _tarih_parse(x[2]) or bugun_dt)
 
