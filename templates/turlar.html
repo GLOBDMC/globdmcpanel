@@ -308,12 +308,21 @@
 <!-- TAB 3: Kritik Satış -->
 <div id="panel-satis" class="hidden">
     <div class="card" style="padding: 0; overflow: hidden;">
-        <div class="flex items-center justify-between px-5 py-3 border-b border-white border-opacity-5">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-5 py-3 border-b border-white border-opacity-5">
             <div>
-                <h2 class="text-sm font-semibold text-white">Kritik Satış Uyarısı</h2>
+                <h2 class="text-sm font-semibold text-white" id="satis-baslik">Kritik Satış Uyarısı</h2>
                 <p class="text-xs text-slate-500 mt-0.5">35–60 gün içinde kalkışı olan, doluluk %50 altındaki turlar</p>
             </div>
-            <span class="text-xs text-slate-500">{{ satis_alertleri|length }} tur</span>
+            <div class="flex items-center gap-2">
+                <select id="satisHavayoluFiltre" class="filter-input" style="width:auto; min-width:130px; font-size:12px; padding:6px 10px;"
+                        onchange="satisHavayoluFiltrele(this.value)">
+                    <option value="">Tüm Havayolları</option>
+                    {% for hy in havayollari %}
+                    <option value="{{ hy }}">{{ hy }}</option>
+                    {% endfor %}
+                </select>
+                <span id="satisSayac" class="text-xs text-slate-500 whitespace-nowrap">{{ satis_alertleri|length }} tur</span>
+            </div>
         </div>
         {% if satis_alertleri %}
         <div class="table-scroll-container">
@@ -441,16 +450,10 @@
     const _hy     = _params.get('havayolu');
 
     if (_sekme === 'satis') {
-        // Kritik Satış sekmesini aç
         sekmeAc('satis');
-        // Havayolu filtresini uygula
         if (_hy) {
-            document.querySelectorAll('.satis-satir').forEach(function(satir) {
-                if (satir.dataset.havayolu !== _hy) satir.style.display = 'none';
-            });
-            // Başlığa filtre bilgisi ekle
-            const baslik = document.querySelector('#panel-satis .text-sm.font-semibold');
-            if (baslik) baslik.textContent = 'Kritik Satış Uyarısı — ' + _hy;
+            document.getElementById('satisHavayoluFiltre').value = _hy;
+            satisHavayoluFiltrele(_hy);
         }
         tarihBaslangic.value = new Date().toISOString().split('T')[0];
     } else {
@@ -541,6 +544,19 @@
         const metin = hucre.querySelector('.rehber-metin');
         input.value = metin.textContent === 'Ekle...' ? '' : metin.textContent;
         input.classList.add('hidden'); metin.classList.remove('hidden');
+    }
+
+    function satisHavayoluFiltrele(hy) {
+        const satirlar = document.querySelectorAll('.satis-satir');
+        let gorunen = 0;
+        satirlar.forEach(function(satir) {
+            const goster = !hy || satir.dataset.havayolu === hy;
+            satir.style.display = goster ? '' : 'none';
+            if (goster) gorunen++;
+        });
+        document.getElementById('satisSayac').textContent = gorunen + ' tur';
+        const baslik = document.getElementById('satis-baslik');
+        baslik.textContent = hy ? 'Kritik Satış Uyarısı — ' + hy : 'Kritik Satış Uyarısı';
     }
 </script>
 {% endblock %}
