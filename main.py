@@ -371,7 +371,7 @@ def oturum_kullanicisi(request: Request):
 def satis_aleri_getir():
     with db_engine.connect() as conn:
         rows = conn.execute(text(
-            "SELECT jt_kodu, tur_adi, kalkis_tarihi, pax, satilan FROM turlar WHERE pax > 0"
+            "SELECT jt_kodu, tur_adi, kalkis_tarihi, pax, satilan, havayolu FROM turlar WHERE pax > 0"
         )).fetchall()
 
     today = datetime.today()
@@ -405,6 +405,7 @@ def satis_aleri_getir():
                 "pax": pax,
                 "satilan": satilan,
                 "doluluk": round(satilan / pax * 100, 1),
+                "havayolu": row[5] or "",
             })
         except Exception:
             continue
