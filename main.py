@@ -699,6 +699,28 @@ def turlar_sayfasi(request: Request):
     son_yerler = sum(1 for t in turlar if t[6] is not None and 1 <= t[6] <= 5)
     satis_alertleri = satis_aleri_getir()
 
+    # Now Boarding — önümüzdeki 10 gün içinde kalkışı olan, en az 1 satışı olan turlar
+    from datetime import timedelta
+    bugun_dt  = datetime.today().date()
+    limit_dt  = bugun_dt + timedelta(days=10)
+
+    def tarih_parse_nb(s):
+        if not s:
+            return None
+        for fmt in ('%d-%m-%Y', '%d.%m.%Y'):
+            try:
+                return datetime.strptime(s, fmt).date()
+            except ValueError:
+                pass
+        return None
+
+    now_boarding = sorted(
+        [t for t in turlar
+         if (lambda d: d is not None and bugun_dt <= d <= limit_dt)(tarih_parse_nb(t[2]))
+         and (int(t[5]) if t[5] is not None else 0) >= 1],
+        key=lambda t: tarih_parse_nb(t[2])
+    )
+
     return templates.TemplateResponse(
         request=request,
         name="turlar.html",
@@ -710,6 +732,7 @@ def turlar_sayfasi(request: Request):
             "toplam": toplam,
             "satis_alertleri": satis_alertleri,
             "kritik_sayi": son_yerler,
+            "now_boarding": now_boarding,
         }
     )
 
