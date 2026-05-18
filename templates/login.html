@@ -4,74 +4,63 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GlobDMC — Giriş</title>
-    <link rel="icon" type="image/jpeg" href="/static/logo.jpg">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌐</text></svg>">
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-        :root {
-            --navy:     #0b0f1e;
-            --navy-mid: #111827;
-            --glob-dark:#252D45;
-            --border:   rgba(99, 130, 200, 0.18);
-        }
 
         html, body {
             height: 100%;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
-            background: var(--navy);
-            overflow-x: hidden;
+            background: #080c18;
+            overflow: hidden;
         }
 
         /* ── BACKGROUND ── */
         .bg-scene {
             position: fixed; inset: 0; z-index: 0;
             background:
-                radial-gradient(ellipse 80% 60% at 50% -10%, rgba(29,78,216,0.22) 0%, transparent 60%),
-                radial-gradient(ellipse 60% 50% at 80% 90%,  rgba(103,232,249,0.06) 0%, transparent 55%),
-                radial-gradient(ellipse 50% 40% at 10% 80%,  rgba(99,102,241,0.07) 0%, transparent 50%),
+                radial-gradient(ellipse 80% 60% at 50% -10%, rgba(29,78,216,0.28) 0%, transparent 60%),
+                radial-gradient(ellipse 60% 50% at 80% 100%, rgba(103,232,249,0.07) 0%, transparent 55%),
+                radial-gradient(ellipse 50% 40% at 10% 80%,  rgba(99,102,241,0.08) 0%, transparent 50%),
                 linear-gradient(160deg, #0b0f1e 0%, #0d1424 50%, #080c18 100%);
         }
-
         .bg-grid {
             position: fixed; inset: 0; z-index: 1;
             background-image:
-                linear-gradient(rgba(99,130,200,0.045) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(99,130,200,0.045) 1px, transparent 1px);
+                linear-gradient(rgba(99,130,200,0.04) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(99,130,200,0.04) 1px, transparent 1px);
             background-size: 52px 52px;
             mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, black 30%, transparent 100%);
             -webkit-mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, black 30%, transparent 100%);
         }
-
         .glow-orb {
             position: fixed; border-radius: 50%;
-            filter: blur(80px); pointer-events: none; z-index: 1;
+            filter: blur(90px); pointer-events: none; z-index: 1;
         }
         .glow-orb-1 {
-            width: 600px; height: 600px;
-            top: -200px; left: 50%; transform: translateX(-50%);
-            background: radial-gradient(circle, rgba(29,78,216,0.14) 0%, transparent 70%);
+            width: 700px; height: 700px;
+            top: -280px; left: 50%; transform: translateX(-50%);
+            background: radial-gradient(circle, rgba(29,78,216,0.18) 0%, transparent 70%);
             animation: glow-pulse 8s ease-in-out infinite;
         }
         .glow-orb-2 {
             width: 400px; height: 400px;
-            bottom: -100px; right: -80px;
-            background: radial-gradient(circle, rgba(103,232,249,0.07) 0%, transparent 70%);
+            bottom: -120px; right: -80px;
+            background: radial-gradient(circle, rgba(103,232,249,0.08) 0%, transparent 70%);
             animation: glow-pulse 11s ease-in-out infinite reverse;
         }
         @keyframes glow-pulse {
             0%, 100% { opacity: 0.7; }
             50%       { opacity: 1.0; }
         }
-
         #stars-canvas {
             position: fixed; inset: 0; z-index: 2; pointer-events: none;
         }
-
         .scan-line {
             position: fixed; left: 0; right: 0; height: 1px;
-            background: linear-gradient(90deg, transparent, rgba(103,232,249,0.12), transparent);
+            background: linear-gradient(90deg, transparent, rgba(103,232,249,0.1), transparent);
             z-index: 3;
-            animation: scan 12s linear infinite;
+            animation: scan 14s linear infinite;
         }
         @keyframes scan {
             0%   { top: -2px; opacity: 0; }
@@ -83,108 +72,177 @@
         /* ── PAGE ── */
         .page {
             position: relative; z-index: 10;
-            min-height: 100vh;
-            display: flex; flex-direction: column;
-            align-items: center; justify-content: center;
-            padding: 24px 16px;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 18px;
+            padding: 16px;
         }
 
-        /* ── LOGO (eski sade) ── */
+        /* ── GLOB LOGO (üst) ── */
         @keyframes float {
             0%, 100% { transform: translateY(0px); }
-            50%       { transform: translateY(-10px); }
+            50%       { transform: translateY(-6px); }
         }
-
-        .logo-wrap {
-            margin-bottom: 28px;
-            display: flex; justify-content: center;
-        }
-        .logo-wrap img {
-            height: 56px;
-            border-radius: 10px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+        .glob-logo img {
+            height: 46px;
+            border-radius: 8px;
+            box-shadow: 0 6px 24px rgba(0,0,0,0.6);
             animation: float 4s ease-in-out infinite;
         }
 
-        /* ── CARD (eski beyaz) ── */
+        /* ── CARD ── */
         .card {
-            width: 100%; max-width: 360px;
-            background: #ffffff;
-            border-radius: 14px;
-            padding: 32px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+            width: 100%;
+            max-width: 380px;
+            background: rgba(15, 23, 42, 0.85);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(99, 130, 200, 0.18);
+            border-radius: 16px;
+            padding: 28px 30px;
+            box-shadow:
+                0 0 0 1px rgba(255,255,255,0.04) inset,
+                0 24px 64px rgba(0,0,0,0.6),
+                0 0 40px rgba(29,78,216,0.08);
+            position: relative;
+            overflow: hidden;
+        }
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(99,130,200,0.4), transparent);
         }
 
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+        .card-header-icon {
+            width: 34px; height: 34px;
+            background: rgba(59,130,246,0.12);
+            border: 1px solid rgba(59,130,246,0.2);
+            border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            flex-shrink: 0;
+        }
         .card-title {
-            font-size: 19px;
+            font-size: 15px;
             font-weight: 700;
-            color: var(--glob-dark);
-            margin-bottom: 4px;
+            color: #F1F5F9;
+            letter-spacing: -0.01em;
         }
-
         .card-subtitle {
-            font-size: 13px;
-            color: #9ca3af;
-            margin-bottom: 24px;
+            font-size: 11.5px;
+            color: #475569;
+            margin-top: 1px;
         }
 
         /* ── ERROR ── */
         .error-box {
-            background: #fef2f2;
-            border: 1px solid #fecaca;
-            color: #b91c1c;
-            font-size: 13px;
-            padding: 10px 14px;
+            background: rgba(239,68,68,0.08);
+            border: 1px solid rgba(239,68,68,0.25);
+            color: #F87171;
+            font-size: 12.5px;
+            padding: 9px 13px;
             border-radius: 8px;
-            margin-bottom: 16px;
+            margin-bottom: 14px;
         }
 
         /* ── FORM ── */
-        .form-group { margin-bottom: 16px; }
-
+        .form-group { margin-bottom: 12px; }
         .form-label {
             display: block;
-            font-size: 11.5px;
+            font-size: 11px;
             font-weight: 500;
-            color: #4b5563;
-            margin-bottom: 5px;
+            color: #64748B;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            margin-bottom: 6px;
         }
-
+        .input-wrap {
+            position: relative;
+        }
+        .input-icon {
+            position: absolute;
+            left: 11px; top: 50%; transform: translateY(-50%);
+            color: #334155;
+            pointer-events: none;
+        }
         .form-input {
             width: 100%;
-            padding: 10px 12px;
-            border: 1px solid #d1d5db;
+            padding: 9px 12px 9px 34px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.08);
             border-radius: 8px;
-            font-size: 14px;
-            color: #111827;
+            font-size: 13.5px;
+            color: #E2E8F0;
             outline: none;
-            transition: border-color 0.15s, box-shadow 0.15s;
+            transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
             -webkit-appearance: none;
-            background: #fff;
         }
+        .form-input::placeholder { color: #334155; }
         .form-input:focus {
-            border-color: var(--glob-dark);
-            box-shadow: 0 0 0 3px rgba(37,45,69,0.1);
+            border-color: rgba(59,130,246,0.45);
+            background: rgba(59,130,246,0.05);
+            box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+        }
+        .form-input:-webkit-autofill {
+            -webkit-box-shadow: 0 0 0 100px #0f172a inset;
+            -webkit-text-fill-color: #E2E8F0;
         }
 
         /* ── BUTTON ── */
         .btn-login {
             width: 100%;
-            margin-top: 8px;
-            padding: 11px;
-            background: var(--glob-dark);
-            border: none;
+            margin-top: 16px;
+            padding: 10px;
+            background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 50%, #1e40af 100%);
+            border: 1px solid rgba(99,130,246,0.3);
             border-radius: 8px;
             color: #fff;
-            font-size: 14px;
+            font-size: 13.5px;
             font-weight: 600;
             cursor: pointer;
-            transition: background 0.15s;
+            letter-spacing: 0.02em;
+            transition: all 0.2s;
+            box-shadow: 0 4px 16px rgba(29,78,216,0.35);
+            position: relative;
+            overflow: hidden;
         }
-        .btn-login:hover { background: var(--navy-mid); }
+        .btn-login::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(135deg, rgba(255,255,255,0.08) 0%, transparent 60%);
+        }
+        .btn-login:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 24px rgba(29,78,216,0.5);
+        }
+        .btn-login:active { transform: translateY(0); }
 
-        @media (max-width: 400px) {
-            .card { padding: 24px 20px; }
+        /* ── SPOCK LOGO (alt) ── */
+        .spock-footer {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0.9;
+        }
+        .spock-footer img {
+            height: 140px;
+            width: 140px;
+            object-fit: contain;
+            mix-blend-mode: screen;
+            filter: drop-shadow(0 4px 20px rgba(103,232,249,0.2));
         }
     </style>
 </head>
@@ -199,13 +257,25 @@
 
     <div class="page">
 
-        <div class="logo-wrap">
+        <!-- GlobDMC Logo -->
+        <div class="glob-logo">
             <img src="/static/logo.jpg" alt="GlobDMC"/>
         </div>
 
+        <!-- Login Card -->
         <div class="card">
-            <div class="card-title">Akıllı Operasyon Merkezi</div>
-            <div class="card-subtitle">Devam etmek için giriş yapın</div>
+            <div class="card-header">
+                <div class="card-header-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#60A5FA" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                    </svg>
+                </div>
+                <div>
+                    <div class="card-title">Akıllı Operasyon Merkezi</div>
+                    <div class="card-subtitle">Yetkili erişim — kimliğinizi doğrulayın</div>
+                </div>
+            </div>
 
             {% if hata %}
             <div class="error-box">{{ hata }}</div>
@@ -214,16 +284,37 @@
             <form method="post" action="/login">
                 <div class="form-group">
                     <label class="form-label">Kullanıcı Adı</label>
-                    <input name="kullanici_adi" type="text" class="form-input"
-                           required autofocus autocomplete="username"/>
+                    <div class="input-wrap">
+                        <span class="input-icon">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+                            </svg>
+                        </span>
+                        <input name="kullanici_adi" type="text" class="form-input"
+                               placeholder="Kullanıcı adınız"
+                               required autofocus autocomplete="username"/>
+                    </div>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Şifre</label>
-                    <input name="sifre" type="password" class="form-input"
-                           required autocomplete="current-password"/>
+                    <div class="input-wrap">
+                        <span class="input-icon">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                            </svg>
+                        </span>
+                        <input name="sifre" type="password" class="form-input"
+                               placeholder="••••••••"
+                               required autocomplete="current-password"/>
+                    </div>
                 </div>
                 <button type="submit" class="btn-login">Giriş Yap</button>
             </form>
+        </div>
+
+        <!-- SPOCK Logo -->
+        <div class="spock-footer">
+            <img src="/static/spock-logo.png" alt="SPOCK"/>
         </div>
 
     </div>
@@ -233,26 +324,23 @@
             const canvas = document.getElementById('stars-canvas');
             const ctx = canvas.getContext('2d');
             let stars = [];
-
             function resize() {
                 canvas.width  = window.innerWidth;
                 canvas.height = window.innerHeight;
             }
-
             function init() {
                 stars = [];
                 for (let i = 0; i < 120; i++) {
                     stars.push({
-                        x:     Math.random() * canvas.width,
-                        y:     Math.random() * canvas.height,
-                        r:     Math.random() * 0.9 + 0.2,
+                        x: Math.random() * canvas.width,
+                        y: Math.random() * canvas.height,
+                        r: Math.random() * 0.9 + 0.2,
                         alpha: Math.random() * 0.5 + 0.1,
                         speed: Math.random() * 0.004 + 0.001,
                         phase: Math.random() * Math.PI * 2
                     });
                 }
             }
-
             function draw(t) {
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 stars.forEach(function(s) {
@@ -264,7 +352,6 @@
                 });
                 requestAnimationFrame(draw);
             }
-
             resize();
             init();
             window.addEventListener('resize', function() { resize(); init(); });
