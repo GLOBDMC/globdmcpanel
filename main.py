@@ -1,9 +1,12 @@
 import os
 import time
 import secrets
+import logging
+import logging.handlers
 from collections import defaultdict
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import JSONResponse, RedirectResponse, PlainTextResponse
+from fastapi.exception_handlers import http_exception_handler
 from pydantic import BaseModel
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -13,6 +16,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from passlib.context import CryptContext
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -23,6 +27,48 @@ pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 _CANONICAL_DOMAIN = os.environ.get("CANONICAL_DOMAIN", "").strip()
 _ENFORCE_HTTPS    = os.environ.get("ENFORCE_HTTPS", "1") == "1"
 _SECRET_KEY       = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+
+# ── Logging setup ────────────────────────────────────────────────────────────
+_LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+_LOG_DIR   = os.environ.get("LOG_DIR", "/tmp/globdmc_logs")
+
+_log_fmt = logging.Formatter(
+    "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
+def _build_logger(name: str, log_file: str,
+                  level=logging.INFO, max_bytes=10_485_760, backup_count=5) -> logging.Logger:
+    lg = logging.getLogger(name)
+    lg.setLevel(level)
+    lg.propagate = False
+
+    # Console (Railway stdout'a yazar)
+    ch = logging.StreamHandler()
+    ch.setFormatter(_log_fmt)
+    lg.addHandler(ch)
+
+    # Rotating file — hata varsa sadece console'a düşer
+    try:
+        os.makedirs(_LOG_DIR, exist_ok=True)
+        fh = logging.handlers.RotatingFileHandler(
+            os.path.join(_LOG_DIR, log_file),
+            maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8",
+        )
+        fh.setFormatter(_log_fmt)
+        lg.addHandler(fh)
+    except Exception:
+        pass
+
+    return lg
+
+logger       = _build_logger("globdmc",       "app.log",   level=getattr(logging, _LOG_LEVEL, logging.INFO))
+audit_logger = _build_logger("globdmc.audit", "audit.log", level=logging.INFO, backup_count=10)
+
+# Harici kütüphanelerin gürültüsünü kıs
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
+logging.getLogger("gspread").setLevel(logging.WARNING)
 
 # ── Security Headers Middleware ──────────────────────────────────────────────
 _CSP = (
@@ -84,14 +130,24 @@ _LOGIN_MAX    = int(os.environ.get("LOGIN_MAX_ATTEMPTS",   "10"))
 _LOGIN_WINDOW = int(os.environ.get("LOGIN_WINDOW_SECONDS", "300"))  # 5 dakika
 
 def _client_ip(request: Request) -> str:
-    # Cloudflare gerçek IP başlığı
-    cf = request.headers.get("cf-connecting-ip")
+    """
+    Gerçek istemci IP'sini proxy zincirinden güvenli şekilde çıkarır.
+    Öncelik: CF-Connecting-IP (Cloudflare) → X-Real-IP → X-Forwarded-For[0] → doğrudan bağlantı
+    """
+    # Cloudflare — en güvenilir kaynak, proxy'nin set ettiği
+    cf = request.headers.get("cf-connecting-ip", "").strip()
     if cf:
         return cf
-    fwd = request.headers.get("x-forwarded-for", "")
+    # Tek reverse proxy (Railway veya nginx)
+    real = request.headers.get("x-real-ip", "").strip()
+    if real:
+        return real
+    # Çoklu proxy zinciri — en soldaki (orijinal istemci)
+    fwd = request.headers.get("x-forwarded-for", "").strip()
     if fwd:
         return fwd.split(",")[0].strip()
-    return (request.client.host if request.client else "unknown")
+    # Doğrudan bağlantı (local dev)
+    return request.client.host if request.client else "unknown"
 
 def _is_rate_limited(ip: str) -> bool:
     now  = time.time()
@@ -216,7 +272,7 @@ def tablo_olustur():
                 sifre_hash = CASE WHEN kullanicilar.sifre_hash IS NULL THEN :h ELSE kullanicilar.sifre_hash END
         """), {"h": default_hash})
         conn.commit()
-    print("Tablolar hazir")
+    logger.info("Tablolar hazir")
 
 
 def bitis_tarihi_hesapla(bitis_raw: str, tur_adi: str, kalkis: str) -> str:
@@ -307,7 +363,7 @@ def sheets_den_postgresql_kopyala():
             else:
                 guncellenen += 1
         conn.commit()
-    print(f"Eklenen: {eklenen}, Guncellenen: {guncellenen}")
+    logger.info(f"Sheets sync: {eklenen} eklendi, {guncellenen} guncellendi")
 
 
 def jolly_sonuc_kopyala():
@@ -322,7 +378,7 @@ def jolly_sonuc_kopyala():
             try:
                 spreadsheet = client.open("fiyat test")
             except Exception as e2:
-                print(f"Jolly Sonuc: spreadsheet acilamadi: {e2}")
+                logger.error(f"Jolly Sonuc: spreadsheet acilamadi: {e2}")
                 return
 
         ws = None
@@ -331,20 +387,20 @@ def jolly_sonuc_kopyala():
                 ws = sheet
                 break
         if ws is None:
-            print("Jolly Sonuc worksheet bulunamadi (Jolly Matcher henuz calistirilmamis)")
+            logger.warning("Jolly Sonuc worksheet bulunamadi")
             return
 
         # get_all_values() kolon adı encoding sorununu bypass eder (pozisyon bazlı)
         all_values = ws.get_all_values()
         if len(all_values) < 2:
-            print("Jolly Sonuc bos")
+            logger.warning("Jolly Sonuc sayfasi bos")
             return
 
         # Beklenen sütun sırası (jolly_matcher _OUTPUT_HEADERS ile eşleşmeli):
         # 0:Grup Adı  1:Gidiş Tarihi  2:Vitrinde  3:Eşleşen Jolly Tur
         # 4:JT Kodu   5:Skor          6:Sebep      7:Kontrol Tarihi
         header = all_values[0]
-        print(f"Jolly Sonuc header: {header}")
+        logger.debug(f"Jolly Sonuc header: {header}")
 
         data_rows = all_values[1:]
         with db_engine.connect() as conn:
@@ -421,9 +477,9 @@ def jolly_sonuc_kopyala():
                         WHERE grup_adi=:g AND kalkis_tarihi=:kt AND platform=:p
                     """), {"simdi": simdi, "g": key[0], "kt": key[1], "p": key[2]})
             conn.commit()
-        print(f"Jolly Sonuc: {len(data_rows)} kayit senkronize edildi")
+        logger.info(f"Jolly Sonuc sync: {len(data_rows)} kayit islendi")
     except Exception as e:
-        print(f"Jolly Sonuc sync hatasi: {e}")
+        logger.error(f"Jolly Sonuc sync hatasi: {e}")
 
 
 def kullanici_getir(kullanici_adi: str):
@@ -505,26 +561,26 @@ async def lifespan(app: FastAPI):
     try:
         tablo_olustur()
     except Exception as e:
-        print(f"Tablo olusturma hatasi: {e}")
+        logger.error(f"Tablo olusturma hatasi: {e}")
     try:
         sheets_den_postgresql_kopyala()
-        print("Baslangic sync tamamlandi")
+        logger.info("Baslangic Sheets sync tamamlandi")
     except Exception as e:
-        print(f"Baslangic sync hatasi: {e}")
+        logger.error(f"Baslangic Sheets sync hatasi: {e}")
     try:
         jolly_sonuc_kopyala()
-        print("Jolly Sonuc baslangic sync tamamlandi")
+        logger.info("Baslangic Jolly sync tamamlandi")
     except Exception as e:
-        print(f"Jolly Sonuc baslangic sync hatasi: {e}")
+        logger.error(f"Baslangic Jolly sync hatasi: {e}")
     scheduler = None
     try:
         scheduler = BackgroundScheduler()
         scheduler.add_job(sheets_den_postgresql_kopyala, 'interval', hours=1)
         scheduler.add_job(jolly_sonuc_kopyala, 'interval', hours=1)
         scheduler.start()
-        print("Otomatik senkronizasyon aktif: her 1 saatte bir")
+        logger.info("Otomatik senkronizasyon aktif: 1 saatte bir")
     except Exception as e:
-        print(f"Scheduler baslatılamadı: {e}")
+        logger.error(f"Scheduler baslatılamadi: {e}")
     yield
     if scheduler:
         try:
@@ -554,6 +610,33 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 
+# ── Exception handlers ───────────────────────────────────────────────────────
+@app.exception_handler(StarletteHTTPException)
+async def custom_http_exception_handler(request: Request, exc: StarletteHTTPException):
+    if exc.status_code == 404:
+        kullanici = oturum_kullanicisi(request)
+        return templates.TemplateResponse(
+            request=request,
+            name="404.html",
+            context={"kullanici": kullanici},
+            status_code=404,
+        )
+    # Diğer HTTP hatalar için default davranış
+    return await http_exception_handler(request, exc)
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.error("Unhandled exception | path=%s | %s: %s",
+                 request.url.path, type(exc).__name__, exc)
+    kullanici = oturum_kullanicisi(request)
+    return templates.TemplateResponse(
+        request=request,
+        name="404.html",
+        context={"kullanici": kullanici, "status_code": 500},
+        status_code=500,
+    )
+
+
 class RehberGuncelle(BaseModel):
     rehber: str
 
@@ -569,6 +652,9 @@ def login_sayfasi(request: Request):
 def login_yap(request: Request, kullanici_adi: str = Form(...), sifre: str = Form(...)):
     ip = _client_ip(request)
     if _is_rate_limited(ip):
+        audit_logger.warning(
+            "LOGIN_BLOCKED | ip=%s | user=%.30s | reason=rate_limit", ip, kullanici_adi
+        )
         return templates.TemplateResponse(
             request=request, name="login.html",
             context={"hata": "Çok fazla hatalı deneme. Lütfen birkaç dakika bekleyin."},
@@ -577,7 +663,18 @@ def login_yap(request: Request, kullanici_adi: str = Form(...), sifre: str = For
     k = kullanici_getir(kullanici_adi)
     if not k or not k["sifre_hash"] or not pwd.verify(sifre, k["sifre_hash"]):
         _record_login_attempt(ip)
-        return templates.TemplateResponse(request=request, name="login.html", context={"hata": "Kullanıcı adı veya şifre hatalı"})
+        audit_logger.warning(
+            "LOGIN_FAILED | ip=%s | user=%.30s | reason=%s",
+            ip, kullanici_adi, "no_user" if not k else "bad_password",
+        )
+        return templates.TemplateResponse(
+            request=request, name="login.html",
+            context={"hata": "Kullanıcı adı veya şifre hatalı"},
+        )
+
+    audit_logger.info(
+        "LOGIN_OK | ip=%s | user=%s | rol=%s", ip, k["kullanici_adi"], k["rol"]
+    )
     request.session["kullanici_adi"] = k["kullanici_adi"]
     if k.get("sifre_degistir"):
         return RedirectResponse("/sifre-degistir", status_code=302)

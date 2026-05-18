@@ -4,7 +4,21 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}GlobDMC{% endblock %} — Operations Intelligence</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌐</text></svg>">
+    <!-- Security & crawl -->
+    <meta name="robots" content="noindex, nofollow">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
+    <!-- Branding -->
+    <meta name="application-name" content="GlobDMC Panel">
+    <meta name="theme-color" content="#080c18">
+    <!-- Open Graph -->
+    <meta property="og:type"        content="website">
+    <meta property="og:site_name"   content="GlobDMC Operasyon Paneli">
+    <meta property="og:title"       content="{% block og_title %}GlobDMC — Operations Intelligence{% endblock %}">
+    <meta property="og:description" content="Akıllı tur operasyon ve kontenjan yönetimi">
+    <meta property="og:image"       content="/static/logo.jpg">
+    <!-- Favicon -->
+    <link rel="icon" type="image/jpeg" href="/static/logo.jpg">
+    <link rel="shortcut icon"          href="/static/logo.jpg">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
