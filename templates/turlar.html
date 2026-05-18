@@ -4,7 +4,6 @@
 {% block breadcrumb %}Turlar{% endblock %}
 
 {% block head %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
     .filter-input {
         background: #1A2035;
@@ -103,48 +102,6 @@
     .tab-btn.active-amber    { background: rgba(245,158,11,0.1);  border-color: rgba(245,158,11,0.2);  color: #FBBF24; }
     .tab-btn.active-boarding { background: rgba(59,130,246,0.12); border-color: rgba(59,130,246,0.28); color: #60A5FA; }
 
-    /* Trend butonu */
-    .trend-btn {
-        width: 28px; height: 28px; border-radius: 7px;
-        border: 1px solid rgba(99,102,241,0.25);
-        background: rgba(99,102,241,0.08);
-        color: #818CF8;
-        display: inline-flex; align-items: center; justify-content: center;
-        cursor: pointer; transition: all 0.15s;
-    }
-    .trend-btn:hover { background: rgba(99,102,241,0.2); border-color: rgba(99,102,241,0.4); color: #A5B4FC; }
-
-    /* Trend modal */
-    #trendModal {
-        position: fixed; inset: 0; z-index: 9999;
-        background: rgba(0,0,0,0.75); backdrop-filter: blur(4px);
-        display: flex; align-items: center; justify-content: center;
-        padding: 16px;
-    }
-    .trend-modal-box {
-        background: #0F1623;
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 14px;
-        width: 100%; max-width: 860px;
-        max-height: 92vh; overflow-y: auto;
-        padding: 24px;
-        box-shadow: 0 24px 60px rgba(0,0,0,0.6);
-    }
-    .trend-metric {
-        background: #161D2F;
-        border: 1px solid rgba(255,255,255,0.06);
-        border-radius: 10px;
-        padding: 14px 16px;
-        flex: 1; min-width: 0;
-    }
-    .trend-chart-box {
-        background: #161D2F;
-        border: 1px solid rgba(255,255,255,0.06);
-        border-radius: 10px;
-        padding: 16px;
-        position: relative;
-    }
-
     /* Now Boarding tablo */
     .boarding-row td:first-child { color: #fff; font-weight: 600; }
     .days-chip {
@@ -242,7 +199,6 @@
                         <th data-kolon="7" data-tip="sayi" class="sirala th-right">Kalan</th>
                         <th class="th-right">Fiyat</th>
                         <th>Rehber</th>
-                        <th style="width:44px;"></th>
                     </tr>
                 </thead>
                 <tbody id="turGovde">
@@ -269,13 +225,6 @@
                             </span>
                             <input type="text" class="rehber-input hidden" value="{{ tur[8] or '' }}" placeholder="Rehber adı..."/>
                         </td>
-                        <td style="text-align:center;">
-                            <button class="trend-btn" data-jt="{{ tur[0] }}" data-adi="{{ tur[1]|e }}" title="Trend Analizi" onclick="trendAc(this)">
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-                                </svg>
-                            </button>
-                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -287,7 +236,6 @@
                         <td id="toplamKalan"     class="td-right" style="color:#F1F5F9;"></td>
                         <td id="toplamOran"      class="td-right" style="color:#34D399;"></td>
                         <td id="toplamKalanOran" class="td-right" style="color:#F87171;"></td>
-                        <td></td>
                     </tr>
                 </tfoot>
             </table>
@@ -408,94 +356,6 @@
         {% else %}
         <div class="text-center py-12 text-slate-600 text-sm">Kritik satış uyarısı bulunmuyor.</div>
         {% endif %}
-    </div>
-</div>
-
-<!-- ── Trend Modal ─────────────────────────────────────────────────────────── -->
-<div id="trendModal" class="hidden" onclick="if(event.target===this)trendKapat()">
-    <div class="trend-modal-box">
-        <!-- Modal header -->
-        <div class="flex items-start justify-between mb-5">
-            <div>
-                <div class="flex items-center gap-2 mb-1">
-                    <div class="w-6 h-6 rounded-md flex items-center justify-center" style="background:rgba(99,102,241,0.15); border:1px solid rgba(99,102,241,0.25);">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#818CF8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-                        </svg>
-                    </div>
-                    <span id="trendModalJt" class="text-xs text-indigo-400 font-mono font-semibold"></span>
-                </div>
-                <h2 id="trendModalAdi" class="text-base font-bold text-white"></h2>
-                <p class="text-xs text-slate-500 mt-0.5">Son 30 günlük snapshot verisi</p>
-            </div>
-            <button onclick="trendKapat()" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-white hover:bg-white hover:bg-opacity-10 transition-colors ml-4 flex-shrink-0">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-            </button>
-        </div>
-
-        <!-- Veri yok -->
-        <div id="trendVeriYok" class="hidden text-center py-12">
-            <div class="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4" style="background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.2);">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#818CF8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-                </svg>
-            </div>
-            <p class="text-sm font-semibold text-slate-300 mb-1">Henüz snapshot verisi yok</p>
-            <p class="text-xs text-slate-500">Günlük snapshot 02:00 TRT'de otomatik alınır.<br>Manuel tetiklemek için: <code class="text-indigo-400">/api/snapshot/trigger</code></p>
-        </div>
-
-        <!-- Trend içeriği -->
-        <div id="trendIcerik" class="hidden">
-
-            <!-- Metrik kartlar -->
-            <div class="flex gap-3 mb-4 flex-wrap">
-                <div class="trend-metric">
-                    <div class="text-xs text-slate-500 mb-1.5 font-medium">Satış (30g)</div>
-                    <div id="mSatis30" class="text-xl font-bold text-white">—</div>
-                    <div id="mSatisAlt" class="text-xs text-slate-500 mt-0.5"></div>
-                </div>
-                <div class="trend-metric">
-                    <div class="text-xs text-slate-500 mb-1.5 font-medium">Fiyat (30g)</div>
-                    <div id="mFiyat30" class="text-xl font-bold text-white">—</div>
-                    <div id="mFiyatAlt" class="text-xs text-slate-500 mt-0.5"></div>
-                </div>
-                <div class="trend-metric">
-                    <div class="text-xs text-slate-500 mb-1.5 font-medium">Doluluk</div>
-                    <div id="mDoluluk" class="text-xl font-bold text-white">—</div>
-                    <div id="mDolulukAlt" class="text-xs text-slate-500 mt-0.5"></div>
-                </div>
-                <div class="trend-metric">
-                    <div class="text-xs text-slate-500 mb-1.5 font-medium">Satış İvmesi (7g)</div>
-                    <div id="mIvme7" class="text-xl font-bold text-white">—</div>
-                    <div id="mIvmeAlt" class="text-xs text-slate-500 mt-0.5"></div>
-                </div>
-            </div>
-
-            <!-- Satış & Kontenjan grafiği -->
-            <div class="trend-chart-box mb-3">
-                <div class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">Satış & Kontenjan Trendi</div>
-                <div style="height:180px; position:relative;">
-                    <canvas id="chartSatis"></canvas>
-                </div>
-            </div>
-
-            <!-- Alt iki grafik yan yana -->
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div class="trend-chart-box">
-                    <div class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">Fiyat Trendi</div>
-                    <div style="height:160px; position:relative;">
-                        <canvas id="chartFiyat"></canvas>
-                    </div>
-                </div>
-                <div class="trend-chart-box">
-                    <div class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">Günlük Satış İvmesi</div>
-                    <div style="height:160px; position:relative;">
-                        <canvas id="chartIvme"></canvas>
-                    </div>
-                </div>
-            </div>
-
-        </div><!-- /trendIcerik -->
     </div>
 </div>
 
@@ -699,245 +559,4 @@
         baslik.textContent = hy ? 'Kritik Satış Uyarısı — ' + hy : 'Kritik Satış Uyarısı';
     }
 
-    // ── Trend Modal ─────────────────────────────────────────────────────────────
-    Chart.defaults.color = '#64748B';
-    Chart.defaults.borderColor = 'rgba(255,255,255,0.05)';
-    Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-    Chart.defaults.font.size   = 11;
-
-    let _trendCharts = [];
-
-    function _destroyCharts() {
-        _trendCharts.forEach(c => { try { c.destroy(); } catch(e) {} });
-        _trendCharts = [];
-    }
-
-    function trendKapat() {
-        document.getElementById('trendModal').classList.add('hidden');
-        document.body.style.overflow = '';
-        _destroyCharts();
-    }
-
-    function _signColor(val, positiveIsGood) {
-        if (val === null || val === undefined) return '#94A3B8';
-        if (val > 0) return positiveIsGood ? '#34D399' : '#F87171';
-        if (val < 0) return positiveIsGood ? '#F87171' : '#34D399';
-        return '#94A3B8';
-    }
-    function _signPrefix(val) {
-        if (val === null || val === undefined) return '';
-        return val > 0 ? '+' : '';
-    }
-    function _fmt(val, decimals) {
-        if (val === null || val === undefined) return '—';
-        return (+val).toLocaleString('tr-TR', { minimumFractionDigits: decimals||0, maximumFractionDigits: decimals||0 });
-    }
-
-    function trendAc(btn) {
-        const jt  = btn.dataset.jt;
-        const adi = btn.dataset.adi;
-
-        // Modal göster, reset
-        const modal = document.getElementById('trendModal');
-        modal.classList.remove('hidden');
-        document.body.style.overflow = 'hidden';
-        _destroyCharts();
-
-        document.getElementById('trendModalJt').textContent  = jt;
-        document.getElementById('trendModalAdi').textContent = adi;
-        document.getElementById('trendVeriYok').classList.add('hidden');
-        document.getElementById('trendIcerik').classList.add('hidden');
-
-        fetch('/api/tur/' + encodeURIComponent(jt) + '/trend')
-            .then(r => r.json())
-            .then(data => {
-                if (!data.ok || !data.has_data) {
-                    document.getElementById('trendVeriYok').classList.remove('hidden');
-                    return;
-                }
-                document.getElementById('trendIcerik').classList.remove('hidden');
-                _renderTrend(data);
-            })
-            .catch(() => {
-                document.getElementById('trendVeriYok').classList.remove('hidden');
-            });
-    }
-
-    function _renderTrend(data) {
-        const m  = data.metrics || {};
-        const ph = (data.price_history || []).slice().reverse();  // eski → yeni
-        const qh = (data.quota_history || []).slice().reverse();
-        const vh = (data.velocity     || []).slice().reverse();
-
-        // — Metrik kartlar —
-        // Satış 30g
-        const s30 = m.sales_30d_delta;
-        const el_s30 = document.getElementById('mSatis30');
-        el_s30.textContent = (s30 !== undefined && s30 !== null) ? _signPrefix(s30) + _fmt(s30) + ' koltuk' : '—';
-        el_s30.style.color = _signColor(s30, true);
-        document.getElementById('mSatisAlt').textContent = m.current_sales != null
-            ? 'Güncel: ' + _fmt(m.current_sales) + (m.current_quota ? ' / ' + _fmt(m.current_quota) : '') : '';
-
-        // Fiyat 30g
-        const f30 = m.price_30d_delta;
-        const fp  = m.price_30d_pct;
-        const el_f30 = document.getElementById('mFiyat30');
-        if (f30 !== undefined && f30 !== null) {
-            el_f30.textContent = _signPrefix(f30) + _fmt(f30, 2) + ' ₺';
-            el_f30.style.color = _signColor(f30, false); // fiyat artışı kötü
-        } else { el_f30.textContent = '—'; el_f30.style.color = '#94A3B8'; }
-        document.getElementById('mFiyatAlt').textContent = (fp != null) ? _signPrefix(fp) + fp + '%' : (m.current_price != null ? _fmt(m.current_price, 2) + ' ₺' : '');
-
-        // Doluluk
-        const dol = m.current_occupancy;
-        const ddelta = m.occupancy_delta;
-        const el_dol = document.getElementById('mDoluluk');
-        el_dol.textContent = dol != null ? '%' + _fmt(dol, 1) : '—';
-        el_dol.style.color = dol != null ? (dol >= 70 ? '#34D399' : dol >= 40 ? '#FBBF24' : '#F87171') : '#94A3B8';
-        document.getElementById('mDolulukAlt').textContent = ddelta != null ? (_signPrefix(ddelta) + ddelta + ' puan (30g)') : '';
-
-        // Satış ivmesi 7g
-        const iv7 = m.sales_7d_delta;
-        const el_iv = document.getElementById('mIvme7');
-        el_iv.textContent = (iv7 !== undefined && iv7 !== null) ? _signPrefix(iv7) + _fmt(iv7) + ' koltuk' : '—';
-        el_iv.style.color = _signColor(iv7, true);
-        document.getElementById('mIvmeAlt').textContent = 'Son 7 gün net satış';
-
-        // — Tarih etiketleri —
-        const qDates = qh.map(r => r.snapshot_date ? r.snapshot_date.substring(5) : '');
-        const pDates = ph.map(r => r.snapshot_date ? r.snapshot_date.substring(5) : '');
-        const vDates = vh.map(r => r.snapshot_date ? r.snapshot_date.substring(5) : '');
-
-        // — Grafik 1: Satış & Kontenjan —
-        if (qh.length > 0) {
-            const ctx1 = document.getElementById('chartSatis').getContext('2d');
-            const cSatis = new Chart(ctx1, {
-                type: 'line',
-                data: {
-                    labels: qDates,
-                    datasets: [
-                        {
-                            label: 'Satılan',
-                            data: qh.map(r => r.current_sales),
-                            borderColor: '#3B82F6',
-                            backgroundColor: 'rgba(59,130,246,0.12)',
-                            fill: true, tension: 0.35, borderWidth: 2,
-                            pointRadius: qh.length <= 10 ? 3 : 0,
-                            pointHoverRadius: 5,
-                        },
-                        {
-                            label: 'Kontenjan',
-                            data: qh.map(r => r.current_quota),
-                            borderColor: 'rgba(148,163,184,0.5)',
-                            backgroundColor: 'transparent',
-                            fill: false, tension: 0.35, borderWidth: 1.5,
-                            borderDash: [4,3],
-                            pointRadius: 0, pointHoverRadius: 4,
-                        }
-                    ]
-                },
-                options: {
-                    responsive: true, maintainAspectRatio: false,
-                    plugins: {
-                        legend: { position: 'top', labels: { padding: 12, usePointStyle: true, pointStyleWidth: 8 } },
-                        tooltip: { mode: 'index', intersect: false }
-                    },
-                    scales: {
-                        x: { grid: { display: false }, ticks: { maxTicksLimit: 8 } },
-                        y: { grid: { color: 'rgba(255,255,255,0.04)' }, beginAtZero: false }
-                    }
-                }
-            });
-            _trendCharts.push(cSatis);
-        } else {
-            document.getElementById('chartSatis').closest('.trend-chart-box').innerHTML =
-                '<p class="text-xs text-slate-500 text-center py-8">Satış verisi yok</p>';
-        }
-
-        // — Grafik 2: Fiyat —
-        const fiyatData = ph.filter(r => r.current_price !== null);
-        if (fiyatData.length > 1) {
-            const ctx2 = document.getElementById('chartFiyat').getContext('2d');
-            const cFiyat = new Chart(ctx2, {
-                type: 'line',
-                data: {
-                    labels: fiyatData.map(r => r.snapshot_date ? r.snapshot_date.substring(5) : ''),
-                    datasets: [{
-                        label: 'Fiyat (₺)',
-                        data: fiyatData.map(r => r.current_price),
-                        borderColor: '#A78BFA',
-                        backgroundColor: 'rgba(167,139,250,0.1)',
-                        fill: true, tension: 0.4, borderWidth: 2,
-                        pointRadius: fiyatData.length <= 10 ? 3 : 0,
-                        pointHoverRadius: 5,
-                    }]
-                },
-                options: {
-                    responsive: true, maintainAspectRatio: false,
-                    plugins: {
-                        legend: { display: false },
-                        tooltip: {
-                            callbacks: {
-                                label: ctx => ' ' + (+ctx.raw).toLocaleString('tr-TR', {minimumFractionDigits:2}) + ' ₺'
-                            }
-                        }
-                    },
-                    scales: {
-                        x: { grid: { display: false }, ticks: { maxTicksLimit: 6 } },
-                        y: { grid: { color: 'rgba(255,255,255,0.04)' }, beginAtZero: false,
-                             ticks: { callback: v => v.toLocaleString('tr-TR') } }
-                    }
-                }
-            });
-            _trendCharts.push(cFiyat);
-        } else {
-            document.getElementById('chartFiyat').closest('.trend-chart-box').innerHTML =
-                '<p class="text-xs text-slate-600 text-center py-8">Fiyat verisi yok</p>';
-        }
-
-        // — Grafik 3: Günlük satış ivmesi —
-        const ivmeData = vh.filter(r => r.daily_sales_delta !== null);
-        if (ivmeData.length > 0) {
-            const ctx3 = document.getElementById('chartIvme').getContext('2d');
-            const cIvme = new Chart(ctx3, {
-                type: 'bar',
-                data: {
-                    labels: ivmeData.map(r => r.snapshot_date ? r.snapshot_date.substring(5) : ''),
-                    datasets: [{
-                        label: 'Günlük Satış',
-                        data: ivmeData.map(r => r.daily_sales_delta),
-                        backgroundColor: ivmeData.map(r =>
-                            (r.daily_sales_delta || 0) > 0 ? 'rgba(52,211,153,0.7)' :
-                            (r.daily_sales_delta || 0) < 0 ? 'rgba(248,113,113,0.7)' : 'rgba(148,163,184,0.3)'
-                        ),
-                        borderColor: ivmeData.map(r =>
-                            (r.daily_sales_delta || 0) > 0 ? '#34D399' :
-                            (r.daily_sales_delta || 0) < 0 ? '#F87171' : '#475569'
-                        ),
-                        borderWidth: 1,
-                        borderRadius: 4,
-                    }]
-                },
-                options: {
-                    responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
-                    scales: {
-                        x: { grid: { display: false } },
-                        y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { stepSize: 1 } }
-                    }
-                }
-            });
-            _trendCharts.push(cIvme);
-        } else {
-            document.getElementById('chartIvme').closest('.trend-chart-box').innerHTML =
-                '<p class="text-xs text-slate-600 text-center py-8">İvme verisi yok</p>';
-        }
-    }
-
-    // ESC ile modal kapat
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') trendKapat(); });
-</script>
-<style>
-@keyframes spin { to { transform: rotate(360deg); } }
-</style>
 {% endblock %}
