@@ -700,26 +700,27 @@ def turlar_sayfasi(request: Request):
     satis_alertleri = satis_aleri_getir()
 
     # Now Boarding — önümüzdeki 10 gün içinde kalkışı olan, en az 1 satışı olan turlar
-    from datetime import timedelta
-    bugun_dt  = datetime.today().date()
-    limit_dt  = bugun_dt + timedelta(days=10)
+    from datetime import timedelta as _td
+    bugun_dt = datetime.today().date()
+    limit_dt = bugun_dt + _td(days=10)
 
-    def tarih_parse_nb(s):
+    def _tarih_parse(s):
         if not s:
             return None
         for fmt in ('%d-%m-%Y', '%d.%m.%Y'):
             try:
-                return datetime.strptime(s, fmt).date()
+                return datetime.strptime(str(s), fmt).date()
             except ValueError:
                 pass
         return None
 
-    now_boarding = sorted(
-        [t for t in turlar
-         if (lambda d: d is not None and bugun_dt <= d <= limit_dt)(tarih_parse_nb(t[2]))
-         and (int(t[5]) if t[5] is not None else 0) >= 1],
-        key=lambda t: tarih_parse_nb(t[2])
-    )
+    now_boarding = []
+    for _t in turlar:
+        _d = _tarih_parse(_t[2])
+        _satilan = int(_t[5]) if _t[5] is not None else 0
+        if _d is not None and bugun_dt <= _d <= limit_dt and _satilan >= 1:
+            now_boarding.append(_t)
+    now_boarding.sort(key=lambda x: _tarih_parse(x[2]) or bugun_dt)
 
     return templates.TemplateResponse(
         request=request,
