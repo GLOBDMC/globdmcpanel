@@ -130,16 +130,16 @@
     <button id="tab-kontenjan" class="tab-btn active" onclick="sekmeAc('kontenjan')">
         Tur Kontenjanlari
     </button>
-    <button id="tab-boarding" class="tab-btn {% if now_boarding %}active-boarding{% endif %}" onclick="sekmeAc('boarding')">
-        ✈ Now Boarding
-        {% if now_boarding %}
-        <span class="ml-1.5 bg-blue-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">{{ now_boarding|length }}</span>
-        {% endif %}
-    </button>
     <button id="tab-satis" class="tab-btn {% if satis_alertleri %}active-amber{% endif %}" onclick="sekmeAc('satis')">
         Kritik Satış Uyarısı
         {% if satis_alertleri %}
         <span class="ml-1.5 bg-amber-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">{{ satis_alertleri|length }}</span>
+        {% endif %}
+    </button>
+    <button id="tab-boarding" class="tab-btn {% if now_boarding %}active-boarding{% endif %}" onclick="sekmeAc('boarding')">
+        ✈ Now Boarding
+        {% if now_boarding %}
+        <span class="ml-1.5 bg-blue-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">{{ now_boarding|length }}</span>
         {% endif %}
     </button>
 </div>
