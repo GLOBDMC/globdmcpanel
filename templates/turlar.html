@@ -444,22 +444,6 @@
         document.getElementById('toplamKalanOran').textContent = topPax > 0 ? '%' + (topKalan  / topPax * 100).toFixed(1) : '';
     }
 
-    // Varsayılan sıralama: Kalkış tarihine göre artan (kolon 2)
-    function siralaKalkis() {
-        const govde = document.getElementById('turGovde');
-        const rows  = Array.from(govde.querySelectorAll('.tur-satir'));
-        rows.sort((a, b) => {
-            const fmt = v => { const p = v.split(/[-./]/); return p.length===3 ? p[2]+'-'+p[1].padStart(2,'0')+'-'+p[0].padStart(2,'0') : ''; };
-            return fmt(a.cells[2].textContent.trim()).localeCompare(fmt(b.cells[2].textContent.trim()));
-        });
-        rows.forEach(r => govde.appendChild(r));
-        // Kolon başlığını aktif göster
-        document.querySelectorAll('th.sirala').forEach(t => t.classList.remove('sorted'));
-        const kalkisBaslik = document.querySelector('th[data-kolon="2"]');
-        if (kalkisBaslik) kalkisBaslik.classList.add('sorted');
-        siralamaYon[2] = true; // bir sonraki tıklama ters sıralar
-    }
-
     // URL parametrelerinden filtre uygula (dashboard'dan gelen linkler)
     const _params = new URLSearchParams(window.location.search);
     const _sekme  = _params.get('sekme');
@@ -479,7 +463,6 @@
         } else {
             tarihBaslangic.value = new Date().toISOString().split('T')[0];
         }
-        siralaKalkis();
         filtrele();
     }
 
