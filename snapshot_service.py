@@ -5,6 +5,7 @@ Snapshot iş mantığı.
 Mevcut turlar + jolly_sonuc verilerini birleştirip snapshot hazırlar.
 DB'ye yazmaz — repository katmanını kullanır.
 """
+import re
 import logging
 from datetime import date, datetime
 from sqlalchemy import text
@@ -22,6 +23,51 @@ def _safe_int(val):
     try:
         return int(val) if val is not None else None
     except (ValueError, TypeError):
+        return None
+
+
+def _parse_price(raw) -> float | None:
+    """
+    Türkçe fiyat formatlarını NUMERIC'e dönüştürür.
+    Örnekler:
+        "1.199"     → 1199.0   (binlik nokta, ondalık yok)
+        "1.199,50"  → 1199.5   (binlik nokta + virgüllü ondalık)
+        "1199.50"   → 1199.5   (standart ondalık)
+        "1199"      → 1199.0
+        None / ""   → None
+    """
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s or s in ('-', '—', 'N/A'):
+        return None
+    # Para birimi simgesi, boşluk vb. temizle (rakam, nokta, virgül dışı)
+    s = re.sub(r'[^\d.,]', '', s).strip()
+    if not s:
+        return None
+
+    if ',' in s and '.' in s:
+        # "1.199,50" → binlik nokta + virgüllü ondalık
+        s = s.replace('.', '').replace(',', '.')
+    elif ',' in s:
+        parts = s.split(',')
+        if len(parts) == 2 and len(parts[-1]) <= 2:
+            # "1199,50" → ondalık virgül
+            s = s.replace(',', '.')
+        else:
+            # "1,199" veya çok parçalı → binlik virgül
+            s = s.replace(',', '')
+    elif '.' in s:
+        parts = s.split('.')
+        if len(parts) == 2 and len(parts[-1]) == 3:
+            # "1.199" → binlik nokta
+            s = s.replace('.', '')
+        # "1199.50" gibi standart ondalık → olduğu gibi bırak
+
+    try:
+        val = float(s)
+        return round(val, 2) if val > 0 else None
+    except ValueError:
         return None
 
 
@@ -141,7 +187,7 @@ def take_snapshot(engine: Engine, snap_date: date = None) -> dict:
                 "current_quota":     pax,
                 "current_sales":     satilan,
                 "current_remaining": kalan,
-                "current_price":     t[7] or "",
+                "current_price":     _parse_price(t[7]),
                 "occupancy_rate":    _occupancy_rate(satilan, pax),
                 "guide_name":        t[8] or "",
                 "jolly_vitrinde":    j_data.get("vitrinde"),
