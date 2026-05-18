@@ -1,11 +1,12 @@
 import os
+import json
 import time
 import secrets
 import logging
 import logging.handlers
 from collections import defaultdict
 from fastapi import FastAPI, Request, Form
-from fastapi.responses import JSONResponse, RedirectResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, RedirectResponse, PlainTextResponse, Response
 from fastapi.exception_handlers import http_exception_handler
 from pydantic import BaseModel
 from fastapi.templating import Jinja2Templates
@@ -17,6 +18,7 @@ from datetime import datetime
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.datastructures import MutableHeaders
 from passlib.context import CryptContext
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -27,6 +29,14 @@ pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 _CANONICAL_DOMAIN = os.environ.get("CANONICAL_DOMAIN", "").strip()
 _ENFORCE_HTTPS    = os.environ.get("ENFORCE_HTTPS", "1") == "1"
 _SECRET_KEY       = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+
+# ALLOWED_HOSTS: boşsa kontrol yapılmaz; virgülle ayır
+# Örnek: "panel.globdmc.com,www.panel.globdmc.com"
+_ALLOWED_HOSTS = {
+    h.strip().lower()
+    for h in os.environ.get("ALLOWED_HOSTS", "").split(",")
+    if h.strip()
+}
 
 # ── Logging setup ────────────────────────────────────────────────────────────
 _LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -80,25 +90,64 @@ _CSP = (
     "connect-src 'self'; "
     "frame-ancestors 'none'; "
     "base-uri 'self'; "
-    "form-action 'self';"
+    "form-action 'self'; "
+    "upgrade-insecure-requests;"
 )
+
+# Static asset yolları — güvenlik header'ları uygulanır ama HSTS/CSP skip edilmez;
+# sadece cache header'ları CachedStaticFiles tarafından ayrıca eklenir.
+_STATIC_PREFIX = "/static"
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     _SKIP = {"/health", "/robots.txt"}
 
+    @staticmethod
+    def _is_https(request: Request) -> bool:
+        """
+        Cloudflare Full(Strict) arkasında HTTPS tespiti.
+        1) X-Forwarded-Proto (Railway/Cloudflare standard)
+        2) CF-Visitor: {"scheme":"https"}  (Cloudflare özel header)
+        """
+        proto = request.headers.get("x-forwarded-proto", "")
+        if proto:
+            return proto.lower() == "https"
+        cf_visitor = request.headers.get("cf-visitor", "")
+        if cf_visitor:
+            try:
+                return json.loads(cf_visitor).get("scheme", "") == "https"
+            except Exception:
+                pass
+        return False  # bilinmiyor → redirect uygulama
+
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
 
-        # 1 — HTTP → HTTPS redirect (Cloudflare / Railway proxy)
+        # 1 — Allowed hosts: set edilmişse geçersiz host'u reddet (spoofing koruması)
+        if _ALLOWED_HOSTS and path not in self._SKIP:
+            host = request.headers.get("host", "").split(":")[0].lower()
+            if host and host not in _ALLOWED_HOSTS:
+                logger.warning("Rejected request: invalid host=%s path=%s", host, path)
+                return Response("Bad Request", status_code=400)
+
+        # 2 — HTTP → HTTPS redirect
+        # X-Forwarded-Proto veya CF-Visitor'dan protokolü al
         if _ENFORCE_HTTPS and path not in self._SKIP:
-            if request.headers.get("x-forwarded-proto") == "http":
+            proto = request.headers.get("x-forwarded-proto", "")
+            if not proto:
+                cf_visitor = request.headers.get("cf-visitor", "")
+                if cf_visitor:
+                    try:
+                        proto = json.loads(cf_visitor).get("scheme", "")
+                    except Exception:
+                        pass
+            if proto.lower() == "http":
                 url = str(request.url).replace("http://", "https://", 1)
                 return RedirectResponse(url=url, status_code=301)
 
-        # 2 — Canonical domain redirect (Railway raw domain → custom domain)
+        # 3 — Canonical domain redirect (Railway raw domain → custom domain)
         if _CANONICAL_DOMAIN and path not in self._SKIP:
-            host = request.headers.get("host", "").split(":")[0]
-            if host and host != _CANONICAL_DOMAIN:
+            host = request.headers.get("host", "").split(":")[0].lower()
+            if host and host != _CANONICAL_DOMAIN.lower():
                 target = f"https://{_CANONICAL_DOMAIN}{request.url.path}"
                 if request.url.query:
                     target += f"?{request.url.query}"
@@ -106,23 +155,63 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         response = await call_next(request)
 
-        # 3 — Security headers
+        # 4 — Security headers (tüm yanıtlara uygulanır)
         h = response.headers
-        h["X-Frame-Options"]           = "DENY"
-        h["X-Content-Type-Options"]    = "nosniff"
-        h["X-XSS-Protection"]          = "1; mode=block"
-        h["Referrer-Policy"]           = "strict-origin-when-cross-origin"
-        h["Permissions-Policy"]        = "camera=(), microphone=(), geolocation=(), payment=()"
-        h["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        h["Content-Security-Policy"]   = _CSP
+        h["X-Frame-Options"]              = "DENY"
+        h["X-Content-Type-Options"]       = "nosniff"
+        h["X-XSS-Protection"]             = "1; mode=block"
+        h["Referrer-Policy"]              = "strict-origin-when-cross-origin"
+        h["Permissions-Policy"]           = (
+            "camera=(), microphone=(), geolocation=(), payment=(), "
+            "interest-cohort=(), browsing-topics=()"
+        )
+        h["Strict-Transport-Security"]    = "max-age=31536000; includeSubDomains"
+        h["Content-Security-Policy"]      = _CSP
+        h["Cross-Origin-Opener-Policy"]   = "same-origin"
+        h["Cross-Origin-Resource-Policy"] = "same-origin"
 
-        # 4 — Hide server fingerprint
+        # 5 — Server fingerprint gizle
         if "server" in h:
             del h["server"]
         if "x-powered-by" in h:
             del h["x-powered-by"]
+        # Cloudflare bazen ekler, temizle
+        if "x-powered-by" in h:
+            del h["x-powered-by"]
 
         return response
+
+
+# ── Cached Static Files ───────────────────────────────────────────────────────
+
+class CachedStaticFiles(StaticFiles):
+    """
+    Statik dosyalara türlerine göre Cache-Control header'ı ekler.
+    Cloudflare bu header'ları okuyarak edge cache'e alır.
+    """
+    _RULES = (
+        ((".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".ico"), 2_592_000),  # 30 gün
+        ((".woff", ".woff2", ".ttf", ".eot"),                        2_592_000),  # 30 gün
+        ((".css", ".js"),                                              604_800),  # 7 gün
+    )
+    _DEFAULT = 86_400  # 1 gün
+
+    async def __call__(self, scope, receive, send):
+        async def _send_with_cache(message):
+            if message["type"] == "http.response.start":
+                path = scope.get("path", "").lower()
+                max_age = self._DEFAULT
+                for exts, age in self._RULES:
+                    if any(path.endswith(e) for e in exts):
+                        max_age = age
+                        break
+                headers = MutableHeaders(scope=message)
+                # Daha önce set edilmemişse ekle
+                if "cache-control" not in {k.lower() for k, _ in message.get("headers", [])}:
+                    headers.append("Cache-Control", f"public, max-age={max_age}")
+                headers.append("Vary", "Accept-Encoding")
+            await send(message)
+        await super().__call__(scope, receive, _send_with_cache)
 
 # ── Login rate limiter (in-memory, resets on restart) ───────────────────────
 _login_attempts: dict = defaultdict(list)
@@ -615,7 +704,7 @@ app.add_middleware(
 )
 app.add_middleware(SecurityHeadersMiddleware)
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", CachedStaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 
@@ -768,7 +857,24 @@ def kullanici_sil(uid: int, request: Request):
 
 @app.get("/health", include_in_schema=False)
 def health():
-    return JSONResponse({"status": "ok"})
+    """
+    Production-safe health check.
+    Railway ve Cloudflare health probe'ları için kullanılır.
+    DB erişimi yoksa 503 döner — load balancer bu durumda trafiği keser.
+    """
+    db_ok = False
+    try:
+        with db_engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        db_ok = True
+    except Exception as exc:
+        logger.error("Health check DB hatasi: %s", exc)
+
+    status_code = 200 if db_ok else 503
+    return JSONResponse(
+        {"status": "ok" if db_ok else "degraded", "db": "ok" if db_ok else "error"},
+        status_code=status_code,
+    )
 
 
 # ── Snapshot API (admin only) ────────────────────────────────────────────────
