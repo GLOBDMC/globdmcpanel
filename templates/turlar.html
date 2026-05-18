@@ -270,7 +270,6 @@
                 </thead>
                 <tbody>
                     {% for t in now_boarding %}
-                    {% set days_left = ((t[2]|string).split('-')[2] + '-' + (t[2]|string).split('-')[1] + '-' + (t[2]|string).split('-')[0]) %}
                     <tr class="boarding-row">
                         <td style="max-width:260px; overflow:hidden; text-overflow:ellipsis; color:#E2E8F0; font-weight:500;">{{ t[1] }}</td>
                         <td style="color:#60A5FA; font-weight:600;">{{ t[2] }}</td>
