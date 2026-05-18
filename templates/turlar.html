@@ -433,12 +433,6 @@
             </button>
         </div>
 
-        <!-- Yükleniyor -->
-        <div id="trendYukleniyor" class="text-center py-12">
-            <div style="width:28px;height:28px;border:3px solid rgba(99,102,241,0.2);border-top-color:#818CF8;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 12px;"></div>
-            <p class="text-sm text-slate-500">Snapshot verisi yükleniyor...</p>
-        </div>
-
         <!-- Veri yok -->
         <div id="trendVeriYok" class="hidden text-center py-12">
             <div class="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4" style="background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.2);">
@@ -751,14 +745,12 @@
 
         document.getElementById('trendModalJt').textContent  = jt;
         document.getElementById('trendModalAdi').textContent = adi;
-        document.getElementById('trendYukleniyor').classList.remove('hidden');
         document.getElementById('trendVeriYok').classList.add('hidden');
         document.getElementById('trendIcerik').classList.add('hidden');
 
         fetch('/api/tur/' + encodeURIComponent(jt) + '/trend')
             .then(r => r.json())
             .then(data => {
-                document.getElementById('trendYukleniyor').classList.add('hidden');
                 if (!data.ok || !data.has_data) {
                     document.getElementById('trendVeriYok').classList.remove('hidden');
                     return;
@@ -767,7 +759,6 @@
                 _renderTrend(data);
             })
             .catch(() => {
-                document.getElementById('trendYukleniyor').classList.add('hidden');
                 document.getElementById('trendVeriYok').classList.remove('hidden');
             });
     }
