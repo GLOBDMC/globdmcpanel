@@ -1065,13 +1065,20 @@ def manuel_sync(request: Request):
 
 
 @app.patch("/api/tur/{jt_kodu}/rehber")
-def rehber_guncelle(jt_kodu: str, body: RehberGuncelle):
+def rehber_guncelle(jt_kodu: str, body: RehberGuncelle, request: Request):
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici:
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=401)
     with db_engine.connect() as conn:
         conn.execute(
             text("UPDATE turlar SET rehber = :rehber WHERE jt_kodu = :jt"),
             {"rehber": body.rehber.strip(), "jt": jt_kodu}
         )
         conn.commit()
+    audit_logger.info(
+        "REHBER_UPDATE | user=%s | jt_kodu=%s | rehber=%.50s",
+        kullanici["kullanici_adi"], jt_kodu, body.rehber.strip(),
+    )
     return JSONResponse({"ok": True, "rehber": body.rehber.strip()})
 
 
