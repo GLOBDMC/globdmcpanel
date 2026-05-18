@@ -94,9 +94,30 @@ _CSP = (
     "upgrade-insecure-requests;"
 )
 
-# Static asset yolları — güvenlik header'ları uygulanır ama HSTS/CSP skip edilmez;
-# sadece cache header'ları CachedStaticFiles tarafından ayrıca eklenir.
+# Static asset prefix — bu path'ler için sadece temel header'lar uygulanır
 _STATIC_PREFIX = "/static"
+
+# Cloudflare IP aralıkları — CF-Connecting-IP sadece bu kaynaklardan geldiğinde güvenilir
+# https://www.cloudflare.com/ips-v4 (güncel liste — yılda 1-2 kez değişir)
+_CF_IP_RANGES_V4 = [
+    "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22",
+    "141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20",
+    "197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15",  "104.16.0.0/13",
+    "104.24.0.0/14",   "172.64.0.0/13",    "131.0.72.0/22",
+]
+
+def _is_cloudflare_ip(ip: str) -> bool:
+    """Gelen IP'nin Cloudflare edge IP'si olup olmadığını kontrol eder."""
+    import ipaddress
+    try:
+        addr = ipaddress.ip_address(ip)
+        for cidr in _CF_IP_RANGES_V4:
+            if addr in ipaddress.ip_network(cidr, strict=False):
+                return True
+    except ValueError:
+        pass
+    return False
+
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     _SKIP = {"/health", "/robots.txt"}
@@ -117,7 +138,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 return json.loads(cf_visitor).get("scheme", "") == "https"
             except Exception:
                 pass
-        return False  # bilinmiyor → redirect uygulama
+        return False
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
@@ -130,7 +151,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 return Response("Bad Request", status_code=400)
 
         # 2 — HTTP → HTTPS redirect
-        # X-Forwarded-Proto veya CF-Visitor'dan protokolü al
         if _ENFORCE_HTTPS and path not in self._SKIP:
             proto = request.headers.get("x-forwarded-proto", "")
             if not proto:
@@ -155,27 +175,32 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         response = await call_next(request)
 
-        # 4 — Security headers (tüm yanıtlara uygulanır)
         h = response.headers
-        h["X-Frame-Options"]              = "DENY"
-        h["X-Content-Type-Options"]       = "nosniff"
-        h["X-XSS-Protection"]             = "1; mode=block"
-        h["Referrer-Policy"]              = "strict-origin-when-cross-origin"
-        h["Permissions-Policy"]           = (
-            "camera=(), microphone=(), geolocation=(), payment=(), "
-            "interest-cohort=(), browsing-topics=()"
-        )
-        h["Strict-Transport-Security"]    = "max-age=31536000; includeSubDomains"
-        h["Content-Security-Policy"]      = _CSP
-        h["Cross-Origin-Opener-Policy"]   = "same-origin"
-        h["Cross-Origin-Resource-Policy"] = "same-origin"
+        is_static = path.startswith(_STATIC_PREFIX + "/")
+
+        # 4a — Temel header'lar: tüm yanıtlara uygulanır (static dahil)
+        h["X-Content-Type-Options"]    = "nosniff"
+        h["Referrer-Policy"]           = "strict-origin-when-cross-origin"
+        h["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
+        h["X-Robots-Tag"]              = "noindex, nofollow"
+
+        # 4b — Doküman-düzey header'lar: sadece HTML/API yanıtlarına uygulanır
+        #      Static asset'lerde (resim, CSS, JS) bu header'lar gereksiz;
+        #      Cloudflare image optimization ile de çakışabilir.
+        if not is_static:
+            h["X-Frame-Options"]              = "DENY"
+            h["X-XSS-Protection"]             = "1; mode=block"
+            h["Permissions-Policy"]           = (
+                "camera=(), microphone=(), geolocation=(), payment=(), "
+                "interest-cohort=(), browsing-topics=()"
+            )
+            h["Content-Security-Policy"]      = _CSP
+            h["Cross-Origin-Opener-Policy"]   = "same-origin"
+            h["Cross-Origin-Resource-Policy"] = "same-origin"
 
         # 5 — Server fingerprint gizle
         if "server" in h:
             del h["server"]
-        if "x-powered-by" in h:
-            del h["x-powered-by"]
-        # Cloudflare bazen ekler, temizle
         if "x-powered-by" in h:
             del h["x-powered-by"]
 
@@ -206,10 +231,11 @@ class CachedStaticFiles(StaticFiles):
                         max_age = age
                         break
                 headers = MutableHeaders(scope=message)
-                # Daha önce set edilmemişse ekle
-                if "cache-control" not in {k.lower() for k, _ in message.get("headers", [])}:
+                existing = {k.decode().lower() for k, _ in message.get("headers", [])}
+                if "cache-control" not in existing:
                     headers.append("Cache-Control", f"public, max-age={max_age}")
-                headers.append("Vary", "Accept-Encoding")
+                if "vary" not in existing:
+                    headers.append("Vary", "Accept-Encoding")
             await send(message)
         await super().__call__(scope, receive, _send_with_cache)
 
@@ -221,22 +247,41 @@ _LOGIN_WINDOW = int(os.environ.get("LOGIN_WINDOW_SECONDS", "300"))  # 5 dakika
 def _client_ip(request: Request) -> str:
     """
     Gerçek istemci IP'sini proxy zincirinden güvenli şekilde çıkarır.
-    Öncelik: CF-Connecting-IP (Cloudflare) → X-Real-IP → X-Forwarded-For[0] → doğrudan bağlantı
+
+    Öncelik zinciri:
+      1. CF-Connecting-IP — sadece Cloudflare edge IP'sinden geliyorsa güvenilir
+      2. X-Real-IP — Railway/nginx tek proxy senaryosu
+      3. X-Forwarded-For[0] — çoklu proxy zinciri, en soldaki orijinal istemci
+      4. Doğrudan bağlantı IP'si (local dev / bypass senaryosu)
+
+    NOT: CF-Connecting-IP'yi Cloudflare IP aralığı doğrulaması olmadan kabul etmek
+    proxy spoofing'e açar. Railway → Cloudflare tünelinde TCP bağlantısı zaten
+    Railway edge'den gelir; doğrulama katmanı olarak _is_cloudflare_ip() kullanılır.
     """
-    # Cloudflare — en güvenilir kaynak, proxy'nin set ettiği
+    direct_ip = request.client.host if request.client else ""
+
+    # CF-Connecting-IP: sadece bağlantı Cloudflare edge'den geliyorsa güven
     cf = request.headers.get("cf-connecting-ip", "").strip()
-    if cf:
+    if cf and (not direct_ip or _is_cloudflare_ip(direct_ip)):
         return cf
+
+    # CF-Connecting-IP var ama kaynak Cloudflare değil → spoof girişimi olabilir
+    if cf and direct_ip and not _is_cloudflare_ip(direct_ip):
+        logger.warning(
+            "CF-Connecting-IP spoof attempt? direct_ip=%s cf_ip=%s", direct_ip, cf
+        )
+
     # Tek reverse proxy (Railway veya nginx)
     real = request.headers.get("x-real-ip", "").strip()
     if real:
         return real
+
     # Çoklu proxy zinciri — en soldaki (orijinal istemci)
     fwd = request.headers.get("x-forwarded-for", "").strip()
     if fwd:
         return fwd.split(",")[0].strip()
-    # Doğrudan bağlantı (local dev)
-    return request.client.host if request.client else "unknown"
+
+    return direct_ip or "unknown"
 
 def _is_rate_limited(ip: str) -> bool:
     now  = time.time()
