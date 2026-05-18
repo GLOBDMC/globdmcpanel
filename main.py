@@ -809,6 +809,138 @@ def snapshot_status(request: Request):
         return JSONResponse({"ok": False, "hata": "Durum alinamadi"}, status_code=500)
 
 
+# ── Trend API ────────────────────────────────────────────────────────────────
+
+def _serialize_rows(rows: list) -> list:
+    """SQLAlchemy satır listesini JSON-safe dict listesine çevirir."""
+    result = []
+    for r in rows:
+        d = dict(r) if isinstance(r, dict) else r
+        out = {}
+        for k, v in d.items():
+            if v is None:
+                out[k] = None
+            elif hasattr(v, "isoformat"):
+                out[k] = v.isoformat()
+            else:
+                try:
+                    out[k] = float(v)
+                except (TypeError, ValueError):
+                    out[k] = v
+        result.append(out)
+    return result
+
+
+@app.get("/api/tur/{jt_kodu}/trend")
+def tur_trend(jt_kodu: str, request: Request):
+    """
+    Bir turun 30 günlük fiyat, satış ve kontenjan trendini döndürür.
+    7 günlük ve 30 günlük delta metrikleri de hesaplanır.
+    """
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici:
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=401)
+    try:
+        from snapshot_repository import (
+            get_price_history, get_quota_history, get_sales_velocity,
+        )
+        price_hist = get_price_history(db_engine, jt_kodu, days=30)
+        quota_hist = get_quota_history(db_engine, jt_kodu, days=30)
+        velocity   = get_sales_velocity(db_engine, jt_kodu, days=7)
+
+        # Hesaplanan metrikler
+        metrics: dict = {}
+
+        # Fiyat metrikleri
+        if price_hist:
+            newest = price_hist[0]
+            oldest = price_hist[-1]
+            metrics["current_price"] = float(newest["current_price"]) if newest["current_price"] else None
+            if newest.get("price_delta") is not None:
+                metrics["price_1d_delta"] = float(newest["price_delta"])
+            if (oldest.get("current_price") and newest.get("current_price")):
+                delta30 = float(newest["current_price"]) - float(oldest["current_price"])
+                base    = float(oldest["current_price"])
+                metrics["price_30d_delta"] = round(delta30, 2)
+                metrics["price_30d_pct"]   = round(delta30 / base * 100, 1) if base > 0 else None
+
+        # Satış / kontenjan metrikleri
+        if quota_hist:
+            newest_q = quota_hist[0]
+            oldest_q = quota_hist[-1]
+            metrics["current_sales"]     = newest_q.get("current_sales")
+            metrics["current_quota"]     = newest_q.get("current_quota")
+            metrics["current_occupancy"] = float(newest_q["occupancy_rate"]) if newest_q.get("occupancy_rate") else None
+            if oldest_q.get("current_sales") is not None and newest_q.get("current_sales") is not None:
+                metrics["sales_30d_delta"]   = (newest_q["current_sales"] or 0) - (oldest_q["current_sales"] or 0)
+            if oldest_q.get("occupancy_rate") is not None and newest_q.get("occupancy_rate") is not None:
+                metrics["occupancy_delta"] = round(
+                    float(newest_q["occupancy_rate"]) - float(oldest_q["occupancy_rate"]), 1
+                )
+
+        # 7 günlük satış ivmesi
+        if velocity:
+            sales_7d = sum(
+                v["daily_sales_delta"] for v in velocity
+                if v.get("daily_sales_delta") is not None
+            )
+            metrics["sales_7d_delta"] = sales_7d
+
+        has_data = bool(price_hist or quota_hist)
+
+        return JSONResponse({
+            "ok":            True,
+            "has_data":      has_data,
+            "price_history": _serialize_rows(price_hist),
+            "quota_history": _serialize_rows(quota_hist),
+            "velocity":      _serialize_rows(velocity),
+            "metrics":       metrics,
+        })
+    except Exception as exc:
+        logger.error("Trend API hatasi | tour=%s | %s", jt_kodu, exc, exc_info=True)
+        return JSONResponse({"ok": False, "has_data": False, "hata": "Veri alınamadı"}, status_code=500)
+
+
+@app.get("/api/dashboard/trends")
+def dashboard_trends(request: Request):
+    """
+    Dashboard Trendler widget'ı için özet veri:
+    toplam snapshot sayısı, fiyat alarm listesi, bugünkü özet.
+    """
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici:
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=401)
+    try:
+        from snapshot_repository import get_snapshot_summary, get_price_change_alerts, get_snapshot_count
+        total   = get_snapshot_count(db_engine)
+        summary = get_snapshot_summary(db_engine)
+        alerts  = get_price_change_alerts(db_engine, threshold_pct=5.0) if total > 0 else []
+
+        # Serialize summary
+        sum_out = {}
+        for k, v in summary.items():
+            if v is None:
+                sum_out[k] = None
+            elif hasattr(v, "isoformat"):
+                sum_out[k] = v.isoformat()
+            else:
+                try:
+                    sum_out[k] = float(v)
+                except (TypeError, ValueError):
+                    sum_out[k] = v
+
+        return JSONResponse({
+            "ok":            True,
+            "has_data":      total > 0,
+            "total_records": total,
+            "today_summary": sum_out,
+            "price_alerts":  _serialize_rows(alerts[:6]),
+        })
+    except Exception as exc:
+        logger.error("Dashboard trends hatasi: %s", exc, exc_info=True)
+        return JSONResponse({"ok": False, "has_data": False}, status_code=500)
+
+
 @app.get("/robots.txt", include_in_schema=False)
 def robots_txt():
     return PlainTextResponse("User-agent: *\nDisallow: /\n")

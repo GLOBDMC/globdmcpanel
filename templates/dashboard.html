@@ -47,6 +47,7 @@
     .trend-up   { color: #34D399; }
     .trend-down { color: #F87171; }
     .trend-flat { color: #94A3B8; }
+    @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 {% endblock %}
 
@@ -360,6 +361,49 @@
 
 </div>
 
+<!-- Trendler Widget (snapshot tabanlı, dinamik) -->
+<div class="card mb-4" style="padding: 20px;" id="trendlerWidget">
+    <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center gap-2">
+            <div class="w-6 h-6 rounded-md flex items-center justify-center" style="background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.2);">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#818CF8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                </svg>
+            </div>
+            <span class="text-sm font-semibold text-white">Tarihsel Trendler</span>
+        </div>
+        <div id="trendlerDurum" class="flex items-center gap-2">
+            <span class="text-xs text-slate-600" id="trendSnapshotSayi"></span>
+        </div>
+    </div>
+    <!-- Loading -->
+    <div id="trendlerYukleniyor" class="py-6 text-center">
+        <div style="width:20px;height:20px;border:2px solid rgba(99,102,241,0.2);border-top-color:#818CF8;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 10px;"></div>
+        <p class="text-xs text-slate-600">Trend verisi yükleniyor...</p>
+    </div>
+    <!-- Veri yok -->
+    <div id="trendlerVeriYok" class="hidden py-6 text-center">
+        <p class="text-sm text-slate-500 mb-1">Henüz snapshot verisi bulunmuyor</p>
+        <p class="text-xs text-slate-600">Sistem her gece 02:00 TRT'de otomatik snapshot alır.<br>
+        İlk veriler yarın sabah görünür hale gelecek.</p>
+    </div>
+    <!-- İçerik -->
+    <div id="trendlerIcerik" class="hidden">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <!-- Fiyat Değişim Alarmları -->
+            <div>
+                <p class="text-xs text-slate-500 uppercase font-medium mb-3 tracking-wide">Fiyat Değişim Alarmları <span class="text-slate-600 normal-case">(≥%5)</span></p>
+                <div id="fiyatAlarmlari" class="space-y-2"></div>
+            </div>
+            <!-- Snapshot Özeti -->
+            <div>
+                <p class="text-xs text-slate-500 uppercase font-medium mb-3 tracking-wide">Bugünkü Snapshot Özeti</p>
+                <div id="snapshotOzet" class="space-y-2"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Acil Müdahale: Kritik Satış Uyarısı -->
 {% if satis_alertleri %}
 <div class="card" style="padding: 20px;">
@@ -465,6 +509,82 @@ new Chart(dolulukCtx, {
         }
     }
 });
+
+// ── Trendler Widget ──────────────────────────────────────────────────────
+(function() {
+    function _signClass(val, pgood) {
+        if (val === null || val === undefined) return 'text-slate-500';
+        if (val > 0) return pgood ? 'text-green-400' : 'text-red-400';
+        if (val < 0) return pgood ? 'text-red-400' : 'text-green-400';
+        return 'text-slate-400';
+    }
+    function _arrow(val) {
+        if (!val) return '';
+        return val > 0 ? '↑' : '↓';
+    }
+
+    fetch('/api/dashboard/trends')
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('trendlerYukleniyor').classList.add('hidden');
+            if (!data.ok || !data.has_data) {
+                document.getElementById('trendlerVeriYok').classList.remove('hidden');
+                return;
+            }
+            document.getElementById('trendlerIcerik').classList.remove('hidden');
+            document.getElementById('trendSnapshotSayi').textContent =
+                (data.total_records || 0).toLocaleString('tr-TR') + ' kayıt';
+
+            // Fiyat alarmları
+            const alarmsEl = document.getElementById('fiyatAlarmlari');
+            const alarms   = data.price_alerts || [];
+            if (alarms.length === 0) {
+                alarmsEl.innerHTML = '<p class="text-xs text-slate-600 py-2">Fiyat değişim alarmı yok</p>';
+            } else {
+                alarmsEl.innerHTML = alarms.map(a => {
+                    const pct   = parseFloat(a.change_pct || 0);
+                    const cls   = pct > 0 ? 'text-red-400' : 'text-green-400';
+                    const arrow = pct > 0 ? '↑' : '↓';
+                    return `<div class="flex items-center gap-2 py-1.5 border-b border-white border-opacity-5">
+                        <div class="flex-1 min-w-0">
+                            <p class="text-xs text-slate-200 truncate font-medium">${a.tour_name || a.tour_code}</p>
+                            <p class="text-xs text-slate-600">${a.tour_code} · ${a.snapshot_date || ''}</p>
+                        </div>
+                        <div class="text-right flex-shrink-0">
+                            <p class="text-sm font-bold ${cls}">${arrow} %${Math.abs(pct).toFixed(1)}</p>
+                            <p class="text-xs text-slate-600">${parseFloat(a.current_price||0).toLocaleString('tr-TR')} ₺</p>
+                        </div>
+                    </div>`;
+                }).join('');
+            }
+
+            // Snapshot özeti
+            const ozet   = data.today_summary || {};
+            const ozetEl = document.getElementById('snapshotOzet');
+            const fields = [
+                { label: 'Toplam Tur',    val: ozet.total_tours, unit: 'tur' },
+                { label: 'Fiyatlı Tur',   val: ozet.priced_tours, unit: 'tur' },
+                { label: 'Ort. Fiyat',    val: ozet.avg_price != null ? parseFloat(ozet.avg_price).toLocaleString('tr-TR',{minimumFractionDigits:2,maximumFractionDigits:2}) : null, unit: '₺' },
+                { label: 'Ort. Doluluk',  val: ozet.avg_occupancy != null ? '%' + parseFloat(ozet.avg_occupancy).toFixed(1) : null, unit: '' },
+                { label: 'Toplam Satış',  val: ozet.total_sales, unit: 'koltuk' },
+                { label: 'Hata Sayısı',   val: ozet.error_count, unit: '' },
+            ];
+            if (!fields.some(f => f.val != null)) {
+                ozetEl.innerHTML = '<p class="text-xs text-slate-600 py-2">Bugün snapshot alınmadı</p>';
+            } else {
+                ozetEl.innerHTML = fields.filter(f => f.val != null).map(f =>
+                    `<div class="flex items-center justify-between py-1 border-b border-white border-opacity-5">
+                        <span class="text-xs text-slate-500">${f.label}</span>
+                        <span class="text-xs font-semibold text-slate-200">${f.val}${f.unit ? ' ' + f.unit : ''}</span>
+                    </div>`
+                ).join('');
+            }
+        })
+        .catch(() => {
+            document.getElementById('trendlerYukleniyor').classList.add('hidden');
+            document.getElementById('trendlerVeriYok').classList.remove('hidden');
+        });
+})();
 
 // Dağılım doughnut
 const riskCtx = document.getElementById('riskChart').getContext('2d');
