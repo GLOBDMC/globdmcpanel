@@ -272,6 +272,12 @@ def tablo_olustur():
                 sifre_hash = CASE WHEN kullanicilar.sifre_hash IS NULL THEN :h ELSE kullanicilar.sifre_hash END
         """), {"h": default_hash})
         conn.commit()
+    # Snapshot tablosu
+    try:
+        from snapshot_repository import create_snapshot_table
+        create_snapshot_table(db_engine)
+    except Exception as e:
+        logger.error("Snapshot tablosu olusturulamadi: %s", e)
     logger.info("Tablolar hazir")
 
 
@@ -577,6 +583,9 @@ async def lifespan(app: FastAPI):
         scheduler = BackgroundScheduler()
         scheduler.add_job(sheets_den_postgresql_kopyala, 'interval', hours=1)
         scheduler.add_job(jolly_sonuc_kopyala, 'interval', hours=1)
+        # Günlük snapshot job (02:00 TRT = 23:00 UTC)
+        from snapshot_scheduler import setup_snapshot_scheduler
+        setup_snapshot_scheduler(scheduler, db_engine)
         scheduler.start()
         logger.info("Otomatik senkronizasyon aktif: 1 saatte bir")
     except Exception as e:
@@ -760,6 +769,44 @@ def kullanici_sil(uid: int, request: Request):
 @app.get("/health", include_in_schema=False)
 def health():
     return JSONResponse({"status": "ok"})
+
+
+# ── Snapshot API (admin only) ────────────────────────────────────────────────
+@app.get("/api/snapshot/trigger")
+def snapshot_trigger(request: Request):
+    """Manuel snapshot tetikleme — admin yetkisi gerekli."""
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+    try:
+        from snapshot_service import take_snapshot
+        result = take_snapshot(db_engine)
+        logger.info("Manuel snapshot tetiklendi | user=%s | %s",
+                    kullanici["kullanici_adi"], result)
+        return JSONResponse({"ok": True, **result})
+    except Exception as exc:
+        logger.error("Manuel snapshot hatasi: %s", exc)
+        return JSONResponse({"ok": False, "hata": "Snapshot alinamadi"}, status_code=500)
+
+
+@app.get("/api/snapshot/status")
+def snapshot_status(request: Request):
+    """Bugünkü snapshot özeti — admin yetkisi gerekli."""
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+    try:
+        from snapshot_repository import get_snapshot_summary, get_snapshot_count
+        summary = get_snapshot_summary(db_engine)
+        total   = get_snapshot_count(db_engine)
+        # datetime nesnelerini string'e çevir
+        for k, v in summary.items():
+            if hasattr(v, "isoformat"):
+                summary[k] = v.isoformat()
+        return JSONResponse({"ok": True, "today": summary, "total_records": total})
+    except Exception as exc:
+        logger.error("Snapshot status hatasi: %s", exc)
+        return JSONResponse({"ok": False, "hata": "Durum alinamadi"}, status_code=500)
 
 
 @app.get("/robots.txt", include_in_schema=False)
