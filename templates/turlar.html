@@ -164,6 +164,7 @@
                 <label class="block text-xs text-slate-500 mb-1 font-medium">Doluluk</label>
                 <select id="dolulukFiltre" class="filter-input">
                     <option value="">Tümü</option>
+                    <option value="son_yer">Son Yerler (1–5)</option>
                     <option value="kritik">Kritik (0–3)</option>
                     <option value="orta">Orta (4–10)</option>
                     <option value="bol">İyi (11+)</option>
@@ -410,6 +411,7 @@
             let goster = true;
             if (arama    && !metin.includes(arama))                    goster = false;
             if (havayolu && hy !== havayolu)                           goster = false;
+            if (doluluk  === 'son_yer' && (kalan < 1 || kalan > 5))     goster = false;
             if (doluluk  === 'kritik' && kalan > 3)                    goster = false;
             if (doluluk  === 'orta'   && (kalan <= 3 || kalan > 10))   goster = false;
             if (doluluk  === 'bol'    && kalan <= 10)                  goster = false;
@@ -435,8 +437,16 @@
         document.getElementById('toplamKalanOran').textContent = topPax > 0 ? '%' + (topKalan  / topPax * 100).toFixed(1) : '';
     }
 
-    // Default: today
-    tarihBaslangic.value = new Date().toISOString().split('T')[0];
+    // URL parametrelerinden filtre uygula (dashboard'dan gelen linkler)
+    const _params = new URLSearchParams(window.location.search);
+    if (_params.get('havayolu')) {
+        havayoluFiltre.value = _params.get('havayolu');
+        tarihBaslangic.value = '';          // tarih filtresini kaldır
+    } else {
+        tarihBaslangic.value = new Date().toISOString().split('T')[0];
+    }
+    if (_params.get('doluluk')) dolulukFiltre.value = _params.get('doluluk');
+
     filtrele();
 
     aramaInput.addEventListener('input', filtrele);

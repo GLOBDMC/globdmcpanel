@@ -290,7 +290,11 @@
                     </div>
                     <div class="text-xs text-slate-400 w-12 text-right">{{ sayi }} tur</div>
                     {% if kritik_hy > 0 %}
-                    <div class="text-xs text-red-400 w-14 text-right">{{ kritik_hy }} kritik</div>
+                    <div class="w-14 text-right">
+                        <a href="/turlar?havayolu={{ hy|urlencode }}&doluluk=son_yer" target="_blank"
+                           class="text-xs text-red-400 hover:text-red-300 font-semibold transition-colors"
+                           style="text-decoration:none;">{{ kritik_hy }} kritik ↗</a>
+                    </div>
                     {% else %}
                     <div class="w-14"></div>
                     {% endif %}
