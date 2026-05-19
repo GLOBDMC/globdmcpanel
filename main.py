@@ -1244,7 +1244,11 @@ def _apify_post(path: str, body: dict = None) -> dict:
         with urllib.request.urlopen(req, timeout=10) as r:
             return json.loads(r.read())
     except urllib.error.HTTPError as e:
-        return {"error": e.code}
+        try:
+            body_str = e.read().decode()
+        except Exception:
+            body_str = ""
+        return {"error": e.code, "detail": body_str}
     except Exception as e:
         return {"error": str(e)}
 
@@ -1330,10 +1334,18 @@ def apify_run(actor_id: str, request: Request):
     if actor_id not in valid_ids:
         return JSONResponse({"hata": "Geçersiz actor"}, status_code=400)
 
-    result = _apify_post(f"/acts/{actor_id}/runs")
+    # Önce task olarak dene, olmadıysa actor olarak dene
+    result = _apify_post(f"/actor-tasks/{actor_id}/runs")
     if "error" in result:
-        logger.error("Apify run hatasi | actor=%s | %s", actor_id, result)
-        return JSONResponse({"ok": False, "hata": "Actor başlatılamadı"}, status_code=500)
+        result = _apify_post(f"/acts/{actor_id}/runs")
+    if "error" in result:
+        detail = result.get("detail", "")
+        logger.error("Apify run hatasi | actor=%s | code=%s | %s", actor_id, result["error"], detail)
+        return JSONResponse({
+            "ok": False,
+            "hata": f"Başlatılamadı (HTTP {result['error']})",
+            "detail": detail,
+        }, status_code=500)
 
     run_id = result.get("data", {}).get("id")
     audit_logger.info("APIFY_RUN | user=%s | actor=%s | run=%s",

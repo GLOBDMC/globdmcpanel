@@ -297,8 +297,10 @@ function doRun() {
                 updateCard(actorId, { status: 'RUNNING', startedAt: new Date().toISOString() });
                 setTimeout(loadStatuses, 3000);
             } else {
-                showToast(`Hata: ${data.hata || 'Actor başlatılamadı'}`, 'error');
-                if (btn) { btn.disabled = false; btn.textContent = '▶ Çalıştır'; }
+                const msg = data.hata || 'Actor başlatılamadı';
+                showToast(`Hata: ${msg}`, 'error');
+                console.error('Apify run error:', data);
+                if (btn) { btn.disabled = false; btn.className = 'btn-run error w-full text-xs py-2 rounded-lg font-medium transition-all'; btn.textContent = '↺ Tekrar Çalıştır'; }
             }
         })
         .catch(() => {
