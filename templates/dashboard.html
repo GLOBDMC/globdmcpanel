@@ -66,52 +66,104 @@
     </div>
 </div>
 
-<!-- Satış Dağılımı - Pasta Grafiği -->
-<div class="card mb-6" style="padding: 20px;">
-    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-5">
-        <div class="flex items-center gap-2">
-            <div class="w-6 h-6 rounded-md bg-purple-900 bg-opacity-60 flex items-center justify-center">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#C084FC" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/>
-                </svg>
-            </div>
-            <span class="text-sm font-semibold text-white">Genel Doluluk Oranı</span>
-        </div>
-        <span class="text-xs text-slate-500">Toplam <span class="text-slate-300 font-semibold">{{ toplam_pax }}</span> koltuk kapasitesi</span>
-    </div>
+<!-- Genel Doluluk Oranı — Holo Panel -->
+<div class="mb-6" style="
+    background: linear-gradient(135deg, rgba(15,23,42,0.95) 0%, rgba(17,24,39,0.98) 100%);
+    border: 1px solid rgba(99,130,246,0.18);
+    border-radius: 14px;
+    padding: 20px 24px;
+    box-shadow: 0 0 40px rgba(37,99,235,0.07), inset 0 1px 0 rgba(255,255,255,0.04);
+    position: relative;
+    overflow: hidden;">
+
+    <!-- Arka plan parlaması -->
+    <div style="position:absolute;top:-60px;left:-60px;width:220px;height:220px;border-radius:50%;background:radial-gradient(circle,rgba(37,99,235,0.12) 0%,transparent 70%);pointer-events:none;"></div>
+    <div style="position:absolute;bottom:-40px;right:80px;width:160px;height:160px;border-radius:50%;background:radial-gradient(circle,rgba(139,92,246,0.08) 0%,transparent 70%);pointer-events:none;"></div>
+
     {% if toplam_pax > 0 %}
-    <div class="flex flex-col sm:flex-row items-center gap-8">
-        <!-- Pasta grafik -->
-        <div style="width:200px;height:200px;flex-shrink:0;position:relative;">
-            <canvas id="satisPastaChart" width="200" height="200"></canvas>
-            <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none;line-height:1.2;">
-                <div style="font-size:22px;font-weight:700;color:#fff;">%{{ doluluk_pct }}</div>
-                <div style="font-size:11px;color:#64748B;">dolu</div>
+    <div style="display:flex;align-items:center;gap:28px;flex-wrap:wrap;">
+
+        <!-- Donut grafik -->
+        <div style="position:relative;width:130px;height:130px;flex-shrink:0;">
+            <canvas id="satisPastaChart" width="130" height="130"></canvas>
+            <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none;line-height:1.1;">
+                <div style="font-size:20px;font-weight:800;color:#fff;letter-spacing:-0.5px;">%{{ doluluk_pct }}</div>
+                <div style="font-size:10px;color:#475569;margin-top:2px;letter-spacing:.04em;">DOLULUK</div>
             </div>
         </div>
-        <!-- Göstergeler -->
-        <div class="flex flex-col gap-4 flex-1">
-            <div style="display:flex;align-items:center;gap:14px;">
-                <div style="width:14px;height:14px;border-radius:50%;background:rgba(37,99,235,0.85);border:2px solid #2563EB;flex-shrink:0;"></div>
-                <div style="flex:1;">
-                    <div style="font-size:13px;color:#E2E8F0;font-weight:600;">Satılan</div>
-                    <div style="font-size:11px;color:#64748B;margin-top:1px;">{{ toplam_satilan }} koltuk</div>
+
+        <!-- Dikey ayırıcı -->
+        <div style="width:1px;height:90px;background:linear-gradient(180deg,transparent,rgba(99,130,246,0.25),transparent);flex-shrink:0;"></div>
+
+        <!-- İstatistikler -->
+        <div style="display:flex;flex-direction:column;gap:14px;flex:1;min-width:180px;">
+
+            <div style="display:flex;align-items:center;gap:12px;">
+                <div style="width:30px;height:30px;border-radius:8px;background:rgba(37,99,235,0.15);border:1px solid rgba(37,99,235,0.3);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#60A5FA" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
                 </div>
-                <div style="font-size:20px;font-weight:700;color:#60A5FA;">%{{ doluluk_pct }}</div>
-            </div>
-            <div style="display:flex;align-items:center;gap:14px;">
-                <div style="width:14px;height:14px;border-radius:50%;background:rgba(100,116,139,0.6);border:2px solid #475569;flex-shrink:0;"></div>
                 <div style="flex:1;">
-                    <div style="font-size:13px;color:#E2E8F0;font-weight:600;">Kalan</div>
-                    <div style="font-size:11px;color:#64748B;margin-top:1px;">{{ toplam_kalan }} koltuk</div>
+                    <div style="font-size:11px;color:#475569;letter-spacing:.05em;">SATILAN</div>
+                    <div style="font-size:13px;color:#94A3B8;margin-top:1px;">{{ toplam_satilan|int }} koltuk</div>
                 </div>
-                <div style="font-size:20px;font-weight:700;color:#94A3B8;">%{{ bos_pct }}</div>
+                <div style="font-size:22px;font-weight:700;color:#60A5FA;">%{{ doluluk_pct }}</div>
             </div>
-            <!-- progress bar -->
-            <div style="background:rgba(255,255,255,0.05);border-radius:999px;height:8px;overflow:hidden;margin-top:4px;">
-                <div style="height:100%;border-radius:999px;background:linear-gradient(90deg,#1d4ed8,#3b82f6);width:{{ doluluk_pct }}%;transition:width 0.6s ease;"></div>
+
+            <div style="height:1px;background:rgba(255,255,255,0.04);"></div>
+
+            <div style="display:flex;align-items:center;gap:12px;">
+                <div style="width:30px;height:30px;border-radius:8px;background:rgba(100,116,139,0.12);border:1px solid rgba(100,116,139,0.2);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                </div>
+                <div style="flex:1;">
+                    <div style="font-size:11px;color:#475569;letter-spacing:.05em;">KALAN</div>
+                    <div style="font-size:13px;color:#94A3B8;margin-top:1px;">{{ toplam_kalan|int }} koltuk</div>
+                </div>
+                <div style="font-size:22px;font-weight:700;color:#475569;">%{{ bos_pct }}</div>
+            </div>
+
+            <!-- Progress bar -->
+            <div style="background:rgba(255,255,255,0.05);border-radius:999px;height:4px;overflow:hidden;">
+                <div style="height:100%;border-radius:999px;background:linear-gradient(90deg,#1d4ed8,#6366f1);width:{{ doluluk_pct }}%;transition:width 0.8s ease;box-shadow:0 0 8px rgba(99,102,241,0.5);"></div>
             </div>
         </div>
+
+        <!-- Dikey ayırıcı -->
+        <div style="width:1px;height:90px;background:linear-gradient(180deg,transparent,rgba(99,130,246,0.25),transparent);flex-shrink:0;"></div>
+
+        <!-- Toplam kapasite + performans -->
+        <div style="display:flex;flex-direction:column;gap:10px;min-width:140px;">
+            <div>
+                <div style="font-size:10px;color:#475569;letter-spacing:.06em;margin-bottom:4px;">TOPLAM KAPASİTE</div>
+                <div style="font-size:26px;font-weight:800;color:#E2E8F0;letter-spacing:-1px;">{{ toplam_pax|int }}</div>
+                <div style="font-size:11px;color:#334155;margin-top:1px;">koltuk</div>
+            </div>
+            <div style="height:1px;background:rgba(255,255,255,0.04);"></div>
+            <div>
+                <div style="font-size:10px;color:#475569;letter-spacing:.06em;margin-bottom:6px;">PERFORMANS</div>
+                <!-- Mini sparkline (dekoratif) -->
+                <svg width="110" height="28" viewBox="0 0 110 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <polyline points="0,22 14,18 28,20 42,12 56,15 70,8 84,11 98,6 110,4"
+                        stroke="url(#sparkGrad)" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+                    <polyline points="0,22 14,18 28,20 42,12 56,15 70,8 84,11 98,6 110,4 110,28 0,28"
+                        fill="url(#sparkFill)" opacity="0.2"/>
+                    <defs>
+                        <linearGradient id="sparkGrad" x1="0" y1="0" x2="110" y2="0">
+                            <stop offset="0%" stop-color="#3b82f6"/>
+                            <stop offset="100%" stop-color="#a78bfa"/>
+                        </linearGradient>
+                        <linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="28">
+                            <stop offset="0%" stop-color="#6366f1"/>
+                            <stop offset="100%" stop-color="transparent"/>
+                        </linearGradient>
+                    </defs>
+                </svg>
+                <div style="font-size:11px;color:#34D399;font-weight:600;margin-top:2px;">
+                    ↑ %{{ doluluk_pct }} <span style="color:#475569;font-weight:400;">doluluk</span>
+                </div>
+            </div>
+        </div>
+
     </div>
     {% else %}
     <p class="text-sm text-slate-500 text-center py-8">Henüz veri bulunmuyor.</p>
