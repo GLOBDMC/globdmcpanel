@@ -6,6 +6,7 @@ Append-only tasarım: mevcut kayıtlar hiçbir zaman güncellenmez.
 """
 import logging
 from datetime import date, datetime
+from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
@@ -174,7 +175,7 @@ def get_snapshot_count(engine: Engine) -> int:
         return conn.execute(text("SELECT COUNT(*) FROM tour_snapshots")).scalar() or 0
 
 
-def get_weekly_occupancy_change(engine: Engine) -> dict | None:
+def get_weekly_occupancy_change(engine: Engine) -> Optional[dict]:
     """
     Son 1 haftadaki doluluk değişimini hesaplar.
     En son snapshot günü ile 7 gün önceki snapshot gününü karşılaştırır.
