@@ -1234,12 +1234,13 @@ def _apify_post(path: str, body: dict = None) -> dict:
     if not _APIFY_TOKEN:
         return {"error": "APIFY_TOKEN tanımlı değil"}
     url = f"https://api.apify.com/v2{path}"
-    data = json.dumps(body or {}).encode()
-    req = urllib.request.Request(
-        url, data=data,
-        headers={"Authorization": f"Bearer {_APIFY_TOKEN}", "Content-Type": "application/json"},
-        method="POST",
-    )
+    headers = {"Authorization": f"Bearer {_APIFY_TOKEN}"}
+    if body is not None:
+        data = json.dumps(body).encode()
+        headers["Content-Type"] = "application/json"
+    else:
+        data = b""  # boş body — Content-Type gönderme
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
             return json.loads(r.read())

@@ -298,7 +298,8 @@ function doRun() {
                 setTimeout(loadStatuses, 3000);
             } else {
                 const msg = data.hata || 'Actor başlatılamadı';
-                showToast(`Hata: ${msg}`, 'error');
+                const detail = data.detail ? ` — ${data.detail.slice(0,120)}` : '';
+                showToast(`Hata: ${msg}${detail}`, 'error');
                 console.error('Apify run error:', data);
                 if (btn) { btn.disabled = false; btn.className = 'btn-run error w-full text-xs py-2 rounded-lg font-medium transition-all'; btn.textContent = '↺ Tekrar Çalıştır'; }
             }
