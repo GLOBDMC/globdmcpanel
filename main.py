@@ -1795,8 +1795,12 @@ def porsline_test(request: Request):
     kullanici = oturum_kullanicisi(request)
     if not kullanici or kullanici["rol"] != "admin":
         return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
-    from porsline_service import test_connection
-    return JSONResponse(test_connection())
+    from porsline_service import test_connection, _TOKEN
+    result = test_connection()
+    # Token debug: sadece ilk 6 karakter (güvenli)
+    result["token_prefix"] = _TOKEN[:6] + "..." if _TOKEN else "(BOŞ)"
+    result["token_len"]    = len(_TOKEN)
+    return JSONResponse(result)
 
 
 @app.get("/api/porsline/surveys")

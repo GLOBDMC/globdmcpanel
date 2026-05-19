@@ -37,9 +37,13 @@ def _get(path: str, params: dict = None) -> dict:
     if params:
         qs = "&".join(f"{k}={v}" for k, v in params.items())
         url = f"{url}?{qs}"
+    _auth_prefix = os.environ.get("PORSLINE_AUTH_PREFIX", "API-Key")
     req = urllib.request.Request(
         url,
-        headers={"Authorization": f"API-Key {_TOKEN}"},
+        headers={
+            "Authorization": f"{_auth_prefix} {_TOKEN}",
+            "Content-Type":  "application/json",
+        },
     )
     try:
         with urllib.request.urlopen(req, timeout=15) as r:
