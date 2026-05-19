@@ -183,6 +183,7 @@
                 </h2>
                 <div class="flex items-center gap-2">
                     <input type="text" id="batchFilter" placeholder="Batch filtrele..."
+                           autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
                            class="text-xs bg-slate-800/60 border border-slate-700/50 rounded px-2 py-1 text-slate-300 placeholder-slate-600 w-36"
                            oninput="loadReviewList(this.value)" />
                     <button onclick="loadReviewList(document.getElementById('batchFilter').value)"
