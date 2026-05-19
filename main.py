@@ -2044,6 +2044,35 @@ def porsline_debug_fields(request: Request):
     })
 
 
+@app.get("/api/porsline/survey/{survey_id}/raw")
+def porsline_raw(survey_id: str, request: Request):
+    """Ham Porsline API yanıtlarını döndürür — hangi endpoint'ler çalışıyor?"""
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    from porsline_service import _get
+
+    # 1. v2 detail
+    detail_v2 = _get(f"/api/v2/surveys/{survey_id}/")
+    # 2. v1 detail (fallback)
+    detail_v1 = _get(f"/api/surveys/{survey_id}/")
+    # 3. responses results-table
+    resp_rt = _get(f"/api/v2/surveys/{survey_id}/responses/results-table/",
+                   {"page": 1, "page_size": 3})
+    # 4. responses simple list
+    resp_list = _get(f"/api/v2/surveys/{survey_id}/responses/",
+                     {"page": 1, "page_size": 3})
+
+    return JSONResponse({
+        "survey_id":    survey_id,
+        "detail_v2":    detail_v2,
+        "detail_v1":    detail_v1,
+        "responses_results_table": resp_rt,
+        "responses_list":          resp_list,
+    })
+
+
 @app.get("/api/porsline/survey/{survey_id}/preview")
 def porsline_preview(survey_id: str, request: Request):
     """Bir anketin ilk 3 yanıtını önizleme için getirir."""
