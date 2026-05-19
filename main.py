@@ -412,6 +412,58 @@ def tablo_olustur():
                 END IF;
             END $$;
         """))
+        # ── Porsline anket takip tablosu ────────────────────────────────
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS porsline_surveys (
+                id                  SERIAL PRIMARY KEY,
+                porsline_survey_id  VARCHAR(100) UNIQUE NOT NULL,
+                survey_title        TEXT         DEFAULT '',
+                -- Parse edilmiş bilgiler
+                parsed_tur_adi      VARCHAR(500) DEFAULT '',
+                parsed_kalkis       VARCHAR(50)  DEFAULT '',
+                parsed_havayolu     VARCHAR(100) DEFAULT '',
+                parsed_gece         INTEGER,
+                -- Eşleştirme
+                matched_tur_id      INTEGER REFERENCES turlar(id) ON DELETE SET NULL,
+                matched_jt_kodu     VARCHAR(50)  DEFAULT '',
+                match_status        VARCHAR(30)  DEFAULT 'pending',
+                match_confidence    INTEGER      DEFAULT 0,
+                -- Sync durumu
+                response_count      INTEGER      DEFAULT 0,
+                last_synced_at      TIMESTAMP,
+                aktif               BOOLEAN      DEFAULT TRUE,
+                created_at          TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        # Porsline response_id: duplicate önleme
+        conn.execute(text(
+            "ALTER TABLE historical_surveys ADD COLUMN IF NOT EXISTS "
+            "porsline_response_id VARCHAR(200) DEFAULT ''"
+        ))
+        conn.execute(text(
+            "ALTER TABLE historical_surveys ADD COLUMN IF NOT EXISTS "
+            "porsline_survey_id VARCHAR(100) DEFAULT ''"
+        ))
+        conn.execute(text(
+            "ALTER TABLE historical_surveys ADD COLUMN IF NOT EXISTS "
+            "puan_detay JSONB"
+        ))
+        # unique: aynı yanıt iki kez girilmez
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'hs_porsline_response_uniq'
+                ) THEN
+                    ALTER TABLE historical_surveys
+                        ADD CONSTRAINT hs_porsline_response_uniq
+                        UNIQUE (porsline_response_id)
+                        DEFERRABLE INITIALLY DEFERRED;
+                END IF;
+            END $$;
+        """))
+
         # ── Historical surveys tablosu ──────────────────────────────────
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS historical_surveys (
@@ -1732,6 +1784,412 @@ def survey_search_tours(request: Request, q: str = ""):
             }
             for r in rows
         ]
+    })
+
+
+# ── Porsline API route'ları ──────────────────────────────────────────────────
+
+@app.get("/api/porsline/test")
+def porsline_test(request: Request):
+    """API bağlantısını test eder."""
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+    from porsline_service import test_connection
+    return JSONResponse(test_connection())
+
+
+@app.get("/api/porsline/surveys")
+def porsline_surveys(request: Request):
+    """Porsline'daki tüm anketleri listeler."""
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    from porsline_service import list_surveys, parse_survey_title
+
+    # Tüm sayfaları çek
+    all_surveys = []
+    page = 1
+    while True:
+        chunk = list_surveys(page=page, page_size=50)
+        if not chunk["ok"]:
+            return JSONResponse({"ok": False, "hata": chunk.get("hata")}, status_code=500)
+        surveys = chunk["surveys"]
+        all_surveys.extend(surveys)
+        if not chunk.get("next") or len(surveys) < 50:
+            break
+        page += 1
+
+    # Her anket için parsed bilgiyi ekle
+    for s in all_surveys:
+        title = s.get("title") or s.get("name") or ""
+        s["parsed"] = parse_survey_title(title)
+
+    return JSONResponse({"ok": True, "surveys": all_surveys, "count": len(all_surveys)})
+
+
+@app.get("/api/porsline/survey/{survey_id}/preview")
+def porsline_preview(survey_id: str, request: Request):
+    """Bir anketin ilk 3 yanıtını önizleme için getirir."""
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    from porsline_service import get_responses, get_survey_detail, parse_survey_title
+
+    detail = get_survey_detail(survey_id)
+    if not detail["ok"]:
+        return JSONResponse({"ok": False, "hata": detail.get("hata")}, status_code=500)
+
+    resp = get_responses(survey_id, page=1, page_size=3)
+    if not resp["ok"]:
+        return JSONResponse({"ok": False, "hata": resp.get("hata")}, status_code=500)
+
+    survey = detail["survey"]
+    title  = survey.get("title") or survey.get("name") or ""
+
+    return JSONResponse({
+        "ok":      True,
+        "title":   title,
+        "parsed":  parse_survey_title(title),
+        "header":  resp["header"],
+        "rows":    resp["body"][:3],
+        "count":   resp["count"],
+    })
+
+
+@app.post("/api/porsline/survey/{survey_id}/sync")
+def porsline_sync_survey(survey_id: str, request: Request):
+    """
+    Tek bir Porsline anketini DB'ye çeker ve eşleştirir.
+    Daha önce girilmiş yanıtları atlar (porsline_response_id unique).
+    """
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    from porsline_service import (
+        get_survey_detail, get_all_responses,
+        parse_survey_title, parse_response_row,
+    )
+    from survey_matcher import SurveyMatcher, TourRecord, SurveyRecord
+
+    # Anket detayı
+    detail = get_survey_detail(survey_id)
+    if not detail["ok"]:
+        return JSONResponse({"ok": False, "hata": detail.get("hata")}, status_code=500)
+
+    survey = detail["survey"]
+    title  = survey.get("title") or survey.get("name") or ""
+    parsed = parse_survey_title(title)
+
+    # Tüm yanıtları çek
+    resp = get_all_responses(survey_id)
+    if not resp["ok"]:
+        return JSONResponse({"ok": False, "hata": resp.get("hata")}, status_code=500)
+
+    header = resp["header"]
+    rows   = resp["body"]
+
+    if not rows:
+        return JSONResponse({"ok": True, "mesaj": "Bu ankette yanıt yok", "eklenen": 0})
+
+    # Turları yükle → matcher kur
+    tours = _survey_load_tours()
+    matcher = SurveyMatcher(tours)
+
+    # Anket başlığından SurveyRecord oluştur (tüm yanıtlar bu tur adıyla eşleşecek)
+    survey_record = SurveyRecord(
+        tur_adi=parsed["tur_adi"],
+        kalkis_tarihi=parsed.get("kalkis_str") or "",
+        rehber_adi="",  # yanıttan gelecek
+        destinasyon="",
+    )
+    match_result = matcher.match_one(survey_record)
+
+    matched_tur_id  = match_result.best_match.tour.id if match_result.best_match else None
+    matched_jt_kodu = match_result.best_match.tour.jt_kodu if match_result.best_match else ""
+    confidence      = match_result.confidence
+    match_status    = match_result.status
+    match_method    = match_result.method
+
+    # porsline_surveys tablosunu güncelle
+    with db_engine.connect() as conn:
+        conn.execute(text("""
+            INSERT INTO porsline_surveys
+                (porsline_survey_id, survey_title, parsed_tur_adi, parsed_kalkis,
+                 parsed_havayolu, parsed_gece, matched_tur_id, matched_jt_kodu,
+                 match_status, match_confidence, response_count, last_synced_at)
+            VALUES
+                (:sid, :title, :tur_adi, :kalkis, :havayolu, :gece,
+                 :tur_id, :jt, :status, :conf, :rcount, NOW())
+            ON CONFLICT (porsline_survey_id) DO UPDATE SET
+                survey_title     = EXCLUDED.survey_title,
+                parsed_tur_adi   = EXCLUDED.parsed_tur_adi,
+                parsed_kalkis    = EXCLUDED.parsed_kalkis,
+                matched_tur_id   = EXCLUDED.matched_tur_id,
+                matched_jt_kodu  = EXCLUDED.matched_jt_kodu,
+                match_status     = EXCLUDED.match_status,
+                match_confidence = EXCLUDED.match_confidence,
+                response_count   = EXCLUDED.response_count,
+                last_synced_at   = NOW()
+        """), {
+            "sid":     survey_id,
+            "title":   title,
+            "tur_adi": parsed["tur_adi"],
+            "kalkis":  parsed.get("kalkis_str") or "",
+            "havayolu":parsed.get("havayolu") or "",
+            "gece":    parsed.get("gece"),
+            "tur_id":  matched_tur_id,
+            "jt":      matched_jt_kodu,
+            "status":  match_status,
+            "conf":    confidence,
+            "rcount":  len(rows),
+        })
+        conn.commit()
+
+    # Her yanıtı işle
+    eklenen = 0
+    atlanan = 0
+
+    insert_sql = """
+        INSERT INTO historical_surveys (
+            survey_date, musteri_adi, rehber_adi, acente_adi,
+            kalkis_tarihi, genel_puan, rehber_puani, puan_detay,
+            tur_adi_ham, matched_tur_id, matched_jt_kodu,
+            match_confidence, match_method, match_status,
+            import_batch, porsline_response_id, porsline_survey_id
+        ) VALUES (
+            :survey_date, :musteri, :rehber, :acente,
+            :kalkis, :genel_puan, :rehber_puani, :puan_detay,
+            :tur_adi, :tur_id, :jt,
+            :conf, :method, :status,
+            :batch, :resp_id, :survey_id
+        )
+        ON CONFLICT (porsline_response_id) DO NOTHING
+    """
+
+    with db_engine.connect() as conn:
+        for i, row in enumerate(rows):
+            parsed_row = parse_response_row(header, row)
+            resp_id    = f"porsline_{survey_id}_{i}"
+
+            # Rehber adını yanıttan güncelle
+            rehber_adi = parsed_row.get("rehber_adi") or ""
+
+            try:
+                result = conn.execute(text(insert_sql), {
+                    "survey_date": "",
+                    "musteri":     parsed_row.get("musteri_adi") or "",
+                    "rehber":      rehber_adi,
+                    "acente":      parsed_row.get("acente_adi") or "",
+                    "kalkis":      parsed.get("kalkis_str") or "",
+                    "genel_puan":  parsed_row.get("genel_puan"),
+                    "rehber_puani":parsed_row.get("rehber_puani"),
+                    "puan_detay":  json.dumps(parsed_row.get("puan_detay") or {}, ensure_ascii=False),
+                    "tur_adi":     parsed["tur_adi"],
+                    "tur_id":      matched_tur_id,
+                    "jt":          matched_jt_kodu,
+                    "conf":        confidence,
+                    "method":      match_method,
+                    "status":      match_status,
+                    "batch":       f"porsline_{survey_id}",
+                    "resp_id":     resp_id,
+                    "survey_id":   survey_id,
+                })
+                if result.rowcount > 0:
+                    eklenen += 1
+                else:
+                    atlanan += 1
+            except Exception as ex:
+                logger.warning("Porsline yanıt insert hatası: %s", ex)
+                atlanan += 1
+
+        conn.commit()
+
+    audit_logger.info(
+        "PORSLINE_SYNC | user=%s | survey=%s | eklenen=%d | atlanan=%d | match=%s(%d%%)",
+        kullanici["kullanici_adi"], survey_id, eklenen, atlanan, match_status, confidence,
+    )
+
+    return JSONResponse({
+        "ok":            True,
+        "survey_title":  title,
+        "parsed_tur":    parsed["tur_adi"],
+        "match_status":  match_status,
+        "confidence":    confidence,
+        "matched_jt":    matched_jt_kodu,
+        "yanit_sayisi":  len(rows),
+        "eklenen":       eklenen,
+        "atlanan":       atlanan,
+    })
+
+
+@app.get("/api/porsline/tracked")
+def porsline_tracked(request: Request):
+    """DB'deki tüm takip edilen Porsline anketlerini listeler."""
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    with db_engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT ps.*, t.tur_adi AS eslesen_tur
+            FROM porsline_surveys ps
+            LEFT JOIN turlar t ON t.id = ps.matched_tur_id
+            ORDER BY ps.created_at DESC
+        """)).fetchall()
+
+    items = []
+    for r in rows:
+        d = dict(r._mapping)
+        for k, v in d.items():
+            if hasattr(v, "isoformat"):
+                d[k] = v.isoformat()
+        items.append(d)
+
+    return JSONResponse({"ok": True, "items": items})
+
+
+@app.post("/api/porsline/sync-all")
+def porsline_sync_all(request: Request):
+    """
+    Porsline'daki tüm anketleri sırayla çeker ve DB'ye yazar.
+    Uzun sürebilir — background değil, sync çalışır.
+    """
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    from porsline_service import list_surveys
+
+    # Tüm anket listesini çek
+    all_surveys = []
+    page = 1
+    while True:
+        chunk = list_surveys(page=page, page_size=50)
+        if not chunk["ok"]:
+            return JSONResponse({"ok": False, "hata": chunk.get("hata")}, status_code=500)
+        all_surveys.extend(chunk["surveys"])
+        if not chunk.get("next") or len(chunk["surveys"]) < 50:
+            break
+        page += 1
+
+    # Her anketi sync et — hata varsa log'la, devam et
+    results = []
+    for s in all_surveys:
+        sid = str(s.get("id") or s.get("uid") or "")
+        if not sid:
+            continue
+        try:
+            # Doğrudan iç fonksiyonu çağır
+            from porsline_service import (
+                get_survey_detail, get_all_responses,
+                parse_survey_title, parse_response_row,
+            )
+            from survey_matcher import SurveyMatcher, SurveyRecord
+
+            detail = get_survey_detail(sid)
+            if not detail["ok"]:
+                results.append({"survey_id": sid, "ok": False, "hata": detail.get("hata")})
+                continue
+
+            survey = detail["survey"]
+            title  = survey.get("title") or survey.get("name") or ""
+            parsed = parse_survey_title(title)
+
+            resp = get_all_responses(sid)
+            if not resp["ok"]:
+                results.append({"survey_id": sid, "ok": False, "hata": resp.get("hata")})
+                continue
+
+            header = resp["header"]
+            rows   = resp["body"]
+
+            tours = _survey_load_tours()
+            matcher = SurveyMatcher(tours)
+            sr = SurveyRecord(tur_adi=parsed["tur_adi"], kalkis_tarihi=parsed.get("kalkis_str") or "")
+            mr = matcher.match_one(sr)
+
+            matched_tur_id  = mr.best_match.tour.id if mr.best_match else None
+            matched_jt_kodu = mr.best_match.tour.jt_kodu if mr.best_match else ""
+
+            with db_engine.connect() as conn:
+                conn.execute(text("""
+                    INSERT INTO porsline_surveys
+                        (porsline_survey_id, survey_title, parsed_tur_adi, parsed_kalkis,
+                         parsed_havayolu, parsed_gece, matched_tur_id, matched_jt_kodu,
+                         match_status, match_confidence, response_count, last_synced_at)
+                    VALUES (:sid,:title,:tur_adi,:kalkis,:havayolu,:gece,:tur_id,:jt,:status,:conf,:rc,NOW())
+                    ON CONFLICT (porsline_survey_id) DO UPDATE SET
+                        last_synced_at=NOW(), response_count=EXCLUDED.response_count,
+                        match_status=EXCLUDED.match_status, match_confidence=EXCLUDED.match_confidence,
+                        matched_jt_kodu=EXCLUDED.matched_jt_kodu, matched_tur_id=EXCLUDED.matched_tur_id
+                """), {
+                    "sid":     sid, "title": title, "tur_adi": parsed["tur_adi"],
+                    "kalkis":  parsed.get("kalkis_str") or "", "havayolu": parsed.get("havayolu") or "",
+                    "gece":    parsed.get("gece"), "tur_id": matched_tur_id, "jt": matched_jt_kodu,
+                    "status":  mr.status, "conf": mr.confidence, "rc": len(rows),
+                })
+
+                eklenen = 0
+                for i, row in enumerate(rows):
+                    pr     = parse_response_row(header, row)
+                    resp_id= f"porsline_{sid}_{i}"
+                    try:
+                        res = conn.execute(text("""
+                            INSERT INTO historical_surveys
+                                (musteri_adi, rehber_adi, acente_adi, kalkis_tarihi,
+                                 genel_puan, rehber_puani, puan_detay, tur_adi_ham,
+                                 matched_tur_id, matched_jt_kodu, match_confidence,
+                                 match_method, match_status, import_batch,
+                                 porsline_response_id, porsline_survey_id)
+                            VALUES
+                                (:musteri,:rehber,:acente,:kalkis,
+                                 :genel,:rehber_p,:detay,:tur_adi,
+                                 :tur_id,:jt,:conf,:method,:status,:batch,:resp_id,:survey_id)
+                            ON CONFLICT (porsline_response_id) DO NOTHING
+                        """), {
+                            "musteri":  pr.get("musteri_adi") or "",
+                            "rehber":   pr.get("rehber_adi") or "",
+                            "acente":   pr.get("acente_adi") or "",
+                            "kalkis":   parsed.get("kalkis_str") or "",
+                            "genel":    pr.get("genel_puan"),
+                            "rehber_p": pr.get("rehber_puani"),
+                            "detay":    json.dumps(pr.get("puan_detay") or {}, ensure_ascii=False),
+                            "tur_adi":  parsed["tur_adi"],
+                            "tur_id":   matched_tur_id, "jt": matched_jt_kodu,
+                            "conf":     mr.confidence, "method": mr.method, "status": mr.status,
+                            "batch":    f"porsline_{sid}",
+                            "resp_id":  resp_id, "survey_id": sid,
+                        })
+                        if res.rowcount > 0:
+                            eklenen += 1
+                    except Exception:
+                        pass
+                conn.commit()
+
+            results.append({
+                "survey_id": sid, "ok": True, "title": title[:60],
+                "match_status": mr.status, "confidence": mr.confidence,
+                "matched_jt": matched_jt_kodu, "eklenen": eklenen,
+            })
+
+        except Exception as ex:
+            logger.error("Porsline sync-all hata | survey=%s | %s", sid, ex)
+            results.append({"survey_id": sid, "ok": False, "hata": str(ex)})
+
+    toplam_eklenen = sum(r.get("eklenen", 0) for r in results if r.get("ok"))
+    audit_logger.info(
+        "PORSLINE_SYNC_ALL | user=%s | anket=%d | yanit=%d",
+        kullanici["kullanici_adi"], len(results), toplam_eklenen,
+    )
+    return JSONResponse({
+        "ok": True,
+        "anket_sayisi": len(results),
+        "toplam_eklenen": toplam_eklenen,
+        "detay": results,
     })
 
 
