@@ -1197,7 +1197,18 @@ function syncSinglePorsline(surveyId, btn) {
                 loadReviewList();
             } else {
                 btn.textContent = 'Sync';
-                const errMsg = d.hata === 429 ? '⏱ Rate limit (bekle)' : `⚠️ ${d.hata || 'Hata'}`;
+                let errMsg;
+                if (d.hata === 429) {
+                    if (d.retry_after) {
+                        const secs = parseInt(d.retry_after);
+                        const mins = Math.ceil(secs / 60);
+                        errMsg = `⏱ Rate limit — ${mins} dk bekle`;
+                    } else {
+                        errMsg = '⏱ Rate limit — bekle';
+                    }
+                } else {
+                    errMsg = `⚠️ ${d.mesaj || d.hata || 'Hata'}`;
+                }
                 statusEl.textContent = errMsg;
                 statusEl.className = 'text-xs ml-1 text-red-400';
             }
@@ -1210,7 +1221,9 @@ function syncSinglePorsline(surveyId, btn) {
         });
 }
 
-async function syncAllPorsline() {
+let _syncResumeIndex = 0;  // rate limit sonrası devam için
+
+async function syncAllPorsline(resumeFrom) {
     if (!_porslineSurveys.length) {
         showToast('Önce anketleri listeleyin', 'error');
         return;
@@ -1226,14 +1239,25 @@ async function syncAllPorsline() {
     const resultEl = document.getElementById('porslineSyncResult');
 
     progress.classList.remove('hidden');
+    barEl.style.background = '';  // reset color
     resultEl.classList.add('hidden');
 
-    let done = 0, eklenenToplam = 0, hataCount = 0;
+    const startIdx = resumeFrom != null ? resumeFrom : 0;
+    let done = startIdx, eklenenToplam = 0, hataCount = 0;
     const total = _porslineSurveys.length;
 
-    for (const s of _porslineSurveys) {
+    // Progress'i başlangıç noktasına ayarla
+    if (startIdx > 0) {
+        const pct = Math.round((startIdx / total) * 100);
+        pctEl.textContent = `${pct}%`;
+        barEl.style.width = `${pct}%`;
+        msgEl.textContent = `${startIdx}/${total} zaten tamamlandı, devam ediliyor…`;
+    }
+
+    for (let i = startIdx; i < _porslineSurveys.length; i++) {
+        const s = _porslineSurveys[i];
         const sid = String(s.id || s.uid || '');
-        if (!sid) { done++; continue; }
+        if (!sid) { continue; }
 
         const title = (s.title || s.name || '').slice(0, 40);
         msgEl.textContent = `Sync: ${title}…`;
@@ -1259,9 +1283,61 @@ async function syncAllPorsline() {
                 // Rate limit → dur, kullanıcıyı uyar
                 if (d.hata === 429) {
                     progress.classList.remove('hidden');
-                    msgEl.textContent = `⏱ Rate limit (${done}/${total} tamamlandı) — birkaç dakika bekleyip kaldığı yerden devam edin`;
                     barEl.style.background = '#f59e0b';
+                    _syncResumeIndex = i;  // kaldığı yeri kaydet
                     btn.disabled = false;
+                    btn.textContent = `▶ Devam Et (${i}/${total})`;
+                    btn.onclick = () => syncAllPorsline(_syncResumeIndex);
+
+                    const onRateLimitClear = () => {
+                        msgEl.textContent = `✅ Rate limit kalktı — "${btn.textContent}" butonuna basın (${i}/${total} tamamlandı)`;
+                        barEl.style.background = '#10b981';
+                        showToast('Rate limit kalktı! "Devam Et" butonuna basabilirsiniz.', 'success');
+                    };
+
+                    // Countdown timer
+                    const retryAfterSecs = d.retry_after ? parseInt(d.retry_after) : null;
+                    if (retryAfterSecs && retryAfterSecs > 0) {
+                        let remaining = retryAfterSecs;
+                        msgEl.textContent = `⏱ Rate limit (${i}/${total} tamamlandı) — ${remaining}s bekle`;
+                        const countdownInterval = setInterval(() => {
+                            remaining--;
+                            if (remaining <= 0) {
+                                clearInterval(countdownInterval);
+                                onRateLimitClear();
+                            } else {
+                                const m = Math.floor(remaining / 60);
+                                const s = remaining % 60;
+                                const t = m > 0 ? `${m}dk ${s}s` : `${s}s`;
+                                msgEl.textContent = `⏱ Rate limit (${i}/${total} tamamlandı) — ${t} bekle`;
+                            }
+                        }, 1000);
+                    } else {
+                        msgEl.textContent = `⏱ Rate limit (${i}/${total} tamamlandı) — birkaç dakika bekleyip "Devam Et"e basın`;
+                        // Periyodik kontrol: rate limit kalktı mı?
+                        const checkInterval = setInterval(async () => {
+                            try {
+                                const cr = await fetch('/api/porsline/ratelimit-check');
+                                const cd = await cr.json();
+                                if (cd.ok && !cd.rate_limited) {
+                                    clearInterval(checkInterval);
+                                    onRateLimitClear();
+                                } else if (cd.retry_after) {
+                                    // Tam süreyi öğrendik, countdown başlat
+                                    clearInterval(checkInterval);
+                                    let remaining = parseInt(cd.retry_after);
+                                    const ci2 = setInterval(() => {
+                                        remaining--;
+                                        if (remaining <= 0) { clearInterval(ci2); onRateLimitClear(); }
+                                        else {
+                                            const m = Math.floor(remaining / 60), s = remaining % 60;
+                                            msgEl.textContent = `⏱ Rate limit (${i}/${total}) — ${m > 0 ? m+'dk ' : ''}${s}s`;
+                                        }
+                                    }, 1000);
+                                }
+                            } catch(e) { /* ignore */ }
+                        }, 30000); // 30 saniyede bir kontrol
+                    }
                     return;
                 }
             }
@@ -1273,7 +1349,7 @@ async function syncAllPorsline() {
             if (rowSt2)  { rowSt2.textContent = '⚠️ Hata'; rowSt2.className = 'text-xs ml-1 text-red-400'; rowSt2.classList.remove('hidden'); }
         }
 
-        done++;
+        done = i + 1;
         const pct = Math.round((done / total) * 100);
         pctEl.textContent = `${pct}%`;
         barEl.style.width = `${pct}%`;
@@ -1284,11 +1360,15 @@ async function syncAllPorsline() {
 
     progress.classList.add('hidden');
     btn.disabled = false;
+    btn.textContent = 'Tümünü Sync Et';
+    btn.onclick = () => syncAllPorsline();
+    _syncResumeIndex = 0;
 
     resultEl.classList.remove('hidden');
+    const processedCount = total - startIdx;
     resultEl.innerHTML = `
         <div class="rounded-lg p-3 text-xs ${hataCount === 0 ? 'bg-green-900/20 border border-green-700/30 text-green-300' : 'bg-yellow-900/20 border border-yellow-700/30 text-yellow-300'}">
-            ✓ Sync tamamlandı · ${total} anket işlendi · <strong>+${eklenenToplam}</strong> yeni yanıt eklendi
+            ✓ Sync tamamlandı · ${processedCount} anket işlendi · <strong>+${eklenenToplam}</strong> yeni yanıt eklendi
             ${hataCount > 0 ? ` · <span class="text-red-400">${hataCount} hata</span>` : ''}
         </div>`;
     loadStats();

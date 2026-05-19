@@ -47,27 +47,20 @@ def _get(path: str, params: dict = None) -> dict:
             "Accept":        "application/json",
         },
     )
-    import time as _time
-    for attempt in range(2):
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        body = ""
+        retry_after = None
         try:
-            with urllib.request.urlopen(req, timeout=20) as r:
-                return json.loads(r.read())
-        except urllib.error.HTTPError as e:
-            body = ""
-            try:
-                body = e.read().decode()
-            except Exception:
-                pass
-            if e.code == 429:
-                if attempt == 0:
-                    # İlk 429 → 30 saniye bekle, bir kez daha dene
-                    _time.sleep(30)
-                    continue
-                return {"error": 429, "detail": "Rate limit"}
-            return {"error": e.code, "detail": body}
-        except Exception as e:
-            return {"error": str(e)}
-    return {"error": 429, "detail": "Rate limit"}
+            body = e.read().decode()
+            retry_after = e.headers.get("Retry-After") or e.headers.get("X-RateLimit-Reset")
+        except Exception:
+            pass
+        return {"error": e.code, "detail": body, "retry_after": retry_after}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # ── API çağrıları ─────────────────────────────────────────────────────────────
@@ -163,10 +156,12 @@ def get_responses(survey_id: str, page: int = 1, page_size: int = 100) -> dict:
     ]
 
     last_error = None
+    retry_after = None
     for ep in endpoints:
         result = _get(ep, params)
         if "error" in result:
             last_error = result["error"]
+            retry_after = result.get("retry_after")
             if result["error"] == 404:
                 continue  # sonraki URL'yi dene
             break  # 429 veya başka hata → dur
@@ -179,7 +174,8 @@ def get_responses(survey_id: str, page: int = 1, page_size: int = 100) -> dict:
         return {"ok": True, "header": header, "body": body,
                 "count": count, "_endpoint": ep}
 
-    return {"ok": False, "hata": last_error or "responses endpoint bulunamadı"}
+    return {"ok": False, "hata": last_error or "responses endpoint bulunamadı",
+            "retry_after": retry_after}
 
 
 def get_all_responses(survey_id: str) -> dict:

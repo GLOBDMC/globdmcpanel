@@ -2026,6 +2026,50 @@ def porsline_surveys(request: Request):
     return JSONResponse({"ok": True, "surveys": all_surveys, "count": len(all_surveys)})
 
 
+@app.get("/api/porsline/ratelimit-check")
+def porsline_ratelimit_check(request: Request):
+    """
+    İlk anketten 1 yanıt çekmeyi dener — 200 dönerse rate limit kalktı demektir.
+    UI'daki countdown için kullanılır.
+    """
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    import porsline_service
+
+    # Cache'deki ilk anketi al (ekstra API çağrısı yapmadan)
+    # Not: _folders_cache modül seviyesinde değişken; modül üzerinden erişiyoruz
+    cache = porsline_service._folders_cache
+    if not cache:
+        return JSONResponse({"ok": False, "hata": "Cache boş — önce anket listeleyin"})
+
+    test_id = None
+    for item in cache:
+        if isinstance(item, dict):
+            test_id = str(item.get("id") or item.get("uid") or "")
+            if test_id:
+                break
+
+    if not test_id:
+        return JSONResponse({"ok": False, "hata": "Test survey bulunamadı"})
+
+    result = porsline_service._get(f"/api/v2/surveys/{test_id}/responses/results-table/",
+                                    {"page": 1, "page_size": 1})
+
+    if "error" in result:
+        code = result["error"]
+        retry_after = result.get("retry_after")
+        return JSONResponse({
+            "ok": False,
+            "hata": code,
+            "retry_after": retry_after,
+            "rate_limited": code == 429,
+        })
+
+    return JSONResponse({"ok": True, "rate_limited": False})
+
+
 @app.get("/api/porsline/debug-fields")
 def porsline_debug_fields(request: Request):
     """Ham survey objesinin tüm field adlarını döndürür (hangi key'ler var?)."""
@@ -2129,8 +2173,19 @@ def porsline_sync_survey(survey_id: str, request: Request):
     use_question_parse = False
     if not resp["ok"]:
         if resp.get("hata") == 429:
-            return JSONResponse({"ok": False, "hata": 429,
-                                 "mesaj": "Rate limit — birkaç dakika bekleyip tekrar deneyin"},
+            retry_after = resp.get("retry_after")
+            mesaj = "Rate limit"
+            if retry_after:
+                try:
+                    secs = int(retry_after)
+                    mins = round(secs / 60, 1)
+                    mesaj = f"Rate limit — {mins} dakika sonra tekrar deneyin ({secs}s)"
+                except (ValueError, TypeError):
+                    mesaj = f"Rate limit — {retry_after} sonra tekrar deneyin"
+            else:
+                mesaj = "Rate limit — birkaç dakika bekleyip tekrar deneyin"
+            return JSONResponse({"ok": False, "hata": 429, "mesaj": mesaj,
+                                 "retry_after": retry_after},
                                 status_code=429)
         # 404 veya başka hata → responses/ endpoint'ini dene
         from porsline_service import _get
