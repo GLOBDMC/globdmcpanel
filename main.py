@@ -1908,6 +1908,43 @@ def survey_bolgeler(request: Request):
     })
 
 
+@app.get("/api/survey/debug-data")
+def survey_debug_data(request: Request):
+    """DB'deki mevcut durum + örnek kayıt puan_detay içeriği."""
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    with db_engine.connect() as conn:
+        ozet = conn.execute(text("""
+            SELECT
+                COUNT(*)                                           AS toplam,
+                COUNT(*) FILTER (WHERE genel_puan IS NOT NULL)    AS puan_dolu,
+                COUNT(*) FILTER (WHERE genel_puan IS NULL)        AS puan_bos,
+                COUNT(*) FILTER (WHERE puan_detay IS NOT NULL
+                                   AND puan_detay::text != '{}')  AS detay_dolu,
+                COUNT(*) FILTER (WHERE rehber_adi <> '')          AS rehber_dolu,
+                COUNT(*) FILTER (WHERE porsline_survey_id <> '')  AS porsline_kaynakli
+            FROM historical_surveys
+        """)).fetchone()
+
+        # İlk 3 kayıt — ham veri
+        ornekler = conn.execute(text("""
+            SELECT id, tur_adi_ham, genel_puan, rehber_puani,
+                   puan_detay::text, rehber_adi, musteri_adi,
+                   porsline_survey_id
+            FROM historical_surveys
+            ORDER BY id DESC
+            LIMIT 3
+        """)).fetchall()
+
+    return JSONResponse({
+        "ok":    True,
+        "ozet":  dict(ozet._mapping),
+        "ornekler": [dict(r._mapping) for r in ornekler],
+    })
+
+
 @app.get("/api/survey/search-tours")
 def survey_search_tours(request: Request, q: str = ""):
     """
