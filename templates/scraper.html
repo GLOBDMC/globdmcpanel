@@ -1,0 +1,311 @@
+{% extends "base.html" %}
+{% block title %}Veri Merkezi — GlobDMC{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Senkronizasyon Durumu</h1>
+    </div>
+    <div class="flex items-center gap-3">
+        <span id="lastRefresh" class="text-xs text-slate-500"></span>
+        <button onclick="loadStatuses()" class="btn-secondary text-sm px-3 py-1.5">
+            <svg class="w-3.5 h-3.5 mr-1 inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            Yenile
+        </button>
+    </div>
+</div>
+
+{% if not apify_ok %}
+<div class="bg-red-900/30 border border-red-700/50 rounded-lg p-4 mb-6 text-red-300 text-sm">
+    ⚠️ <strong>SCRAPER_API_TOKEN</strong> tanımlı değil. Railway'de env var olarak ekleyin.
+</div>
+{% endif %}
+
+<!-- Actor kartları -->
+<div id="actorGrid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+    {% for actor in actors %}
+    <div class="card" id="card-{{ actor.id }}">
+        <div class="flex items-start justify-between mb-3">
+            <div>
+                <div class="font-semibold text-slate-100 text-sm">{{ actor.name }}</div>
+                <div class="text-xs text-slate-500 mt-0.5">{{ actor.desc }}</div>
+            </div>
+            <span id="badge-{{ actor.id }}" class="status-badge badge-unknown">—</span>
+        </div>
+
+        <div class="text-xs space-y-1 mb-4" id="meta-{{ actor.id }}">
+            <div class="text-slate-500">Son çalışma: <span class="text-slate-400">yükleniyor...</span></div>
+        </div>
+
+        {% if kullanici.rol == 'admin' %}
+        <button
+            id="btn-{{ actor.id }}"
+            onclick="confirmRun('{{ actor.id }}', '{{ actor.name }}')"
+            class="btn-run w-full text-xs py-2 rounded-lg font-medium transition-all"
+        >
+            ▶ Çalıştır
+        </button>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Onay Modal -->
+<div id="confirmModal" class="fixed inset-0 z-50 hidden items-center justify-center">
+    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="closeModal()"></div>
+    <div class="relative bg-[#0f1729] border border-slate-700/60 rounded-xl shadow-2xl p-6 w-full max-w-sm mx-4">
+        <div class="flex items-center gap-3 mb-4">
+            <div class="w-9 h-9 rounded-full bg-blue-500/15 border border-blue-500/30 flex items-center justify-center flex-shrink-0">
+                <svg class="w-4 h-4 text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            </div>
+            <div>
+                <div class="text-sm font-semibold text-slate-100">Actor Başlat</div>
+                <div class="text-xs text-slate-400" id="modalActorName">—</div>
+            </div>
+        </div>
+        <p class="text-sm text-slate-400 mb-5">Bu actor'ı manuel olarak başlatmak istiyor musunuz?</p>
+        <div class="flex gap-2">
+            <button onclick="closeModal()" class="flex-1 py-2 rounded-lg text-sm text-slate-400 border border-slate-700 hover:bg-slate-800 transition-colors">
+                İptal
+            </button>
+            <button id="modalConfirmBtn" onclick="doRun()" class="flex-1 py-2 rounded-lg text-sm font-semibold bg-blue-600 hover:bg-blue-500 text-white transition-colors">
+                Başlat
+            </button>
+        </div>
+    </div>
+</div>
+
+<style>
+.status-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.badge-succeeded { background: rgba(34,197,94,.15);  color: #4ade80; border: 1px solid rgba(34,197,94,.3); }
+.badge-running   { background: rgba(234,179,8,.15);   color: #facc15; border: 1px solid rgba(234,179,8,.3); }
+.badge-failed,
+.badge-aborted,
+.badge-timedout  { background: rgba(239,68,68,.15);   color: #f87171; border: 1px solid rgba(239,68,68,.3); }
+.badge-unknown,
+.badge-never     { background: rgba(100,116,139,.15); color: #94a3b8; border: 1px solid rgba(100,116,139,.3); }
+
+/* Hata durumunda kart sol kenarlığı */
+.card-error { border-left: 2px solid rgba(239,68,68,.5); }
+
+.error-detail {
+    background: rgba(239,68,68,.08);
+    border: 1px solid rgba(239,68,68,.2);
+    border-radius: 6px;
+    padding: 6px 10px;
+    color: #fca5a5;
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.btn-run {
+    background: rgba(59,130,246,.12);
+    color: #93c5fd;
+    border: 1px solid rgba(59,130,246,.25);
+}
+.btn-run:hover:not(:disabled) {
+    background: rgba(59,130,246,.22);
+    color: #bfdbfe;
+}
+.btn-run:disabled { opacity: .45; cursor: not-allowed; }
+.btn-run.running  {
+    background: rgba(234,179,8,.12);
+    color: #fde68a;
+    border-color: rgba(234,179,8,.3);
+}
+.btn-run.error {
+    background: rgba(239,68,68,.12);
+    color: #fca5a5;
+    border-color: rgba(239,68,68,.3);
+}
+</style>
+
+<script>
+const ACTORS = {{ actors | tojson }};
+let _pendingActorId   = null;
+let _pendingActorName = null;
+let _polling = false;
+
+/* ── Zaman / süre ─────────────────────────────────────────── */
+function relativeTime(isoStr) {
+    if (!isoStr) return '—';
+    const diff = Math.floor((Date.now() - new Date(isoStr)) / 1000);
+    if (diff < 60)    return `${diff} sn önce`;
+    if (diff < 3600)  return `${Math.floor(diff/60)} dk önce`;
+    if (diff < 86400) return `${Math.floor(diff/3600)} saat önce`;
+    return `${Math.floor(diff/86400)} gün önce`;
+}
+function formatDuration(secs) {
+    if (!secs && secs !== 0) return '';
+    if (secs < 60) return `${secs}sn`;
+    return `${Math.floor(secs/60)}dk ${secs % 60}sn`;
+}
+
+/* ── Badge ────────────────────────────────────────────────── */
+function badgeClass(status) {
+    if (!status) return 'badge-unknown';
+    const s = status.toUpperCase();
+    if (s === 'SUCCEEDED')                   return 'badge-succeeded';
+    if (s === 'RUNNING')                     return 'badge-running';
+    if (s === 'FAILED')                      return 'badge-failed';
+    if (s === 'ABORTED')                     return 'badge-aborted';
+    if (s === 'TIMED-OUT' || s === 'TIMEDOUT') return 'badge-timedout';
+    if (s === 'NEVER_RUN')                   return 'badge-never';
+    return 'badge-unknown';
+}
+function badgeLabel(status) {
+    const map = {
+        SUCCEEDED:  'Tamamlandı',
+        RUNNING:    'Çalışıyor',
+        FAILED:     'Hata',
+        ABORTED:    'İptal edildi',
+        'TIMED-OUT':'Zaman aşımı',
+        TIMEDOUT:   'Zaman aşımı',
+        NEVER_RUN:  'Hiç çalışmadı',
+        ERROR:      'Bağlantı hatası',
+    };
+    return map[(status||'').toUpperCase()] || status || '—';
+}
+function isErrorState(status) {
+    const s = (status||'').toUpperCase();
+    return ['FAILED','ABORTED','TIMED-OUT','TIMEDOUT'].includes(s);
+}
+
+/* ── Kart güncelle ────────────────────────────────────────── */
+function updateCard(actorId, info) {
+    const card  = document.getElementById(`card-${actorId}`);
+    const badge = document.getElementById(`badge-${actorId}`);
+    const meta  = document.getElementById(`meta-${actorId}`);
+    const btn   = document.getElementById(`btn-${actorId}`);
+
+    const status    = info.status || 'UNKNOWN';
+    const isRunning = status === 'RUNNING';
+    const isError   = isErrorState(status);
+
+    /* Kart kenarlığı */
+    if (card) {
+        card.classList.toggle('card-error', isError);
+    }
+
+    /* Badge */
+    if (badge) {
+        badge.className = `status-badge ${badgeClass(status)}`;
+        badge.textContent = badgeLabel(status);
+    }
+
+    /* Meta bilgi */
+    if (meta) {
+        const dur     = info.durationSecs ? ` · ${formatDuration(info.durationSecs)}` : '';
+        const spinner = isRunning ? ' <span class="animate-pulse text-yellow-400">•••</span>' : '';
+        let html = `<div class="text-slate-500">Son çalışma: <span class="text-slate-300">${relativeTime(info.startedAt)}${dur}</span>${spinner}</div>`;
+
+        if (isError) {
+            html += `
+            <div class="error-detail mt-2">
+                ⚠️ Son çalışma <strong>${badgeLabel(status).toLowerCase()}</strong> ile sonuçlandı.
+                Tekrar çalıştırmak için aşağıdaki butonu kullanın.
+            </div>`;
+        }
+        meta.innerHTML = html;
+    }
+
+    /* Buton */
+    if (btn) {
+        btn.disabled = isRunning;
+        let cls = 'btn-run w-full text-xs py-2 rounded-lg font-medium transition-all';
+        if (isRunning) cls += ' running';
+        else if (isError) cls += ' error';
+        btn.className = cls;
+        btn.textContent = isRunning ? '⟳ Çalışıyor...' : isError ? '↺ Tekrar Çalıştır' : '▶ Çalıştır';
+    }
+}
+
+/* ── Durum yükle ──────────────────────────────────────────── */
+function loadStatuses() {
+    document.getElementById('lastRefresh').textContent = 'yükleniyor...';
+    fetch('/api/apify/status')
+        .then(r => r.json())
+        .then(data => {
+            if (!data.ok) return;
+            const statuses  = data.statuses || {};
+            let anyRunning  = false;
+            for (const actor of ACTORS) {
+                const info = statuses[actor.id] || {};
+                updateCard(actor.id, info);
+                if (info.status === 'RUNNING') anyRunning = true;
+            }
+            const now = new Date().toLocaleTimeString('tr-TR');
+            document.getElementById('lastRefresh').textContent = `Son güncelleme: ${now}`;
+
+            if (anyRunning && !_polling) {
+                _polling = true;
+                setTimeout(() => { _polling = false; loadStatuses(); }, 8000);
+            }
+        })
+        .catch(() => {
+            document.getElementById('lastRefresh').textContent = 'bağlantı hatası';
+        });
+}
+
+/* ── Onay modal ───────────────────────────────────────────── */
+function confirmRun(actorId, actorName) {
+    _pendingActorId   = actorId;
+    _pendingActorName = actorName;
+    document.getElementById('modalActorName').textContent = actorName;
+    const modal = document.getElementById('confirmModal');
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+}
+function closeModal() {
+    const modal = document.getElementById('confirmModal');
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+    _pendingActorId = _pendingActorName = null;
+}
+function doRun() {
+    const actorId = _pendingActorId;
+    const btn     = document.getElementById(`btn-${actorId}`);
+    closeModal();
+    if (!actorId) return;
+
+    if (btn) { btn.disabled = true; btn.textContent = '⟳ Başlatılıyor...'; }
+
+    fetch(`/api/apify/run/${actorId}`, { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            if (data.ok) {
+                updateCard(actorId, { status: 'RUNNING', startedAt: new Date().toISOString() });
+                setTimeout(loadStatuses, 3000);
+            } else {
+                showToast(`Hata: ${data.hata || 'Actor başlatılamadı'}`, 'error');
+                if (btn) { btn.disabled = false; btn.textContent = '▶ Çalıştır'; }
+            }
+        })
+        .catch(() => {
+            showToast('Bağlantı hatası', 'error');
+            if (btn) { btn.disabled = false; btn.textContent = '▶ Çalıştır'; }
+        });
+}
+
+/* ── Toast bildirimi ──────────────────────────────────────── */
+function showToast(msg, type = 'info') {
+    const t = document.createElement('div');
+    const color = type === 'error' ? 'bg-red-900/80 border-red-700/50 text-red-300'
+                                   : 'bg-slate-800/90 border-slate-700/50 text-slate-200';
+    t.className = `fixed bottom-6 right-6 z-50 px-4 py-3 rounded-lg border text-sm shadow-xl ${color} transition-opacity`;
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 400); }, 3500);
+}
+
+document.addEventListener('DOMContentLoaded', loadStatuses);
+setInterval(() => { if (!_polling) loadStatuses(); }, 60000);
+</script>
+{% endblock %}

@@ -4,6 +4,8 @@ import time
 import secrets
 import logging
 import logging.handlers
+import urllib.request
+import urllib.error
 from collections import defaultdict
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import JSONResponse, RedirectResponse, PlainTextResponse, Response
@@ -31,12 +33,23 @@ _ENFORCE_HTTPS    = os.environ.get("ENFORCE_HTTPS", "1") == "1"
 _SECRET_KEY       = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 
 # ALLOWED_HOSTS: boşsa kontrol yapılmaz; virgülle ayır
-# Örnek: "panel.globdmc.com,www.panel.globdmc.com"
 _ALLOWED_HOSTS = {
     h.strip().lower()
     for h in os.environ.get("ALLOWED_HOSTS", "").split(",")
     if h.strip()
 }
+
+# ── Apify config ──────────────────────────────────────────────────────────────
+_APIFY_TOKEN = os.environ.get("SCRAPER_API_TOKEN", "")
+
+_APIFY_ACTORS = [
+    {"id": "koNqpkplKSKQlFShz", "name": "Jolly Matcher",    "desc": "Jolly vitrin eşleştirme"},
+    {"id": "lJPXYhP4N02OS6e46", "name": "Yeni Tur",         "desc": "Yeni tur tespiti"},
+    {"id": "AdYjHIonfsoarXve4", "name": "Erken Uyarı",      "desc": "Erken uyarı sistemi"},
+    {"id": "qotN15diJ9BmodM4k", "name": "Kontenjan Uyarı",  "desc": "Kontenjan uyarı"},
+    {"id": "Mz52E2at52NMZ6VZZ", "name": "Fiyat",            "desc": "Fiyat takibi"},
+    {"id": "HXAIxKu8FlkTyOjQn", "name": "Kontenjan",        "desc": "Kontenjan takibi"},
+]
 
 # ── Logging setup ────────────────────────────────────────────────────────────
 _LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -1092,6 +1105,133 @@ def dashboard_trends(request: Request):
         return JSONResponse({"ok": False, "has_data": False}, status_code=500)
 
 
+# ── Apify helpers ────────────────────────────────────────────────────────────
+
+def _apify_get(path: str) -> dict:
+    """Apify REST API GET isteği."""
+    if not _APIFY_TOKEN:
+        return {"error": "APIFY_TOKEN tanımlı değil"}
+    url = f"https://api.apify.com/v2{path}"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {_APIFY_TOKEN}"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        return {"error": e.code}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _apify_post(path: str, body: dict = None) -> dict:
+    """Apify REST API POST isteği."""
+    if not _APIFY_TOKEN:
+        return {"error": "APIFY_TOKEN tanımlı değil"}
+    url = f"https://api.apify.com/v2{path}"
+    data = json.dumps(body or {}).encode()
+    req = urllib.request.Request(
+        url, data=data,
+        headers={"Authorization": f"Bearer {_APIFY_TOKEN}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        return {"error": e.code}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _apify_actor_status(actor_id: str) -> dict:
+    """Bir actor'ın son run bilgisini döndürür."""
+    result = _apify_get(f"/acts/{actor_id}/runs/last")
+    data = result.get("data", {})
+    if not data:
+        return {"status": "NEVER_RUN", "startedAt": None, "finishedAt": None, "durationSecs": None}
+
+    started  = data.get("startedAt")
+    finished = data.get("finishedAt")
+    duration = None
+    if started and finished:
+        from datetime import datetime as _dt
+        try:
+            s = _dt.fromisoformat(started.replace("Z", "+00:00"))
+            f = _dt.fromisoformat(finished.replace("Z", "+00:00"))
+            duration = round((f - s).total_seconds())
+        except Exception:
+            pass
+
+    return {
+        "status":      data.get("status", "UNKNOWN"),
+        "startedAt":   started,
+        "finishedAt":  finished,
+        "durationSecs": duration,
+        "runId":       data.get("id"),
+    }
+
+
+# ── Scraper sayfası ──────────────────────────────────────────────────────────
+
+@app.get("/scraper")
+def scraper_sayfasi(request: Request):
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici:
+        return RedirectResponse("/login", status_code=302)
+    return templates.TemplateResponse(
+        request=request,
+        name="scraper.html",
+        context={
+            "kullanici":   kullanici,
+            "aktif_sayfa": "scraper",
+            "actors":      _APIFY_ACTORS,
+            "apify_ok":    bool(_APIFY_TOKEN),
+        },
+    )
+
+
+@app.get("/api/apify/status")
+def apify_status(request: Request):
+    """Tüm actor'ların son run durumunu döndürür."""
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici:
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=401)
+    if not _APIFY_TOKEN:
+        return JSONResponse({"hata": "APIFY_TOKEN tanımlı değil"}, status_code=500)
+
+    statuses = {}
+    for actor in _APIFY_ACTORS:
+        try:
+            statuses[actor["id"]] = _apify_actor_status(actor["id"])
+        except Exception as exc:
+            logger.warning("Apify status hatasi | actor=%s | %s", actor["id"], exc)
+            statuses[actor["id"]] = {"status": "ERROR"}
+
+    return JSONResponse({"ok": True, "statuses": statuses})
+
+
+@app.post("/api/apify/run/{actor_id}")
+def apify_run(actor_id: str, request: Request):
+    """Bir actor'ı manuel olarak çalıştırır. Admin yetkisi gerekli."""
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    # Sadece tanımlı actor'lar çalıştırılabilir
+    valid_ids = {a["id"] for a in _APIFY_ACTORS}
+    if actor_id not in valid_ids:
+        return JSONResponse({"hata": "Geçersiz actor"}, status_code=400)
+
+    result = _apify_post(f"/acts/{actor_id}/runs")
+    if "error" in result:
+        logger.error("Apify run hatasi | actor=%s | %s", actor_id, result)
+        return JSONResponse({"ok": False, "hata": "Actor başlatılamadı"}, status_code=500)
+
+    run_id = result.get("data", {}).get("id")
+    audit_logger.info("APIFY_RUN | user=%s | actor=%s | run=%s",
+                      kullanici["kullanici_adi"], actor_id, run_id)
+    return JSONResponse({"ok": True, "runId": run_id})
+
+
 @app.get("/robots.txt", include_in_schema=False)
 def robots_txt():
     return PlainTextResponse("User-agent: *\nDisallow: /\n")
@@ -1336,6 +1476,23 @@ def vitrin_takibi_sayfasi(request: Request):
                 END ASC NULLS LAST
         """
         rows = conn.execute(text(vitrin_sql)).fetchall()
+
+    # Tarihi geçmiş ve önümüzdeki 5 gün içindeki turları filtrele
+    from datetime import timedelta as _td
+    _sinir = datetime.today().date() + _td(days=5)
+
+    def _kalkis_parse(s):
+        if not s:
+            return None
+        for fmt in ('%d-%m-%Y', '%d.%m.%Y'):
+            try:
+                return datetime.strptime(str(s), fmt).date()
+            except ValueError:
+                pass
+        return None
+
+    rows = [r for r in rows
+            if (_kalkis_parse(r[1]) or datetime.max.date()) > _sinir]
 
     # Template için dict listesi
     vitrin_verileri = [
