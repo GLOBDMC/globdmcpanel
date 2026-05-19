@@ -306,6 +306,7 @@
         </a>
 
         <div class="nav-section">Sistem</div>
+        {% if kullanici and kullanici.rol == 'admin' %}
         <a href="/scraper" class="nav-item {% if aktif_sayfa == 'scraper' %}active{% endif %}">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
@@ -313,6 +314,7 @@
             </svg>
             Veri Merkezi
         </a>
+        {% endif %}
         <a href="#" class="nav-item opacity-40 cursor-not-allowed" title="Yakında">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
