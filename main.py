@@ -1898,10 +1898,7 @@ def porsline_sync_survey(survey_id: str, request: Request):
     header = resp["header"]
     rows   = resp["body"]
 
-    if not rows:
-        return JSONResponse({"ok": True, "mesaj": "Bu ankette yanıt yok", "eklenen": 0})
-
-    # Turları yükle → matcher kur
+    # Turları yükle → matcher kur (yanıt olmasa bile match bilgisi response'da olsun)
     tours = _survey_load_tours()
     matcher = SurveyMatcher(tours)
 
@@ -1920,6 +1917,20 @@ def porsline_sync_survey(survey_id: str, request: Request):
     confidence      = match_result.confidence
     match_status    = match_result.status
     match_method    = match_result.method
+
+    if not rows:
+        return JSONResponse({
+            "ok":           True,
+            "mesaj":        "Bu ankette yanıt yok",
+            "eklenen":      0,
+            "atlanan":      0,
+            "yanit_sayisi": 0,
+            "match_status": match_status,
+            "confidence":   confidence,
+            "matched_jt":   matched_jt_kodu,
+            "survey_title": title,
+            "parsed_tur":   parsed["tur_adi"],
+        })
 
     # porsline_surveys tablosunu güncelle
     with db_engine.connect() as conn:

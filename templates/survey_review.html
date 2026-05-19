@@ -840,7 +840,9 @@ function syncSinglePorsline(surveyId, btn) {
             if (d.ok) {
                 btn.textContent = '✓';
                 btn.className = 'text-xs px-2.5 py-1 rounded font-medium bg-green-600/20 text-green-400 border border-green-600/30';
-                statusEl.textContent = `+${d.eklenen} kayıt · ${d.match_status}(${d.confidence}%)`;
+                const statusLabel = d.match_status || '—';
+                const confLabel   = d.confidence != null ? `${d.confidence}%` : '—';
+                statusEl.textContent = `+${d.eklenen ?? 0} kayıt · ${statusLabel}(${confLabel})`;
                 statusEl.className = 'text-xs ml-1 text-slate-500';
                 loadStats();
                 loadReviewList();
@@ -895,7 +897,13 @@ async function syncAllPorsline() {
                 const rowBtn = document.getElementById(`ps-btn-${sid}`);
                 const rowSt  = document.getElementById(`ps-status-${sid}`);
                 if (rowBtn) { rowBtn.textContent = '✓'; rowBtn.className = 'text-xs px-2.5 py-1 rounded font-medium bg-green-600/20 text-green-400 border border-green-600/30'; }
-                if (rowSt)  { rowSt.textContent = `+${d.eklenen} · ${d.match_status}(${d.confidence}%)`; rowSt.className = 'text-xs ml-1 text-slate-500'; rowSt.classList.remove('hidden'); }
+                if (rowSt)  {
+                    const sl = d.match_status || '—';
+                    const cl = d.confidence != null ? `${d.confidence}%` : '—';
+                    rowSt.textContent = `+${d.eklenen ?? 0} · ${sl}(${cl})`;
+                    rowSt.className = 'text-xs ml-1 text-slate-500';
+                    rowSt.classList.remove('hidden');
+                }
             } else {
                 hataCount++;
             }
