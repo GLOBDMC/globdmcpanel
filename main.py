@@ -1467,13 +1467,6 @@ def vitrin_takibi_sayfasi(request: Request):
             LEFT JOIN jolly_sonuc j ON
                 LOWER(TRIM(t.tur_adi)) = LOWER(TRIM(j.grup_adi))
                 AND COALESCE(t.kalkis_tarihi, '') = COALESCE(j.kalkis_tarihi, '')
-            WHERE (
-                CASE
-                    WHEN t.kalkis_tarihi ~ E'^\\d{2}-\\d{2}-\\d{4}$' THEN TO_DATE(t.kalkis_tarihi, 'DD-MM-YYYY')
-                    WHEN t.kalkis_tarihi ~ E'^\\d{2}\\.\\d{2}\\.\\d{4}$' THEN TO_DATE(t.kalkis_tarihi, 'DD.MM.YYYY')
-                    ELSE NULL
-                END
-            ) > CURRENT_DATE + INTERVAL '5 days'
             GROUP BY t.tur_adi, t.kalkis_tarihi
             ORDER BY
                 CASE
@@ -1483,6 +1476,23 @@ def vitrin_takibi_sayfasi(request: Request):
                 END ASC NULLS LAST
         """
         rows = conn.execute(text(vitrin_sql)).fetchall()
+
+    # Tarihi geçmiş ve önümüzdeki 5 gün içindeki turları filtrele
+    from datetime import timedelta as _td
+    _sinir = datetime.today().date() + _td(days=5)
+
+    def _kalkis_parse(s):
+        if not s:
+            return None
+        for fmt in ('%d-%m-%Y', '%d.%m.%Y'):
+            try:
+                return datetime.strptime(str(s), fmt).date()
+            except ValueError:
+                pass
+        return None
+
+    rows = [r for r in rows
+            if (_kalkis_parse(r[1]) or datetime.max.date()) > _sinir]
 
     # Template için dict listesi
     vitrin_verileri = [
