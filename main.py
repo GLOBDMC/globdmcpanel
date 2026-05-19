@@ -1335,18 +1335,24 @@ def apify_run(actor_id: str, request: Request):
     if actor_id not in valid_ids:
         return JSONResponse({"hata": "Geçersiz actor"}, status_code=400)
 
-    # Önce task olarak dene, olmadıysa actor olarak dene
-    result = _apify_post(f"/actor-tasks/{actor_id}/runs")
-    if "error" in result:
-        result = _apify_post(f"/acts/{actor_id}/runs")
+    # Actor config'inden run_input al (varsa)
+    actor_cfg = next((a for a in _APIFY_ACTORS if a["id"] == actor_id), {})
+    run_input = actor_cfg.get("run_input")  # None ise body gönderilmez
+
+    # Önce task olarak dene (task'ta input kayıtlıdır)
+    result = _apify_post(f"/actor-tasks/{actor_id}/runs", run_input)
+    if result.get("error") == 404:
+        # Task bulunamadı → actor olarak dene
+        result = _apify_post(f"/acts/{actor_id}/runs", run_input)
     if "error" in result:
         detail = result.get("detail", "")
-        logger.error("Apify run hatasi | actor=%s | code=%s | %s", actor_id, result["error"], detail)
-        return JSONResponse({
-            "ok": False,
-            "hata": f"Başlatılamadı (HTTP {result['error']})",
-            "detail": detail,
-        }, status_code=500)
+        code   = result["error"]
+        if code == 400 and "start_urls" in detail:
+            msg = "Apify Task input eksik — Apify konsolunda Task oluşturun veya run_input ekleyin"
+        else:
+            msg = f"Başlatılamadı (HTTP {code})"
+        logger.error("Apify run hatasi | actor=%s | code=%s | %s", actor_id, code, detail)
+        return JSONResponse({"ok": False, "hata": msg, "detail": detail}, status_code=500)
 
     run_id = result.get("data", {}).get("id")
     audit_logger.info("APIFY_RUN | user=%s | actor=%s | run=%s",
