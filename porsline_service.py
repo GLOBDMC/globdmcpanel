@@ -186,8 +186,9 @@ def _infer_year(gun: int, ay: int, created_date_str: str) -> Optional[int]:
         except ValueError:
             continue
         diff = (created - candidate).days
-        # Kalkış, anket oluşturmadan 0-365 gün önce olabilir
-        if 0 <= diff <= 365:
+        # Kalkış, anket oluşturmadan en fazla 14 gün sonra ya da 365 gün önce olabilir
+        # (anket tur çıkışından birkaç gün önce oluşturulabiliyor)
+        if -14 <= diff <= 365:
             return candidate.year
 
     return created.year  # son çare: created yılını kullan

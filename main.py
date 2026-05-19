@@ -1828,7 +1828,7 @@ def porsline_surveys(request: Request):
     # Her anket için parsed bilgiyi ekle
     for s in all_surveys:
         title        = s.get("title") or s.get("name") or ""
-        created_date = s.get("created_at") or s.get("create_date") or s.get("created") or ""
+        created_date = s.get("created_date") or s.get("created_at") or s.get("created") or ""
         s["parsed"]  = parse_survey_title(title, created_date)
 
     return JSONResponse({"ok": True, "surveys": all_surveys, "count": len(all_surveys)})
@@ -1905,7 +1905,7 @@ def porsline_sync_survey(survey_id: str, request: Request):
 
     survey = detail["survey"]
     title        = survey.get("title") or survey.get("name") or ""
-    created_date = survey.get("created_at") or survey.get("create_date") or survey.get("created") or ""
+    created_date = survey.get("created_date") or survey.get("created_at") or survey.get("created") or ""
     parsed = parse_survey_title(title, created_date)
 
     # Tüm yanıtları çek
@@ -2133,10 +2133,10 @@ def porsline_sync_all(request: Request):
 
             survey       = detail["survey"]
             title        = survey.get("title") or survey.get("name") or ""
-            created_date = survey.get("created_at") or survey.get("create_date") or survey.get("created") or ""
+            created_date = survey.get("created_date") or survey.get("created_at") or survey.get("created") or ""
             # Fallback: list_surveys'den gelen created_date
             if not created_date:
-                created_date = s.get("created_at") or s.get("create_date") or ""
+                created_date = s.get("created_date") or s.get("created_at") or ""
             parsed = parse_survey_title(title, created_date)
 
             resp = get_all_responses(sid)

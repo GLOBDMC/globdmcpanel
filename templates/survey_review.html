@@ -799,7 +799,7 @@ function renderPorslineSurveys(surveys) {
             : (parsed.kalkis_gun ? `<span class="text-yellow-500">${parsed.kalkis_gun} / ${parsed.kalkis_ay}</span>` : '—');
         const rehber  = parsed.rehber_adi
             ? `<span class="text-slate-300">${escHtml(parsed.rehber_adi)}</span>` : '—';
-        const rcount  = s.responses_count ?? s.responders_count ?? s.response_count ?? '?';
+        const rcount  = s.submitted_responses ?? s.responses_count ?? s.responders_count ?? '?';
         const turAdi  = parsed.tur_adi ? `<span class="text-slate-400 block truncate max-w-xs">${escHtml(parsed.tur_adi)}</span>` : '';
 
         html += `
