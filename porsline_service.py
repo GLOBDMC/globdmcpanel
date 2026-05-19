@@ -47,18 +47,26 @@ def _get(path: str, params: dict = None) -> dict:
             "Accept":        "application/json",
         },
     )
-    try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            return json.loads(r.read())
-    except urllib.error.HTTPError as e:
-        body = ""
+    import time as _time
+    for attempt in range(3):
         try:
-            body = e.read().decode()
-        except Exception:
-            pass
-        return {"error": e.code, "detail": body}
-    except Exception as e:
-        return {"error": str(e)}
+            with urllib.request.urlopen(req, timeout=20) as r:
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read().decode()
+            except Exception:
+                pass
+            if e.code == 429:
+                # Rate limit — bekle ve tekrar dene
+                wait = (attempt + 1) * 5  # 5s, 10s, 15s
+                _time.sleep(wait)
+                continue
+            return {"error": e.code, "detail": body}
+        except Exception as e:
+            return {"error": str(e)}
+    return {"error": 429, "detail": "Rate limit: 3 denemede geçilemedi"}
 
 
 # ── API çağrıları ─────────────────────────────────────────────────────────────

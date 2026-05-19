@@ -848,7 +848,8 @@ function syncSinglePorsline(surveyId, btn) {
                 loadReviewList();
             } else {
                 btn.textContent = 'Sync';
-                statusEl.textContent = `⚠️ ${d.hata || 'Hata'}`;
+                const errMsg = d.hata === 429 ? '⏱ Rate limit (bekle)' : `⚠️ ${d.hata || 'Hata'}`;
+                statusEl.textContent = errMsg;
                 statusEl.className = 'text-xs ml-1 text-red-400';
             }
         })
@@ -909,6 +910,10 @@ async function syncAllPorsline() {
             }
         } catch(e) {
             hataCount++;
+            const rowBtn2 = document.getElementById(`ps-btn-${sid}`);
+            const rowSt2  = document.getElementById(`ps-status-${sid}`);
+            if (rowBtn2) rowBtn2.disabled = false;
+            if (rowSt2)  { rowSt2.textContent = '⚠️ Hata'; rowSt2.className = 'text-xs ml-1 text-red-400'; rowSt2.classList.remove('hidden'); }
         }
 
         done++;
@@ -916,8 +921,8 @@ async function syncAllPorsline() {
         pctEl.textContent = `${pct}%`;
         barEl.style.width = `${pct}%`;
 
-        // Rate limiting: her istek arasında kısa bekle
-        await new Promise(res => setTimeout(res, 200));
+        // Rate limiting: Porsline 429 önlemek için bekle
+        await new Promise(res => setTimeout(res, 1500));
     }
 
     progress.classList.add('hidden');

@@ -1834,6 +1834,24 @@ def porsline_surveys(request: Request):
     return JSONResponse({"ok": True, "surveys": all_surveys, "count": len(all_surveys)})
 
 
+@app.get("/api/porsline/debug-fields")
+def porsline_debug_fields(request: Request):
+    """Ham survey objesinin tüm field adlarını döndürür (hangi key'ler var?)."""
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+    from porsline_service import list_surveys
+    chunk = list_surveys(page=1, page_size=2)
+    if not chunk["ok"] or not chunk["surveys"]:
+        return JSONResponse({"ok": False, "hata": "Anket bulunamadı"})
+    first = chunk["surveys"][0]
+    return JSONResponse({
+        "ok":     True,
+        "fields": list(first.keys()),
+        "sample": first,   # tüm ham veri
+    })
+
+
 @app.get("/api/porsline/survey/{survey_id}/preview")
 def porsline_preview(survey_id: str, request: Request):
     """Bir anketin ilk 3 yanıtını önizleme için getirir."""
