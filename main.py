@@ -1389,39 +1389,46 @@ def survey_review_sayfasi(request: Request):
     if kullanici["rol"] != "admin":
         return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
 
-    # Batch listesi
-    with db_engine.connect() as conn:
-        batch_rows = conn.execute(text("""
-            SELECT import_batch,
-                   COUNT(*) AS toplam,
-                   SUM(CASE WHEN match_status='matched' THEN 1 ELSE 0 END) AS eslendi,
-                   SUM(CASE WHEN match_status='review'  THEN 1 ELSE 0 END) AS inceleme,
-                   SUM(CASE WHEN match_status='rejected' THEN 1 ELSE 0 END) AS reddedildi,
-                   MIN(created_at) AS ilk_import
-            FROM historical_surveys
-            GROUP BY import_batch
-            ORDER BY MIN(created_at) DESC
-        """)).fetchall()
+    try:
+        # Batch listesi
+        with db_engine.connect() as conn:
+            batch_rows = conn.execute(text("""
+                SELECT import_batch,
+                       COUNT(*) AS toplam,
+                       SUM(CASE WHEN match_status='matched' THEN 1 ELSE 0 END) AS eslendi,
+                       SUM(CASE WHEN match_status='review'  THEN 1 ELSE 0 END) AS inceleme,
+                       SUM(CASE WHEN match_status='rejected' THEN 1 ELSE 0 END) AS reddedildi,
+                       MIN(created_at) AS ilk_import
+                FROM historical_surveys
+                GROUP BY import_batch
+                ORDER BY MIN(created_at) DESC
+            """)).fetchall()
 
-        stats = conn.execute(text("""
-            SELECT
-                COUNT(*) AS toplam,
-                SUM(CASE WHEN match_status='matched'  THEN 1 ELSE 0 END) AS eslendi,
-                SUM(CASE WHEN match_status='review'   THEN 1 ELSE 0 END) AS inceleme,
-                SUM(CASE WHEN match_status='rejected' THEN 1 ELSE 0 END) AS reddedildi,
-                SUM(CASE WHEN match_status='pending'  THEN 1 ELSE 0 END) AS bekliyor,
-                ROUND(AVG(CASE WHEN genel_puan IS NOT NULL THEN genel_puan END), 2) AS ort_puan
-            FROM historical_surveys
-        """)).fetchone()
+            stats = conn.execute(text("""
+                SELECT
+                    COUNT(*) AS toplam,
+                    SUM(CASE WHEN match_status='matched'  THEN 1 ELSE 0 END) AS eslendi,
+                    SUM(CASE WHEN match_status='review'   THEN 1 ELSE 0 END) AS inceleme,
+                    SUM(CASE WHEN match_status='rejected' THEN 1 ELSE 0 END) AS reddedildi,
+                    SUM(CASE WHEN match_status='pending'  THEN 1 ELSE 0 END) AS bekliyor,
+                    ROUND(AVG(CASE WHEN genel_puan IS NOT NULL
+                              THEN CAST(genel_puan AS NUMERIC) END), 2)       AS ort_puan
+                FROM historical_surveys
+            """)).fetchone()
 
-    batches = [dict(r._mapping) for r in batch_rows]
-    for b in batches:
-        if b.get("ilk_import") and hasattr(b["ilk_import"], "strftime"):
-            b["ilk_import"] = b["ilk_import"].strftime("%d.%m.%Y %H:%M")
+        batches = [dict(r._mapping) for r in batch_rows]
+        for b in batches:
+            if b.get("ilk_import") and hasattr(b["ilk_import"], "strftime"):
+                b["ilk_import"] = b["ilk_import"].strftime("%d.%m.%Y %H:%M")
 
-    stats_dict = dict(stats._mapping) if stats else {}
-    for k, v in stats_dict.items():
-        stats_dict[k] = float(v) if v is not None else 0
+        stats_dict = dict(stats._mapping) if stats else {}
+        for k, v in stats_dict.items():
+            stats_dict[k] = float(v) if v is not None else 0
+
+    except Exception as exc:
+        logger.error("survey_review_sayfasi DB hatasi: %s", exc, exc_info=True)
+        batches    = []
+        stats_dict = {"toplam": 0, "eslendi": 0, "inceleme": 0, "reddedildi": 0, "bekliyor": 0, "ort_puan": 0}
 
     son_yerler = sum(1 for t in tur_verileri_getir() if t[6] is not None and 1 <= t[6] <= 5)
 
