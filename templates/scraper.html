@@ -145,6 +145,7 @@ const ACTORS = {{ actors | tojson }};
 let _pendingActorId   = null;
 let _pendingActorName = null;
 let _polling = false;
+let _errorToastShown = false;
 
 /* ── Zaman / süre ─────────────────────────────────────────── */
 function relativeTime(isoStr) {
@@ -249,13 +250,24 @@ function loadStatuses() {
             if (!data.ok) return;
             const statuses  = data.statuses || {};
             let anyRunning  = false;
+            const errorActors = [];
             for (const actor of ACTORS) {
                 const info = statuses[actor.id] || {};
                 updateCard(actor.id, info);
                 if (info.status === 'RUNNING') anyRunning = true;
+                if (isErrorState(info.status)) errorActors.push(actor.name);
             }
             const now = new Date().toLocaleTimeString('tr-TR');
             document.getElementById('lastRefresh').textContent = `Son güncelleme: ${now}`;
+
+            // Hatalı scraper varsa toast göster (sadece ilk yüklemede)
+            if (errorActors.length && !_errorToastShown) {
+                _errorToastShown = true;
+                const msg = errorActors.length === 1
+                    ? `⚠️ ${errorActors[0]} son çalışmada hata aldı`
+                    : `⚠️ ${errorActors.length} scraper son çalışmada hata aldı: ${errorActors.join(', ')}`;
+                showToast(msg, 'error');
+            }
 
             if (anyRunning && !_polling) {
                 _polling = true;
