@@ -1,0 +1,215 @@
+{% extends "base.html" %}
+{% block title %}Scraper Durumu — GlobDMC{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Scraper Durumu</h1>
+        <p class="page-subtitle">Apify actor'larının durumu ve manuel çalıştırma</p>
+    </div>
+    <div class="flex items-center gap-3">
+        <span id="lastRefresh" class="text-xs text-slate-500"></span>
+        <button onclick="loadStatuses()" class="btn-secondary text-sm px-3 py-1.5">
+            <svg class="w-3.5 h-3.5 mr-1 inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            Yenile
+        </button>
+    </div>
+</div>
+
+{% if not apify_ok %}
+<div class="bg-red-900/30 border border-red-700/50 rounded-lg p-4 mb-6 text-red-300 text-sm">
+    ⚠️ <strong>APIFY_TOKEN</strong> tanımlı değil. Railway'de env var olarak ekleyin.
+</div>
+{% endif %}
+
+<div id="actorGrid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+    {% for actor in actors %}
+    <div class="card" id="card-{{ actor.id }}">
+        <div class="flex items-start justify-between mb-3">
+            <div>
+                <div class="font-semibold text-slate-100 text-sm">{{ actor.name }}</div>
+                <div class="text-xs text-slate-500 mt-0.5">{{ actor.desc }}</div>
+            </div>
+            <span id="badge-{{ actor.id }}" class="status-badge badge-unknown">—</span>
+        </div>
+
+        <div class="text-xs text-slate-500 space-y-1 mb-4" id="meta-{{ actor.id }}">
+            <div>Son çalışma: <span class="text-slate-400">yükleniyor...</span></div>
+        </div>
+
+        {% if kullanici.rol == 'admin' %}
+        <button
+            id="btn-{{ actor.id }}"
+            onclick="runActor('{{ actor.id }}', '{{ actor.name }}')"
+            class="btn-run w-full text-xs py-2 rounded-lg font-medium transition-all"
+        >
+            ▶ Çalıştır
+        </button>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+
+<style>
+.status-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.badge-succeeded  { background: rgba(34,197,94,.15);  color: #4ade80; border: 1px solid rgba(34,197,94,.3); }
+.badge-running    { background: rgba(234,179,8,.15);   color: #facc15; border: 1px solid rgba(234,179,8,.3); }
+.badge-failed,
+.badge-aborted    { background: rgba(239,68,68,.15);   color: #f87171; border: 1px solid rgba(239,68,68,.3); }
+.badge-unknown,
+.badge-never      { background: rgba(100,116,139,.15); color: #94a3b8; border: 1px solid rgba(100,116,139,.3); }
+
+.btn-run {
+    background: rgba(59,130,246,.12);
+    color: #93c5fd;
+    border: 1px solid rgba(59,130,246,.25);
+}
+.btn-run:hover:not(:disabled) {
+    background: rgba(59,130,246,.22);
+    color: #bfdbfe;
+}
+.btn-run:disabled {
+    opacity: .45;
+    cursor: not-allowed;
+}
+.btn-run.running {
+    background: rgba(234,179,8,.12);
+    color: #fde68a;
+    border-color: rgba(234,179,8,.3);
+}
+</style>
+
+<script>
+const ACTORS = {{ actors | tojson }};
+
+function relativeTime(isoStr) {
+    if (!isoStr) return '—';
+    const diff = Math.floor((Date.now() - new Date(isoStr)) / 1000);
+    if (diff < 60)   return `${diff} sn önce`;
+    if (diff < 3600) return `${Math.floor(diff/60)} dk önce`;
+    if (diff < 86400)return `${Math.floor(diff/3600)} saat önce`;
+    return `${Math.floor(diff/86400)} gün önce`;
+}
+
+function formatDuration(secs) {
+    if (!secs) return '';
+    if (secs < 60)   return `${secs}sn`;
+    return `${Math.floor(secs/60)}dk ${secs%60}sn`;
+}
+
+function badgeClass(status) {
+    if (!status) return 'badge-unknown';
+    const s = status.toUpperCase();
+    if (s === 'SUCCEEDED')  return 'badge-succeeded';
+    if (s === 'RUNNING')    return 'badge-running';
+    if (s === 'FAILED')     return 'badge-failed';
+    if (s === 'ABORTED')    return 'badge-aborted';
+    if (s === 'NEVER_RUN')  return 'badge-never';
+    return 'badge-unknown';
+}
+
+function badgeLabel(status) {
+    const map = {
+        SUCCEEDED: 'Tamamlandı',
+        RUNNING:   'Çalışıyor',
+        FAILED:    'Hata',
+        ABORTED:   'İptal',
+        NEVER_RUN: 'Hiç çalışmadı',
+        UNKNOWN:   '—',
+        ERROR:     'Bağlantı hatası',
+    };
+    return map[(status||'').toUpperCase()] || status || '—';
+}
+
+function updateCard(actorId, info) {
+    const badge = document.getElementById(`badge-${actorId}`);
+    const meta  = document.getElementById(`meta-${actorId}`);
+    const btn   = document.getElementById(`btn-${actorId}`);
+
+    if (badge) {
+        badge.className = `status-badge ${badgeClass(info.status)}`;
+        badge.textContent = badgeLabel(info.status);
+    }
+
+    if (meta) {
+        const isRunning = info.status === 'RUNNING';
+        const spinner   = isRunning ? ' <span class="animate-pulse">•••</span>' : '';
+        const dur       = info.durationSecs ? ` · ${formatDuration(info.durationSecs)}` : '';
+        meta.innerHTML = `
+            <div>Son çalışma: <span class="text-slate-300">${relativeTime(info.startedAt)}${dur}</span>${spinner}</div>
+        `;
+    }
+
+    if (btn) {
+        const isRunning = info.status === 'RUNNING';
+        btn.disabled = isRunning;
+        btn.className = `btn-run w-full text-xs py-2 rounded-lg font-medium transition-all${isRunning ? ' running' : ''}`;
+        btn.textContent = isRunning ? '⟳ Çalışıyor...' : '▶ Çalıştır';
+    }
+}
+
+let _polling = false;
+
+function loadStatuses() {
+    document.getElementById('lastRefresh').textContent = 'yükleniyor...';
+    fetch('/api/apify/status')
+        .then(r => r.json())
+        .then(data => {
+            if (!data.ok) return;
+            const statuses = data.statuses || {};
+            let anyRunning = false;
+            for (const actor of ACTORS) {
+                const info = statuses[actor.id] || {};
+                updateCard(actor.id, info);
+                if (info.status === 'RUNNING') anyRunning = true;
+            }
+            const now = new Date().toLocaleTimeString('tr-TR');
+            document.getElementById('lastRefresh').textContent = `Son güncelleme: ${now}`;
+
+            // Çalışan actor varsa 8 saniyede bir yenile
+            if (anyRunning && !_polling) {
+                _polling = true;
+                setTimeout(() => { _polling = false; loadStatuses(); }, 8000);
+            }
+        })
+        .catch(() => {
+            document.getElementById('lastRefresh').textContent = 'bağlantı hatası';
+        });
+}
+
+function runActor(actorId, actorName) {
+    if (!confirm(`"${actorName}" actor'ını başlatmak istiyor musunuz?`)) return;
+    const btn = document.getElementById(`btn-${actorId}`);
+    if (btn) { btn.disabled = true; btn.textContent = '⟳ Başlatılıyor...'; }
+
+    fetch(`/api/apify/run/${actorId}`, { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            if (data.ok) {
+                updateCard(actorId, { status: 'RUNNING', startedAt: new Date().toISOString() });
+                // 3 saniye sonra durumu yenile
+                setTimeout(loadStatuses, 3000);
+            } else {
+                alert(`Hata: ${data.hata || 'Actor başlatılamadı'}`);
+                if (btn) { btn.disabled = false; btn.textContent = '▶ Çalıştır'; }
+            }
+        })
+        .catch(() => {
+            alert('Bağlantı hatası');
+            if (btn) { btn.disabled = false; btn.textContent = '▶ Çalıştır'; }
+        });
+}
+
+// Sayfa yüklenince çek
+document.addEventListener('DOMContentLoaded', loadStatuses);
+// Her 60 saniyede bir otomatik yenile
+setInterval(() => { if (!_polling) loadStatuses(); }, 60000);
+</script>
+{% endblock %}
