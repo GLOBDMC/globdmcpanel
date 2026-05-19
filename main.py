@@ -40,7 +40,7 @@ _ALLOWED_HOSTS = {
 }
 
 # ── Apify config ──────────────────────────────────────────────────────────────
-_APIFY_TOKEN = os.environ.get("APIFY_TOKEN", "")
+_APIFY_TOKEN = os.environ.get("SCRAPER_API_TOKEN", "")
 
 _APIFY_ACTORS = [
     {"id": "koNqpkplKSKQlFShz", "name": "Jolly Matcher",    "desc": "Jolly vitrin eşleştirme"},
