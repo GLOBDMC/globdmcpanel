@@ -1467,6 +1467,13 @@ def vitrin_takibi_sayfasi(request: Request):
             LEFT JOIN jolly_sonuc j ON
                 LOWER(TRIM(t.tur_adi)) = LOWER(TRIM(j.grup_adi))
                 AND COALESCE(t.kalkis_tarihi, '') = COALESCE(j.kalkis_tarihi, '')
+            WHERE (
+                CASE
+                    WHEN t.kalkis_tarihi ~ E'^\\d{2}-\\d{2}-\\d{4}$' THEN TO_DATE(t.kalkis_tarihi, 'DD-MM-YYYY')
+                    WHEN t.kalkis_tarihi ~ E'^\\d{2}\\.\\d{2}\\.\\d{4}$' THEN TO_DATE(t.kalkis_tarihi, 'DD.MM.YYYY')
+                    ELSE NULL
+                END
+            ) > CURRENT_DATE + INTERVAL '5 days'
             GROUP BY t.tur_adi, t.kalkis_tarihi
             ORDER BY
                 CASE
