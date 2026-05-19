@@ -1285,12 +1285,7 @@ def scraper_sayfasi(request: Request):
     if not kullanici:
         return RedirectResponse("/login", status_code=302)
     if kullanici["rol"] != "admin":
-        return templates.TemplateResponse(
-            request=request,
-            name="403.html",
-            context={"kullanici": kullanici, "aktif_sayfa": "scraper"},
-            status_code=403,
-        )
+        return RedirectResponse("/", status_code=302)
     return templates.TemplateResponse(
         request=request,
         name="scraper.html",
