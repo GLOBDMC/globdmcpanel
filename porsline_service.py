@@ -107,28 +107,79 @@ def list_surveys(page: int = 1, page_size: int = 50) -> dict:
     }
 
 
+# Folders cache — /api/folders/ çok çağrılmasın diye
+_folders_cache: list = []
+_folders_cache_ts: float = 0.0
+
+
+def _get_survey_from_folders(survey_id: str) -> Optional[dict]:
+    """Folders listesinden survey objesi döndürür (5 dak. cache)."""
+    import time as _time
+    global _folders_cache, _folders_cache_ts
+    if not _folders_cache or (_time.time() - _folders_cache_ts) > 300:
+        res = _get("/api/folders/")
+        if "error" not in res:
+            folders = res if isinstance(res, list) else res.get("results", [])
+            _folders_cache = []
+            for folder in folders:
+                for s in folder.get("surveys", []):
+                    _folders_cache.append(s)
+            _folders_cache_ts = _time.time()
+    for s in _folders_cache:
+        if str(s.get("id")) == str(survey_id):
+            return s
+    return None
+
+
 def get_survey_detail(survey_id: str) -> dict:
-    """Bir anketin detaylarını getirir."""
+    """Bir anketin detaylarını getirir. v2 başarısız → folders fallback."""
     result = _get(f"/api/v2/surveys/{survey_id}/")
-    if "error" in result:
-        return {"ok": False, "hata": result["error"]}
-    return {"ok": True, "survey": result}
+    if "error" not in result:
+        return {"ok": True, "survey": result}
+
+    # v2 çalışmadı → folders listesinden bul
+    s = _get_survey_from_folders(survey_id)
+    if s:
+        return {"ok": True, "survey": s}
+
+    return {"ok": False, "hata": result.get("error", "survey bulunamadı")}
 
 
 def get_responses(survey_id: str, page: int = 1, page_size: int = 100) -> dict:
-    """Bir anketin yanıtlarını getirir."""
-    result = _get(
+    """Bir anketin yanıtlarını getirir. Birden fazla endpoint pattern'i dener."""
+    params = {"page": page, "page_size": page_size}
+
+    # Deneme sırası: bilinen Porsline endpoint pattern'leri
+    endpoints = [
         f"/api/v2/surveys/{survey_id}/responses/results-table/",
-        {"page": page, "page_size": page_size},
-    )
-    if "error" in result:
-        return {"ok": False, "hata": result["error"]}
-    return {
-        "ok":      True,
-        "header":  result.get("header", []),
-        "body":    result.get("body", []),
-        "count":   result.get("responders_count", 0),
-    }
+        f"/api/surveys/{survey_id}/responses/results-table/",
+        f"/api/v2/surveys/{survey_id}/responses/",
+        f"/api/surveys/{survey_id}/responses/",
+    ]
+
+    last_error = None
+    for ep in endpoints:
+        result = _get(ep, params)
+        if "error" in result:
+            last_error = result["error"]
+            # 404 → sonraki pattern'i dene; 429/diğer → dur
+            if result["error"] == 404:
+                continue
+            break
+        # Başarılı — hangi format?
+        header = result.get("header") or result.get("headers") or []
+        body   = result.get("body")   or result.get("results") or result.get("responses") or []
+        count  = (result.get("responders_count") or result.get("count")
+                  or result.get("total") or len(body))
+        return {
+            "ok":       True,
+            "header":   header,
+            "body":     body,
+            "count":    count,
+            "_endpoint": ep,   # hangi endpoint çalıştı (debug için)
+        }
+
+    return {"ok": False, "hata": last_error or "responses endpoint bulunamadı"}
 
 
 def get_all_responses(survey_id: str) -> dict:
