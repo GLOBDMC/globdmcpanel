@@ -1,0 +1,673 @@
+{% extends "base.html" %}
+{% block title %}Memnuniyet — GlobDMC{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Memnuniyet Analizi</h1>
+        <p class="text-xs text-slate-500 mt-1">Geçmiş anket verilerini turlarla eşleştir · İntelligence oluştur</p>
+    </div>
+    <button onclick="document.getElementById('importModal').classList.remove('hidden'); document.getElementById('importModal').classList.add('flex')"
+            class="btn-secondary text-sm px-3 py-1.5">
+        <svg class="w-3.5 h-3.5 mr-1 inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        CSV İmport
+    </button>
+</div>
+
+<!-- Stats bar -->
+<div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+    <div class="card text-center py-3">
+        <div class="text-2xl font-bold text-slate-100" id="statToplam">{{ stats.toplam | int }}</div>
+        <div class="text-xs text-slate-500 mt-1">Toplam Anket</div>
+    </div>
+    <div class="card text-center py-3">
+        <div class="text-2xl font-bold text-green-400" id="statEslendi">{{ stats.eslendi | int }}</div>
+        <div class="text-xs text-slate-500 mt-1">Eşlendi</div>
+    </div>
+    <div class="card text-center py-3">
+        <div class="text-2xl font-bold text-yellow-400" id="statInceleme">{{ stats.inceleme | int }}</div>
+        <div class="text-xs text-slate-500 mt-1">İnceleme Bekliyor</div>
+    </div>
+    <div class="card text-center py-3">
+        <div class="text-2xl font-bold text-red-400" id="statReddedildi">{{ stats.reddedildi | int }}</div>
+        <div class="text-xs text-slate-500 mt-1">Eşleşmedi</div>
+    </div>
+    <div class="card text-center py-3">
+        <div class="text-2xl font-bold text-cyan-400" id="statOrtPuan">
+            {% if stats.ort_puan %}{{ "%.2f"|format(stats.ort_puan) }}{% else %}—{% endif %}
+        </div>
+        <div class="text-xs text-slate-500 mt-1">Ort. Puan</div>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+
+    <!-- Sol: Batch listesi + İntelligence özeti -->
+    <div class="space-y-4">
+
+        <!-- Import edilmiş batch'ler -->
+        <div class="card">
+            <h2 class="text-sm font-semibold text-slate-300 mb-3">Import Geçmişi</h2>
+            {% if batches %}
+            <div class="space-y-2">
+                {% for b in batches %}
+                <div class="rounded-lg bg-slate-800/50 border border-slate-700/40 p-3 cursor-pointer hover:border-slate-600/60 transition-colors"
+                     onclick="loadReviewList('{{ b.import_batch | e }}')">
+                    <div class="flex items-start justify-between gap-2">
+                        <div class="text-xs font-medium text-slate-200 truncate">{{ b.import_batch }}</div>
+                        <div class="text-xs text-slate-500 flex-shrink-0">{{ b.ilk_import }}</div>
+                    </div>
+                    <div class="flex gap-3 mt-2">
+                        <span class="text-xs text-slate-400">{{ b.toplam }} kayıt</span>
+                        <span class="text-xs text-green-400">{{ b.eslendi }} eşlendi</span>
+                        {% if b.inceleme > 0 %}
+                        <span class="text-xs text-yellow-400">{{ b.inceleme }} bekliyor</span>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="text-center py-8 text-slate-600 text-sm">
+                <svg class="w-10 h-10 mx-auto mb-2 opacity-30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                Henüz import edilmemiş
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Intelligence özeti -->
+        <div class="card" id="intelligencePanel">
+            <h2 class="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
+                <svg class="w-3.5 h-3.5 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                </svg>
+                Historical Intelligence
+            </h2>
+            <div id="intelligenceContent">
+                <div class="text-xs text-slate-600 text-center py-4">Yükleniyor...</div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Sağ: İnceleme kuyruğu -->
+    <div class="xl:col-span-2">
+        <div class="card">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-sm font-semibold text-slate-300">
+                    İnceleme Kuyruğu
+                    <span id="reviewCount" class="ml-2 text-xs text-yellow-400 font-normal"></span>
+                </h2>
+                <div class="flex items-center gap-2">
+                    <input type="text" id="batchFilter" placeholder="Batch filtrele..."
+                           class="text-xs bg-slate-800/60 border border-slate-700/50 rounded px-2 py-1 text-slate-300 placeholder-slate-600 w-36"
+                           oninput="loadReviewList(this.value)" />
+                    <button onclick="loadReviewList(document.getElementById('batchFilter').value)"
+                            class="btn-secondary text-xs px-2 py-1">Yenile</button>
+                </div>
+            </div>
+
+            <div id="reviewList">
+                <div class="text-center py-10 text-slate-600 text-sm">
+                    <svg class="w-10 h-10 mx-auto mb-2 opacity-30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                    İnceleme bekleyen kayıt yükleniyor...
+                </div>
+            </div>
+
+            <!-- Pagination -->
+            <div id="reviewPagination" class="flex justify-between items-center mt-4 hidden">
+                <button onclick="prevPage()" id="btnPrev" class="btn-secondary text-xs px-3 py-1.5">← Önceki</button>
+                <span id="pageInfo" class="text-xs text-slate-500"></span>
+                <button onclick="nextPage()" id="btnNext" class="btn-secondary text-xs px-3 py-1.5">Sonraki →</button>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- ── Import Modal ────────────────────────────────────────────────────── -->
+<div id="importModal" class="fixed inset-0 z-50 hidden items-center justify-center">
+    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="closeImportModal()"></div>
+    <div class="relative bg-[#0f1729] border border-slate-700/60 rounded-xl shadow-2xl p-6 w-full max-w-md mx-4">
+        <h3 class="text-sm font-semibold text-slate-100 mb-4 flex items-center gap-2">
+            <svg class="w-4 h-4 text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            CSV Import
+        </h3>
+
+        <!-- Format notu -->
+        <div class="bg-blue-900/20 border border-blue-700/30 rounded-lg p-3 mb-4 text-xs text-blue-300">
+            <strong>CSV format:</strong> Tur Adı (zorunlu), Kalkış Tarihi, Rehber, Destinasyon, Müşteri, Acente, Puan, Yorum<br>
+            <span class="text-blue-400 mt-1 block">Kolon adları Türkçe veya İngilizce olabilir.</span>
+        </div>
+
+        <div class="space-y-3">
+            <div>
+                <label class="block text-xs text-slate-400 mb-1">Batch Adı <span class="text-slate-600">(boş bırakılırsa dosya adı kullanılır)</span></label>
+                <input type="text" id="importBatchName" placeholder="ör. Anket_2023_Q4"
+                       class="w-full text-sm bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-slate-200 placeholder-slate-600" />
+            </div>
+            <div>
+                <label class="block text-xs text-slate-400 mb-1">CSV Dosyası</label>
+                <div id="dropZone" onclick="document.getElementById('csvFileInput').click()"
+                     class="border-2 border-dashed border-slate-700/60 rounded-lg p-6 text-center cursor-pointer hover:border-blue-500/40 transition-colors">
+                    <svg class="w-8 h-8 mx-auto mb-2 text-slate-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                    </svg>
+                    <div id="dropZoneText" class="text-xs text-slate-500">Tıkla veya CSV dosyasını sürükle</div>
+                </div>
+                <input type="file" id="csvFileInput" accept=".csv" class="hidden" onchange="onFileSelect(this)" />
+            </div>
+        </div>
+
+        <!-- Progress -->
+        <div id="importProgress" class="hidden mt-4">
+            <div class="flex items-center gap-2 text-xs text-slate-400">
+                <svg class="w-4 h-4 animate-spin text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                </svg>
+                İşleniyor...
+            </div>
+        </div>
+
+        <!-- Result -->
+        <div id="importResult" class="hidden mt-4"></div>
+
+        <div class="flex gap-2 mt-5">
+            <button onclick="closeImportModal()" class="flex-1 py-2 rounded-lg text-sm text-slate-400 border border-slate-700 hover:bg-slate-800 transition-colors">
+                Kapat
+            </button>
+            <button id="importBtn" onclick="doImport()" class="flex-1 py-2 rounded-lg text-sm font-semibold bg-blue-600 hover:bg-blue-500 text-white transition-colors">
+                İmport Et
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ── Manuel Eşleştirme Modal ─────────────────────────────────────────── -->
+<div id="matchModal" class="fixed inset-0 z-50 hidden items-center justify-center">
+    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="closeMatchModal()"></div>
+    <div class="relative bg-[#0f1729] border border-slate-700/60 rounded-xl shadow-2xl p-6 w-full max-w-sm mx-4">
+        <h3 class="text-sm font-semibold text-slate-100 mb-1">Manuel Eşleştir</h3>
+        <p id="matchSurveyName" class="text-xs text-slate-500 mb-4 truncate">—</p>
+
+        <div class="relative">
+            <input type="text" id="tourSearch" placeholder="Tur adı veya JT kodu ile ara..."
+                   autocomplete="off"
+                   class="w-full text-sm bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-slate-200 placeholder-slate-600"
+                   oninput="searchTours(this.value)" />
+            <div id="tourResults" class="absolute top-full left-0 right-0 mt-1 bg-[#0f1729] border border-slate-700/60 rounded-lg shadow-xl z-10 hidden max-h-60 overflow-y-auto"></div>
+        </div>
+
+        <input type="hidden" id="selectedJtKodu" />
+
+        <div id="selectedTourPreview" class="hidden mt-3 p-3 rounded-lg bg-blue-900/20 border border-blue-700/30 text-xs text-blue-200"></div>
+
+        <div class="flex gap-2 mt-5">
+            <button onclick="closeMatchModal()" class="flex-1 py-2 rounded-lg text-sm text-slate-400 border border-slate-700 hover:bg-slate-800 transition-colors">İptal</button>
+            <button id="matchConfirmBtn" onclick="doManualMatch()" class="flex-1 py-2 rounded-lg text-sm font-semibold bg-blue-600 hover:bg-blue-500 text-white transition-colors">
+                Eşleştir
+            </button>
+        </div>
+    </div>
+</div>
+
+<style>
+.confidence-bar-bg { background: rgba(100,116,139,.15); border-radius: 999px; height: 4px; }
+.confidence-bar    { border-radius: 999px; height: 4px; transition: width .4s ease; }
+.conf-high   { background: #4ade80; }
+.conf-medium { background: #facc15; }
+.conf-low    { background: #f87171; }
+
+.review-card {
+    background: rgba(15,23,41,.6);
+    border: 1px solid rgba(255,255,255,.06);
+    border-radius: 10px;
+    padding: 14px;
+    transition: border-color .2s;
+}
+.review-card:hover { border-color: rgba(255,255,255,.12); }
+
+.match-badge-high   { background: rgba(34,197,94,.15);  color:#4ade80; border:1px solid rgba(34,197,94,.3); }
+.match-badge-medium { background: rgba(234,179,8,.15);  color:#facc15; border:1px solid rgba(234,179,8,.3); }
+.match-badge-low    { background: rgba(239,68,68,.15);  color:#f87171; border:1px solid rgba(239,68,68,.3); }
+
+.action-btn {
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all .15s;
+    border: 1px solid;
+}
+.btn-confirm { background: rgba(34,197,94,.12); color:#4ade80; border-color:rgba(34,197,94,.3); }
+.btn-confirm:hover { background: rgba(34,197,94,.22); }
+.btn-manual  { background: rgba(59,130,246,.12); color:#93c5fd; border-color:rgba(59,130,246,.3); }
+.btn-manual:hover  { background: rgba(59,130,246,.22); }
+.btn-reject  { background: rgba(239,68,68,.08);  color:#f87171; border-color:rgba(239,68,68,.2); }
+.btn-reject:hover  { background: rgba(239,68,68,.18); }
+</style>
+
+<script>
+let _currentPage  = 0;
+let _currentBatch = "";
+let _currentTotal = 0;
+let _pageSize     = 20;
+let _pendingMatchId = null;
+let _searchTimeout  = null;
+
+/* ── Stats yükle ──────────────────────────────────────────── */
+function loadStats() {
+    fetch('/api/survey/stats')
+        .then(r => r.json())
+        .then(data => {
+            if (!data.ok) return;
+            const s = data.stats;
+            document.getElementById('statToplam').textContent    = s.toplam || 0;
+            document.getElementById('statEslendi').textContent   = s.eslendi || 0;
+            document.getElementById('statInceleme').textContent  = s.inceleme || 0;
+            document.getElementById('statReddedildi').textContent= s.reddedildi || 0;
+            document.getElementById('statOrtPuan').textContent   = s.ort_puan ? s.ort_puan.toFixed(2) : '—';
+
+            // Intelligence panel
+            renderIntelligence(data);
+        });
+}
+
+function renderIntelligence(data) {
+    const panel = document.getElementById('intelligenceContent');
+    const rehberler = data.rehberler || [];
+    const destler   = data.destinasyonlar || [];
+
+    if (!rehberler.length && !destler.length) {
+        panel.innerHTML = '<div class="text-xs text-slate-600 text-center py-4">Eşleşmiş anket yok</div>';
+        return;
+    }
+
+    let html = '';
+
+    if (rehberler.length) {
+        html += `<div class="text-xs text-slate-500 font-medium mb-2">Top Rehberler</div>`;
+        html += `<div class="space-y-1.5 mb-4">`;
+        for (const r of rehberler.slice(0, 5)) {
+            const puan = r.ort_puan ? r.ort_puan.toFixed(1) : '—';
+            html += `
+            <div class="flex items-center gap-2">
+                <div class="flex-1 text-xs text-slate-300 truncate">${r.rehber_adi}</div>
+                <div class="text-xs text-slate-500">${r.anket_sayisi} anket</div>
+                <div class="text-xs font-medium ${parseFloat(puan) >= 4 ? 'text-green-400' : 'text-yellow-400'}">${puan}</div>
+            </div>`;
+        }
+        html += `</div>`;
+    }
+
+    if (destler.length) {
+        html += `<div class="text-xs text-slate-500 font-medium mb-2">Top Destinasyonlar</div>`;
+        html += `<div class="space-y-1.5">`;
+        for (const d of destler.slice(0, 5)) {
+            const puan = d.ort_puan ? d.ort_puan.toFixed(1) : '—';
+            html += `
+            <div class="flex items-center gap-2">
+                <div class="flex-1 text-xs text-slate-300 truncate">${d.destinasyon || '—'}</div>
+                <div class="text-xs text-slate-500">${d.anket_sayisi}</div>
+                <div class="text-xs font-medium ${parseFloat(puan) >= 4 ? 'text-green-400' : 'text-yellow-400'}">${puan}</div>
+            </div>`;
+        }
+        html += `</div>`;
+    }
+
+    panel.innerHTML = html;
+}
+
+/* ── Review listesi ───────────────────────────────────────── */
+function loadReviewList(batch = "") {
+    _currentBatch = batch || document.getElementById('batchFilter').value || "";
+    _currentPage  = 0;
+    fetchReviewPage();
+}
+
+function fetchReviewPage() {
+    const batch  = encodeURIComponent(_currentBatch);
+    const params = `batch=${batch}&sayfa=${_currentPage}&limit=${_pageSize}`;
+    document.getElementById('reviewList').innerHTML = `
+        <div class="text-center py-8 text-slate-600 text-sm">
+            <svg class="w-5 h-5 mx-auto mb-2 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+            Yükleniyor...
+        </div>`;
+
+    fetch(`/api/survey/review?${params}`)
+        .then(r => r.json())
+        .then(data => {
+            if (!data.ok) return;
+            _currentTotal = data.total;
+            renderReviewList(data.items);
+            renderPagination();
+        })
+        .catch(() => {
+            document.getElementById('reviewList').innerHTML =
+                '<div class="text-center py-8 text-red-400 text-sm">Bağlantı hatası</div>';
+        });
+}
+
+function renderReviewList(items) {
+    const container = document.getElementById('reviewList');
+    document.getElementById('reviewCount').textContent = `(${_currentTotal} bekliyor)`;
+
+    if (!items.length) {
+        container.innerHTML = `
+            <div class="text-center py-10 text-slate-600 text-sm">
+                <svg class="w-10 h-10 mx-auto mb-2 opacity-30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="20 6 9 17 4 12"/></svg>
+                ${_currentTotal === 0 ? 'İnceleme bekleyen kayıt yok 🎉' : 'Bu sayfada kayıt yok'}
+            </div>`;
+        return;
+    }
+
+    let html = '<div class="space-y-3">';
+    for (const item of items) {
+        const conf     = item.match_confidence || 0;
+        const confCls  = conf >= 80 ? 'conf-high' : conf >= 50 ? 'conf-medium' : 'conf-low';
+        const badgeCls = conf >= 80 ? 'match-badge-high' : conf >= 50 ? 'match-badge-medium' : 'match-badge-low';
+        const puan     = item.genel_puan !== null ? `<span class="text-cyan-400 font-medium">${parseFloat(item.genel_puan).toFixed(1)}</span>` : '';
+        const kalkis   = item.kalkis_tarihi || '';
+        const rehber   = item.rehber_adi   || '';
+        const dest     = item.destinasyon  || '';
+
+        const hasCandidate = item.eslesen_tur_adi;
+
+        html += `
+        <div class="review-card" id="rc-${item.id}">
+            <div class="flex items-start justify-between gap-3 mb-2">
+                <div class="flex-1 min-w-0">
+                    <div class="text-sm font-medium text-slate-200 truncate">${escHtml(item.tur_adi_ham)}</div>
+                    <div class="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
+                        ${kalkis  ? `<span class="text-xs text-slate-500">📅 ${kalkis}</span>` : ''}
+                        ${rehber  ? `<span class="text-xs text-slate-500">👤 ${escHtml(rehber)}</span>` : ''}
+                        ${dest    ? `<span class="text-xs text-slate-500">📍 ${escHtml(dest)}</span>` : ''}
+                        ${puan    ? `<span class="text-xs text-slate-500">⭐ ${puan}</span>` : ''}
+                    </div>
+                </div>
+                <span class="action-badge text-xs px-2 py-0.5 rounded-full flex-shrink-0 font-medium ${badgeCls}" style="font-size:10px">
+                    ${conf}%
+                </span>
+            </div>
+
+            ${hasCandidate ? `
+            <div class="mt-2 p-2 rounded-lg bg-slate-800/50 border border-slate-700/30">
+                <div class="flex items-center justify-between gap-2 mb-1">
+                    <div class="text-xs text-slate-400">En iyi aday:</div>
+                    <div class="text-xs text-slate-500">${escHtml(item.matched_jt_kodu || '')}</div>
+                </div>
+                <div class="text-xs text-slate-200 truncate">${escHtml(item.eslesen_tur_adi || '')}</div>
+                <div class="text-xs text-slate-500 mt-0.5">${item.eslesen_kalkis || ''}${item.eslesen_rehber ? ' · ' + escHtml(item.eslesen_rehber) : ''}</div>
+                <div class="confidence-bar-bg mt-2">
+                    <div class="confidence-bar ${confCls}" style="width:${conf}%"></div>
+                </div>
+            </div>
+            ` : `
+            <div class="mt-2 p-2 rounded-lg bg-slate-800/30 border border-slate-700/20">
+                <div class="text-xs text-slate-600 italic">Uygun aday bulunamadı</div>
+            </div>
+            `}
+
+            <div class="flex gap-1.5 mt-3">
+                ${hasCandidate ? `
+                <button class="action-btn btn-confirm" onclick="autoConfirm(${item.id})">✓ Onayla</button>
+                ` : ''}
+                <button class="action-btn btn-manual" onclick="openManualMatch(${item.id}, '${escAttr(item.tur_adi_ham)}')">
+                    ${hasCandidate ? '↔ Değiştir' : '+ Eşleştir'}
+                </button>
+                <button class="action-btn btn-reject" onclick="rejectSurvey(${item.id})">✗ Eşleşmez</button>
+            </div>
+        </div>`;
+    }
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+function renderPagination() {
+    const totalPages = Math.ceil(_currentTotal / _pageSize);
+    const pag = document.getElementById('reviewPagination');
+    if (_currentTotal <= _pageSize) { pag.classList.add('hidden'); return; }
+    pag.classList.remove('hidden');
+    document.getElementById('btnPrev').disabled = _currentPage === 0;
+    document.getElementById('btnNext').disabled = _currentPage >= totalPages - 1;
+    document.getElementById('pageInfo').textContent =
+        `Sayfa ${_currentPage + 1} / ${totalPages}  (${_currentTotal} kayıt)`;
+}
+
+function prevPage() { if (_currentPage > 0) { _currentPage--; fetchReviewPage(); } }
+function nextPage() { _currentPage++; fetchReviewPage(); }
+
+/* ── Otomatik onay ────────────────────────────────────────── */
+function autoConfirm(surveyId) {
+    fetch(`/api/survey/auto-confirm/${surveyId}`, { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+            if (d.ok) {
+                removeCard(surveyId);
+                refreshCounters();
+            } else {
+                showToast('Hata: ' + (d.hata || 'bilinmeyen'), 'error');
+            }
+        });
+}
+
+/* ── Reddet ───────────────────────────────────────────────── */
+function rejectSurvey(surveyId) {
+    fetch(`/api/survey/reject/${surveyId}`, { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+            if (d.ok) {
+                removeCard(surveyId);
+                refreshCounters();
+            } else {
+                showToast('Hata: ' + (d.hata || 'bilinmeyen'), 'error');
+            }
+        });
+}
+
+/* ── Manuel eşleştirme modal ──────────────────────────────── */
+function openManualMatch(surveyId, surveyName) {
+    _pendingMatchId = surveyId;
+    document.getElementById('matchSurveyName').textContent = surveyName;
+    document.getElementById('tourSearch').value   = '';
+    document.getElementById('tourResults').classList.add('hidden');
+    document.getElementById('selectedJtKodu').value = '';
+    document.getElementById('selectedTourPreview').classList.add('hidden');
+    document.getElementById('matchModal').classList.remove('hidden');
+    document.getElementById('matchModal').classList.add('flex');
+    setTimeout(() => document.getElementById('tourSearch').focus(), 100);
+}
+
+function closeMatchModal() {
+    document.getElementById('matchModal').classList.add('hidden');
+    document.getElementById('matchModal').classList.remove('flex');
+    _pendingMatchId = null;
+}
+
+function searchTours(q) {
+    clearTimeout(_searchTimeout);
+    if (q.length < 2) {
+        document.getElementById('tourResults').classList.add('hidden');
+        return;
+    }
+    _searchTimeout = setTimeout(() => {
+        fetch(`/api/survey/search-tours?q=${encodeURIComponent(q)}`)
+            .then(r => r.json())
+            .then(data => {
+                const box = document.getElementById('tourResults');
+                if (!data.items.length) { box.classList.add('hidden'); return; }
+                box.innerHTML = data.items.map(t => `
+                    <div class="px-3 py-2 hover:bg-slate-800/60 cursor-pointer text-xs border-b border-slate-800/60 last:border-0"
+                         onclick="selectTour('${escAttr(t.jt_kodu)}', '${escAttr(t.tur_adi)}', '${escAttr(t.kalkis_tarihi || '')}', '${escAttr(t.rehber || '')}')">
+                        <div class="text-slate-200 font-medium">${escHtml(t.tur_adi)}</div>
+                        <div class="text-slate-500">${t.kalkis_tarihi || ''} · ${t.jt_kodu}</div>
+                    </div>
+                `).join('');
+                box.classList.remove('hidden');
+            });
+    }, 250);
+}
+
+function selectTour(jtKodu, turAdi, kalkis, rehber) {
+    document.getElementById('selectedJtKodu').value = jtKodu;
+    document.getElementById('tourSearch').value = turAdi;
+    document.getElementById('tourResults').classList.add('hidden');
+    const preview = document.getElementById('selectedTourPreview');
+    preview.textContent = `${turAdi} · ${kalkis}${rehber ? ' · ' + rehber : ''} · ${jtKodu}`;
+    preview.classList.remove('hidden');
+}
+
+function doManualMatch() {
+    const jtKodu = document.getElementById('selectedJtKodu').value.trim();
+    if (!jtKodu) { showToast('Tur seçilmedi', 'error'); return; }
+    if (!_pendingMatchId) return;
+
+    const btn = document.getElementById('matchConfirmBtn');
+    btn.disabled = true;
+    btn.textContent = 'Kaydediliyor...';
+
+    const fd = new FormData();
+    fd.append('jt_kodu', jtKodu);
+
+    fetch(`/api/survey/match/${_pendingMatchId}`, { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then(d => {
+            btn.disabled = false;
+            btn.textContent = 'Eşleştir';
+            if (d.ok) {
+                closeMatchModal();
+                removeCard(_pendingMatchId);
+                refreshCounters();
+                showToast('Eşleştirme kaydedildi');
+            } else {
+                showToast('Hata: ' + (d.hata || 'bilinmeyen'), 'error');
+            }
+        })
+        .catch(() => {
+            btn.disabled = false;
+            btn.textContent = 'Eşleştir';
+            showToast('Bağlantı hatası', 'error');
+        });
+}
+
+/* ── Import modal ─────────────────────────────────────────── */
+let _selectedFile = null;
+
+function onFileSelect(input) {
+    _selectedFile = input.files[0];
+    if (_selectedFile) {
+        document.getElementById('dropZoneText').textContent = `✓ ${_selectedFile.name}`;
+    }
+}
+
+function closeImportModal() {
+    document.getElementById('importModal').classList.add('hidden');
+    document.getElementById('importModal').classList.remove('flex');
+    document.getElementById('importResult').classList.add('hidden');
+    document.getElementById('importProgress').classList.add('hidden');
+    document.getElementById('dropZoneText').textContent = 'Tıkla veya CSV dosyasını sürükle';
+    document.getElementById('csvFileInput').value = '';
+    document.getElementById('importBatchName').value = '';
+    _selectedFile = null;
+}
+
+function doImport() {
+    if (!_selectedFile) { showToast('Dosya seçilmedi', 'error'); return; }
+
+    const batchName = document.getElementById('importBatchName').value.trim();
+    const fd = new FormData();
+    fd.append('file', _selectedFile);
+    fd.append('batch_name', batchName);
+
+    const btn = document.getElementById('importBtn');
+    btn.disabled = true;
+    btn.textContent = 'İşleniyor...';
+    document.getElementById('importProgress').classList.remove('hidden');
+    document.getElementById('importResult').classList.add('hidden');
+
+    fetch('/api/survey/import', { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then(data => {
+            btn.disabled = false;
+            btn.textContent = 'İmport Et';
+            document.getElementById('importProgress').classList.add('hidden');
+
+            const res = document.getElementById('importResult');
+            res.classList.remove('hidden');
+
+            if (data.ok) {
+                res.innerHTML = `
+                    <div class="bg-green-900/30 border border-green-700/40 rounded-lg p-3 text-xs text-green-300">
+                        ✓ <strong>${data.toplam}</strong> anket import edildi<br>
+                        <span class="text-green-400">• ${data.eslendi} otomatik eşleşti</span><br>
+                        <span class="text-yellow-400">• ${data.inceleme} inceleme bekliyor</span><br>
+                        <span class="text-slate-400">• ${data.tur_sayisi} tur ile karşılaştırıldı</span>
+                    </div>`;
+                loadStats();
+                loadReviewList();
+                setTimeout(() => location.reload(), 3000);
+            } else {
+                res.innerHTML = `<div class="bg-red-900/30 border border-red-700/40 rounded-lg p-3 text-xs text-red-300">⚠️ ${escHtml(data.hata || 'Bilinmeyen hata')}</div>`;
+            }
+        })
+        .catch(() => {
+            btn.disabled = false;
+            btn.textContent = 'İmport Et';
+            document.getElementById('importProgress').classList.add('hidden');
+            showToast('Bağlantı hatası', 'error');
+        });
+}
+
+/* ── Yardımcılar ──────────────────────────────────────────── */
+function removeCard(surveyId) {
+    const card = document.getElementById(`rc-${surveyId}`);
+    if (card) {
+        card.style.opacity = '0';
+        card.style.transform = 'translateX(20px)';
+        card.style.transition = 'all .3s ease';
+        setTimeout(() => {
+            card.remove();
+            _currentTotal = Math.max(0, _currentTotal - 1);
+            document.getElementById('reviewCount').textContent = `(${_currentTotal} bekliyor)`;
+        }, 300);
+    }
+}
+
+function refreshCounters() {
+    loadStats();
+}
+
+function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function escAttr(s) {
+    return String(s).replace(/'/g,"\\'").replace(/\n/g,' ');
+}
+
+function showToast(msg, type = 'info') {
+    const t = document.createElement('div');
+    const color = type === 'error'
+        ? 'bg-red-900/80 border-red-700/50 text-red-300'
+        : 'bg-slate-800/90 border-slate-700/50 text-slate-200';
+    t.className = `fixed bottom-6 right-6 z-50 px-4 py-3 rounded-lg border text-sm shadow-xl ${color} transition-opacity`;
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => { t.style.opacity='0'; setTimeout(() => t.remove(), 400); }, 3500);
+}
+
+/* ── Init ─────────────────────────────────────────────────── */
+document.addEventListener('DOMContentLoaded', () => {
+    loadStats();
+    loadReviewList();
+});
+</script>
+{% endblock %}

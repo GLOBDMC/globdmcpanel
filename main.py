@@ -1,4 +1,6 @@
 import os
+import io
+import csv
 import json
 import time
 import secrets
@@ -7,7 +9,7 @@ import logging.handlers
 import urllib.request
 import urllib.error
 from collections import defaultdict
-from fastapi import FastAPI, Request, Form
+from fastapi import FastAPI, Request, Form, File, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, PlainTextResponse, Response
 from fastapi.exception_handlers import http_exception_handler
 from pydantic import BaseModel
@@ -410,6 +412,50 @@ def tablo_olustur():
                 END IF;
             END $$;
         """))
+        # ── Historical surveys tablosu ──────────────────────────────────
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS historical_surveys (
+                id               SERIAL PRIMARY KEY,
+                -- Ham anket verisi (import'tan gelen)
+                survey_date      VARCHAR(50)   DEFAULT '',
+                musteri_adi      VARCHAR(300)  DEFAULT '',
+                rehber_adi       VARCHAR(300)  DEFAULT '',
+                destinasyon      VARCHAR(300)  DEFAULT '',
+                kalkis_tarihi    VARCHAR(50)   DEFAULT '',
+                acente_adi       VARCHAR(300)  DEFAULT '',
+                genel_puan       NUMERIC(4,2),
+                rehber_puani     NUMERIC(4,2),
+                yorum            TEXT          DEFAULT '',
+                tur_adi_ham      VARCHAR(500)  DEFAULT '',
+                -- Eşleştirme sonuçları
+                matched_tur_id   INTEGER       REFERENCES turlar(id) ON DELETE SET NULL,
+                matched_jt_kodu  VARCHAR(50)   DEFAULT '',
+                match_confidence INTEGER       DEFAULT 0,
+                match_method     VARCHAR(30)   DEFAULT 'pending',
+                match_status     VARCHAR(30)   DEFAULT 'pending',
+                -- Manuel review
+                review_notu      TEXT          DEFAULT '',
+                -- Import metadata
+                import_batch     VARCHAR(200)  DEFAULT '',
+                kaynak_satir     INTEGER       DEFAULT 0,
+                created_at       TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+                updated_at       TIMESTAMP     DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        # Index'ler (sorgular için)
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_hs_match_status
+                ON historical_surveys(match_status)
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_hs_import_batch
+                ON historical_surveys(import_batch)
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_hs_matched_jt
+                ON historical_surveys(matched_jt_kodu)
+        """))
+
         # Admin hesabı — ilk kurulumda varsayılan şifre: Glob2025!
         default_hash = pwd.hash("Glob2025!")
         conn.execute(text("""
@@ -1230,6 +1276,463 @@ def apify_run(actor_id: str, request: Request):
     audit_logger.info("APIFY_RUN | user=%s | actor=%s | run=%s",
                       kullanici["kullanici_adi"], actor_id, run_id)
     return JSONResponse({"ok": True, "runId": run_id})
+
+
+# ── Historical Survey sistemi ────────────────────────────────────────────────
+
+def _survey_load_tours():
+    """Mevcut turlar tablosundan TourRecord listesi döndürür."""
+    from survey_matcher import TourRecord
+    with db_engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT id, jt_kodu, tur_adi, kalkis_tarihi, rehber FROM turlar ORDER BY id"
+        )).fetchall()
+    return [
+        TourRecord(
+            id=r[0],
+            jt_kodu=r[1] or "",
+            tur_adi=r[2] or "",
+            kalkis_tarihi=r[3] or "",
+            rehber=r[4] or "",
+        )
+        for r in rows
+    ]
+
+
+@app.get("/survey-review")
+def survey_review_sayfasi(request: Request):
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici:
+        return RedirectResponse("/login", status_code=302)
+    if kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    # Batch listesi
+    with db_engine.connect() as conn:
+        batch_rows = conn.execute(text("""
+            SELECT import_batch,
+                   COUNT(*) AS toplam,
+                   SUM(CASE WHEN match_status='matched' THEN 1 ELSE 0 END) AS eslendi,
+                   SUM(CASE WHEN match_status='review'  THEN 1 ELSE 0 END) AS inceleme,
+                   SUM(CASE WHEN match_status='rejected' THEN 1 ELSE 0 END) AS reddedildi,
+                   MIN(created_at) AS ilk_import
+            FROM historical_surveys
+            GROUP BY import_batch
+            ORDER BY MIN(created_at) DESC
+        """)).fetchall()
+
+        stats = conn.execute(text("""
+            SELECT
+                COUNT(*) AS toplam,
+                SUM(CASE WHEN match_status='matched'  THEN 1 ELSE 0 END) AS eslendi,
+                SUM(CASE WHEN match_status='review'   THEN 1 ELSE 0 END) AS inceleme,
+                SUM(CASE WHEN match_status='rejected' THEN 1 ELSE 0 END) AS reddedildi,
+                SUM(CASE WHEN match_status='pending'  THEN 1 ELSE 0 END) AS bekliyor,
+                ROUND(AVG(CASE WHEN genel_puan IS NOT NULL THEN genel_puan END), 2) AS ort_puan
+            FROM historical_surveys
+        """)).fetchone()
+
+    batches = [dict(r._mapping) for r in batch_rows]
+    for b in batches:
+        if b.get("ilk_import") and hasattr(b["ilk_import"], "strftime"):
+            b["ilk_import"] = b["ilk_import"].strftime("%d.%m.%Y %H:%M")
+
+    stats_dict = dict(stats._mapping) if stats else {}
+    for k, v in stats_dict.items():
+        stats_dict[k] = float(v) if v is not None else 0
+
+    son_yerler = sum(1 for t in tur_verileri_getir() if t[6] is not None and 1 <= t[6] <= 5)
+
+    return templates.TemplateResponse(
+        request=request,
+        name="survey_review.html",
+        context={
+            "kullanici":   kullanici,
+            "aktif_sayfa": "survey",
+            "batches":     batches,
+            "stats":       stats_dict,
+            "kritik_sayi": son_yerler,
+        },
+    )
+
+
+@app.post("/api/survey/import")
+async def survey_import(
+    request: Request,
+    file: UploadFile = File(...),
+    batch_name: str = Form(""),
+):
+    """
+    CSV dosyasını okur, turlarla fuzzy eşleştirir, historical_surveys'e yazar.
+    Sadece admin.
+    """
+    from survey_matcher import SurveyMatcher, parse_csv_rows, THRESHOLD_AUTO
+
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    # Dosya türü kontrolü
+    if not file.filename.lower().endswith(".csv"):
+        return JSONResponse({"hata": "Sadece .csv dosyası kabul edilir"}, status_code=400)
+
+    # Boyut limiti: 5 MB
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        return JSONResponse({"hata": "Dosya boyutu 5 MB'ı aşıyor"}, status_code=400)
+
+    # Batch adı
+    if not batch_name:
+        batch_name = f"{file.filename}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    batch_name = batch_name.strip()[:200]
+
+    # Aynı batch adı tekrar import edilemez
+    with db_engine.connect() as conn:
+        existing = conn.execute(
+            text("SELECT COUNT(*) FROM historical_surveys WHERE import_batch = :b"),
+            {"b": batch_name}
+        ).scalar()
+    if existing:
+        return JSONResponse(
+            {"hata": f"'{batch_name}' batch adı zaten var. Farklı bir ad kullanın."},
+            status_code=409
+        )
+
+    # CSV parse
+    try:
+        text_content = content.decode("utf-8-sig")  # BOM varsa sil
+    except UnicodeDecodeError:
+        try:
+            text_content = content.decode("latin-1")
+        except Exception:
+            return JSONResponse({"hata": "CSV dosyası okunamadı (encoding hatası)"}, status_code=400)
+
+    try:
+        reader = csv.DictReader(io.StringIO(text_content))
+        rows = list(reader)
+        if not rows:
+            return JSONResponse({"hata": "CSV boş veya başlık satırı eksik"}, status_code=400)
+        survey_records = parse_csv_rows(rows)
+    except ValueError as e:
+        return JSONResponse({"hata": str(e)}, status_code=400)
+    except Exception as e:
+        logger.error("CSV parse hatası: %s", e)
+        return JSONResponse({"hata": "CSV işlenemedi"}, status_code=400)
+
+    if not survey_records:
+        return JSONResponse({"hata": "CSV'de geçerli tur kaydı bulunamadı"}, status_code=400)
+
+    # Turları yükle ve eşleştir
+    tours = _survey_load_tours()
+    if not tours:
+        return JSONResponse({"hata": "Sistemde kayıtlı tur yok"}, status_code=400)
+
+    matcher = SurveyMatcher(tours)
+    results = matcher.match_all(survey_records)
+
+    # DB'ye yaz
+    insert_sql = """
+        INSERT INTO historical_surveys (
+            survey_date, musteri_adi, rehber_adi, destinasyon,
+            kalkis_tarihi, acente_adi, genel_puan, rehber_puani,
+            yorum, tur_adi_ham,
+            matched_tur_id, matched_jt_kodu,
+            match_confidence, match_method, match_status,
+            import_batch, kaynak_satir
+        ) VALUES (
+            :survey_date, :musteri, :rehber, :dest,
+            :kalkis, :acente, :genel_puan, :rehber_puani,
+            :yorum, :tur_adi,
+            :tur_id, :jt_kodu,
+            :confidence, :method, :status,
+            :batch, :satir
+        )
+    """
+
+    sayac = {"toplam": 0, "eslendi": 0, "inceleme": 0}
+
+    with db_engine.connect() as conn:
+        for r in results:
+            s = r.survey
+            bm = r.best_match
+            tur_id = bm.tour.id if bm else None
+            jt_kodu = bm.tour.jt_kodu if bm else ""
+
+            conn.execute(text(insert_sql), {
+                "survey_date": s.survey_date,
+                "musteri":     s.musteri_adi,
+                "rehber":      s.rehber_adi,
+                "dest":        s.destinasyon,
+                "kalkis":      s.kalkis_tarihi,
+                "acente":      s.acente_adi,
+                "genel_puan":  s.genel_puan,
+                "rehber_puani":s.rehber_puani,
+                "yorum":       s.yorum,
+                "tur_adi":     s.tur_adi,
+                "tur_id":      tur_id,
+                "jt_kodu":     jt_kodu,
+                "confidence":  r.confidence,
+                "method":      r.method,
+                "status":      r.status,
+                "batch":       batch_name,
+                "satir":       s.kaynak_satir,
+            })
+            sayac["toplam"] += 1
+            if r.status == "matched":
+                sayac["eslendi"] += 1
+            else:
+                sayac["inceleme"] += 1
+
+        conn.commit()
+
+    audit_logger.info(
+        "SURVEY_IMPORT | user=%s | batch=%s | toplam=%d | eslendi=%d | inceleme=%d",
+        kullanici["kullanici_adi"], batch_name,
+        sayac["toplam"], sayac["eslendi"], sayac["inceleme"],
+    )
+
+    return JSONResponse({
+        "ok":       True,
+        "batch":    batch_name,
+        "toplam":   sayac["toplam"],
+        "eslendi":  sayac["eslendi"],
+        "inceleme": sayac["inceleme"],
+        "tur_sayisi": len(tours),
+    })
+
+
+@app.get("/api/survey/review")
+def survey_review_list(request: Request, batch: str = "", sayfa: int = 0, limit: int = 25):
+    """
+    İnceleme bekleyen (review) kayıtları sayfalı döndürür.
+    Her kayıtta en iyi eşleşme bilgisi + alternatif turlar da verilir.
+    """
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    offset = sayfa * limit
+    batch_filter = "AND import_batch = :batch" if batch else ""
+
+    with db_engine.connect() as conn:
+        rows = conn.execute(text(f"""
+            SELECT
+                hs.id, hs.tur_adi_ham, hs.kalkis_tarihi, hs.rehber_adi,
+                hs.destinasyon, hs.acente_adi, hs.genel_puan, hs.rehber_puani,
+                hs.yorum, hs.match_confidence, hs.match_method, hs.match_status,
+                hs.matched_jt_kodu, hs.import_batch, hs.kaynak_satir,
+                hs.musteri_adi, hs.survey_date,
+                t.tur_adi AS eslesen_tur_adi,
+                t.kalkis_tarihi AS eslesen_kalkis,
+                t.rehber AS eslesen_rehber
+            FROM historical_surveys hs
+            LEFT JOIN turlar t ON t.id = hs.matched_tur_id
+            WHERE hs.match_status IN ('review', 'pending')
+            {batch_filter}
+            ORDER BY hs.match_confidence DESC, hs.id
+            LIMIT :limit OFFSET :offset
+        """), {"batch": batch, "limit": limit, "offset": offset}).fetchall()
+
+        total = conn.execute(text(f"""
+            SELECT COUNT(*) FROM historical_surveys
+            WHERE match_status IN ('review', 'pending')
+            {batch_filter}
+        """), {"batch": batch}).scalar()
+
+    return JSONResponse({
+        "ok":    True,
+        "items": [dict(r._mapping) for r in rows],
+        "total": total,
+        "sayfa": sayfa,
+    })
+
+
+@app.get("/api/survey/stats")
+def survey_stats(request: Request):
+    """Özet istatistikler."""
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    with db_engine.connect() as conn:
+        row = conn.execute(text("""
+            SELECT
+                COUNT(*) AS toplam,
+                SUM(CASE WHEN match_status='matched'  THEN 1 ELSE 0 END) AS eslendi,
+                SUM(CASE WHEN match_status='review'   THEN 1 ELSE 0 END) AS inceleme,
+                SUM(CASE WHEN match_status='rejected' THEN 1 ELSE 0 END) AS reddedildi,
+                SUM(CASE WHEN match_status='pending'  THEN 1 ELSE 0 END) AS bekliyor,
+                ROUND(AVG(CASE WHEN genel_puan IS NOT NULL THEN genel_puan END)::numeric, 2) AS ort_puan,
+                ROUND(AVG(CASE WHEN rehber_puani IS NOT NULL THEN rehber_puani END)::numeric, 2) AS ort_rehber_puan,
+                ROUND(AVG(match_confidence)::numeric, 1) AS ort_confidence
+            FROM historical_surveys
+        """)).fetchone()
+
+        top_guides = conn.execute(text("""
+            SELECT rehber_adi,
+                   COUNT(*) AS anket_sayisi,
+                   ROUND(AVG(genel_puan)::numeric, 2) AS ort_puan
+            FROM historical_surveys
+            WHERE rehber_adi <> '' AND match_status = 'matched'
+            GROUP BY rehber_adi
+            ORDER BY anket_sayisi DESC
+            LIMIT 10
+        """)).fetchall()
+
+        top_dest = conn.execute(text("""
+            SELECT destinasyon,
+                   COUNT(*) AS anket_sayisi,
+                   ROUND(AVG(genel_puan)::numeric, 2) AS ort_puan
+            FROM historical_surveys
+            WHERE destinasyon <> '' AND match_status = 'matched'
+            GROUP BY destinasyon
+            ORDER BY anket_sayisi DESC
+            LIMIT 10
+        """)).fetchall()
+
+    stats = {}
+    if row:
+        for k, v in dict(row._mapping).items():
+            stats[k] = float(v) if v is not None else 0
+
+    return JSONResponse({
+        "ok":        True,
+        "stats":     stats,
+        "rehberler": [dict(r._mapping) for r in top_guides],
+        "destinasyonlar": [dict(r._mapping) for r in top_dest],
+    })
+
+
+@app.post("/api/survey/match/{survey_id}")
+def survey_match_confirm(survey_id: int, request: Request, jt_kodu: str = Form(...)):
+    """
+    Bir review kaydını belirtilen JT kodu ile manuel olarak eşleştirir.
+    """
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    jt_kodu = jt_kodu.strip()
+
+    with db_engine.connect() as conn:
+        # JT kodu var mı kontrol et
+        tur = conn.execute(
+            text("SELECT id, tur_adi FROM turlar WHERE jt_kodu = :jt"),
+            {"jt": jt_kodu}
+        ).fetchone()
+
+        if not tur and jt_kodu:
+            return JSONResponse({"hata": f"'{jt_kodu}' JT kodu bulunamadı"}, status_code=404)
+
+        conn.execute(text("""
+            UPDATE historical_surveys
+            SET matched_tur_id   = :tur_id,
+                matched_jt_kodu  = :jt,
+                match_status     = 'matched',
+                match_method     = 'manual',
+                match_confidence = 100,
+                updated_at       = CURRENT_TIMESTAMP
+            WHERE id = :sid
+        """), {
+            "tur_id": tur[0] if tur else None,
+            "jt":     jt_kodu,
+            "sid":    survey_id,
+        })
+        conn.commit()
+
+    audit_logger.info(
+        "SURVEY_MATCH | user=%s | survey_id=%d | jt_kodu=%s",
+        kullanici["kullanici_adi"], survey_id, jt_kodu,
+    )
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/survey/reject/{survey_id}")
+def survey_reject(survey_id: int, request: Request):
+    """
+    Bir review kaydını 'reddedildi' olarak işaretler (eşleşme yok).
+    """
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    with db_engine.connect() as conn:
+        conn.execute(text("""
+            UPDATE historical_surveys
+            SET match_status = 'rejected',
+                match_method = 'manual',
+                updated_at   = CURRENT_TIMESTAMP
+            WHERE id = :sid
+        """), {"sid": survey_id})
+        conn.commit()
+
+    audit_logger.info(
+        "SURVEY_REJECT | user=%s | survey_id=%d", kullanici["kullanici_adi"], survey_id
+    )
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/survey/auto-confirm/{survey_id}")
+def survey_auto_confirm(survey_id: int, request: Request):
+    """
+    Review'daki bir kaydın mevcut best match'ini onaylar (confidence yeterince yüksekse).
+    """
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    with db_engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT match_confidence, matched_jt_kodu FROM historical_surveys WHERE id=:sid"),
+            {"sid": survey_id}
+        ).fetchone()
+        if not row:
+            return JSONResponse({"hata": "Kayıt bulunamadı"}, status_code=404)
+
+        conn.execute(text("""
+            UPDATE historical_surveys
+            SET match_status = 'matched',
+                match_method = 'manual',
+                updated_at   = CURRENT_TIMESTAMP
+            WHERE id = :sid
+        """), {"sid": survey_id})
+        conn.commit()
+
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/survey/search-tours")
+def survey_search_tours(request: Request, q: str = ""):
+    """
+    Manuel eşleştirme için tur arama — autocomplete.
+    """
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    q = q.strip()
+    if len(q) < 2:
+        return JSONResponse({"items": []})
+
+    with db_engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT id, jt_kodu, tur_adi, kalkis_tarihi, rehber
+            FROM turlar
+            WHERE LOWER(tur_adi) LIKE LOWER(:q)
+               OR LOWER(jt_kodu) LIKE LOWER(:q)
+            ORDER BY kalkis_tarihi DESC
+            LIMIT 10
+        """), {"q": f"%{q}%"}).fetchall()
+
+    return JSONResponse({
+        "items": [
+            {
+                "id": r[0], "jt_kodu": r[1],
+                "tur_adi": r[2], "kalkis_tarihi": r[3], "rehber": r[4]
+            }
+            for r in rows
+        ]
+    })
 
 
 @app.get("/robots.txt", include_in_schema=False)
