@@ -1284,8 +1284,7 @@ def scraper_sayfasi(request: Request):
     kullanici = oturum_kullanicisi(request)
     if not kullanici:
         return RedirectResponse("/login", status_code=302)
-    if kullanici["rol"] != "admin":
-        return RedirectResponse("/", status_code=302)
+    yetkisiz = kullanici["rol"] != "admin"
     return templates.TemplateResponse(
         request=request,
         name="scraper.html",
@@ -1294,6 +1293,7 @@ def scraper_sayfasi(request: Request):
             "aktif_sayfa": "scraper",
             "actors":      _APIFY_ACTORS,
             "apify_ok":    bool(_APIFY_TOKEN),
+            "yetkisiz":    yetkisiz,
         },
     )
 
