@@ -14,7 +14,7 @@ from datetime import datetime, date
 from typing import Optional
 
 # ── Config ────────────────────────────────────────────────────────────────────
-_BASE = "https://survey.porsline.ir"
+_BASE = "https://survey.porsline.com"
 _TOKEN = os.environ.get("PORSLINE_API_KEY", "")
 
 # Ay adları → sayı (Türkçe)
