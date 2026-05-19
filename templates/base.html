@@ -280,14 +280,6 @@
             Rakip Analizi
             <span class="ml-auto text-xs text-slate-600 font-medium">Yakında</span>
         </a>
-        {% if kullanici and kullanici.rol == 'admin' %}
-        <a href="/survey-review" class="nav-item {% if aktif_sayfa == 'survey' %}active{% endif %}">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-            </svg>
-            Memnuniyet
-        </a>
-        {% else %}
         <a href="#" class="nav-item opacity-40 cursor-not-allowed" title="Yakında">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/>
@@ -295,6 +287,13 @@
             </svg>
             AI Önerileri
             <span class="ml-auto text-xs text-slate-600 font-medium">Yakında</span>
+        </a>
+        {% if kullanici and kullanici.rol == 'admin' %}
+        <a href="/survey-review" class="nav-item {% if aktif_sayfa == 'survey' %}active{% endif %}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+            Memnuniyet
         </a>
         {% endif %}
         <a href="#" class="nav-item opacity-40 cursor-not-allowed" title="Yakında">
