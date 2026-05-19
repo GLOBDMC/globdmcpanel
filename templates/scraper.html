@@ -2,6 +2,19 @@
 {% block title %}Veri Merkezi — GlobDMC{% endblock %}
 
 {% block content %}
+
+{% if yetkisiz %}
+<div class="flex flex-col items-center justify-center py-32 text-center">
+    <div class="w-14 h-14 rounded-2xl bg-slate-800 border border-slate-700/50 flex items-center justify-center mb-5">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        </svg>
+    </div>
+    <h2 class="text-base font-semibold text-slate-300 mb-2">Görüntüleme yetkiniz yok</h2>
+    <p class="text-sm text-slate-500">Bu sayfa yalnızca admin kullanıcılara açıktır.</p>
+</div>
+{% else %}
+
 <div class="page-header">
     <div>
         <h1 class="page-title">Senkronizasyon Durumu</h1>
@@ -132,6 +145,7 @@ const ACTORS = {{ actors | tojson }};
 let _pendingActorId   = null;
 let _pendingActorName = null;
 let _polling = false;
+let _errorToastShown = false;
 
 /* ── Zaman / süre ─────────────────────────────────────────── */
 function relativeTime(isoStr) {
@@ -236,13 +250,24 @@ function loadStatuses() {
             if (!data.ok) return;
             const statuses  = data.statuses || {};
             let anyRunning  = false;
+            const errorActors = [];
             for (const actor of ACTORS) {
                 const info = statuses[actor.id] || {};
                 updateCard(actor.id, info);
                 if (info.status === 'RUNNING') anyRunning = true;
+                if (isErrorState(info.status)) errorActors.push(actor.name);
             }
             const now = new Date().toLocaleTimeString('tr-TR');
             document.getElementById('lastRefresh').textContent = `Son güncelleme: ${now}`;
+
+            // Hatalı scraper varsa toast göster (sadece ilk yüklemede)
+            if (errorActors.length && !_errorToastShown) {
+                _errorToastShown = true;
+                const msg = errorActors.length === 1
+                    ? `⚠️ ${errorActors[0]} son çalışmada hata aldı`
+                    : `⚠️ ${errorActors.length} scraper son çalışmada hata aldı: ${errorActors.join(', ')}`;
+                showToast(msg, 'error');
+            }
 
             if (anyRunning && !_polling) {
                 _polling = true;
@@ -284,8 +309,11 @@ function doRun() {
                 updateCard(actorId, { status: 'RUNNING', startedAt: new Date().toISOString() });
                 setTimeout(loadStatuses, 3000);
             } else {
-                showToast(`Hata: ${data.hata || 'Actor başlatılamadı'}`, 'error');
-                if (btn) { btn.disabled = false; btn.textContent = '▶ Çalıştır'; }
+                const msg = data.hata || 'Actor başlatılamadı';
+                const detail = data.detail ? ` — ${data.detail.slice(0,120)}` : '';
+                showToast(`Hata: ${msg}${detail}`, 'error');
+                console.error('Apify run error:', data);
+                if (btn) { btn.disabled = false; btn.className = 'btn-run error w-full text-xs py-2 rounded-lg font-medium transition-all'; btn.textContent = '↺ Tekrar Çalıştır'; }
             }
         })
         .catch(() => {
@@ -308,4 +336,6 @@ function showToast(msg, type = 'info') {
 document.addEventListener('DOMContentLoaded', loadStatuses);
 setInterval(() => { if (!_polling) loadStatuses(); }, 60000);
 </script>
+
+{% endif %}
 {% endblock %}

@@ -66,78 +66,8 @@
     </div>
 </div>
 
-<!-- KPI Cards -->
-<div class="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
-
-    <div class="kpi-card">
-        <div class="flex items-center justify-between mb-3">
-            <span class="text-xs text-slate-500 font-medium uppercase tracking-wide">Toplam Tur</span>
-            <div class="w-7 h-7 rounded-lg bg-blue-900 bg-opacity-50 flex items-center justify-center">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#60A5FA" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M3 17l3-9 3 4 3-6 3 4 3-7"/><path d="M3 21h18"/>
-                </svg>
-            </div>
-        </div>
-        <div class="text-3xl font-bold text-white">{{ toplam }}</div>
-        <div class="text-xs text-slate-500 mt-1">Aktif tur planı</div>
-    </div>
-
-    <div class="kpi-card">
-        <div class="flex items-center justify-between mb-3">
-            <span class="text-xs text-slate-500 font-medium uppercase tracking-wide">Son Yerler</span>
-            <div class="w-7 h-7 rounded-lg bg-amber-900 bg-opacity-40 flex items-center justify-center">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#FBBF24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-                </svg>
-            </div>
-        </div>
-        <div class="text-3xl font-bold text-amber-400">{{ son_yerler }}</div>
-        <div class="text-xs text-slate-500 mt-1">1–5 kalan koltuk</div>
-    </div>
-
-    <div class="kpi-card">
-        <div class="flex items-center justify-between mb-3">
-            <span class="text-xs text-slate-500 font-medium uppercase tracking-wide">Yakında Dolu</span>
-            <div class="w-7 h-7 rounded-lg bg-yellow-900 bg-opacity-40 flex items-center justify-center">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#FDE047" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
-                </svg>
-            </div>
-        </div>
-        <div class="text-3xl font-bold text-yellow-400">{{ yakin_dolu }}</div>
-        <div class="text-xs text-slate-500 mt-1">6–10 kalan koltuk</div>
-    </div>
-
-    <div class="kpi-card">
-        <div class="flex items-center justify-between mb-3">
-            <span class="text-xs text-slate-500 font-medium uppercase tracking-wide">Bol Yer</span>
-            <div class="w-7 h-7 rounded-lg bg-green-900 bg-opacity-40 flex items-center justify-center">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#34D399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="20 6 9 17 4 12"/>
-                </svg>
-            </div>
-        </div>
-        <div class="text-3xl font-bold text-green-400">{{ bol }}</div>
-        <div class="text-xs text-slate-500 mt-1">&gt;10 kalan koltuk</div>
-    </div>
-
-    <div class="kpi-card col-span-2 lg:col-span-1">
-        <div class="flex items-center justify-between mb-3">
-            <span class="text-xs text-slate-500 font-medium uppercase tracking-wide">Acil Müdahale</span>
-            <div class="w-7 h-7 rounded-lg bg-red-900 bg-opacity-40 flex items-center justify-center">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#F87171" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-                </svg>
-            </div>
-        </div>
-        <div class="text-3xl font-bold text-red-400">{{ satis_alert_sayisi }}</div>
-        <div class="text-xs text-slate-500 mt-1">Düşük satış, yakın kalkış</div>
-    </div>
-
-</div>
-
 <!-- Satış Dağılımı - Pasta Grafiği -->
-<div class="card mb-4" style="padding: 20px;">
+<div class="card mb-6" style="padding: 20px;">
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-5">
         <div class="flex items-center gap-2">
             <div class="w-6 h-6 rounded-md bg-purple-900 bg-opacity-60 flex items-center justify-center">
