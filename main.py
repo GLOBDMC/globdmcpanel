@@ -45,12 +45,12 @@ _ALLOWED_HOSTS = {
 _APIFY_TOKEN = os.environ.get("SCRAPER_API_TOKEN", "")
 
 _APIFY_ACTORS = [
-    {"id": "koNqpkplKSKQlFShz", "name": "Jolly Matcher",    "desc": "Jolly vitrin eşleştirme"},
-    {"id": "lJPXYhP4N02OS6e46", "name": "Yeni Tur",         "desc": "Yeni tur tespiti"},
-    {"id": "AdYjHIonfsoarXve4", "name": "Erken Uyarı",      "desc": "Erken uyarı sistemi"},
-    {"id": "qotN15diJ9BmodM4k", "name": "Kontenjan Uyarı",  "desc": "Kontenjan uyarı"},
-    {"id": "Mz52E2at52NMZ6VZZ", "name": "Fiyat",            "desc": "Fiyat takibi"},
-    {"id": "HXAIxKu8FlkTyOjQn", "name": "Kontenjan",        "desc": "Kontenjan takibi"},
+    {"id": "wW7rOFuH1bVMMMQ8h", "name": "Jolly Matcher",    "desc": "Jolly vitrin eşleştirme"},
+    {"id": "bFwJR4fa0AMHxUtqW", "name": "Yeni Tur",         "desc": "Yeni tur tespiti"},
+    {"id": "6SVprGtVnNZzaHdVL", "name": "Erken Uyarı",      "desc": "Erken uyarı sistemi"},
+    {"id": "rKHCEpQ9rhLfmioIo", "name": "Kontenjan Uyarı",  "desc": "Kontenjan uyarı"},
+    {"id": "BEQyfYEUwdedFLakn", "name": "Fiyat",            "desc": "Fiyat takibi"},
+    {"id": "9f1gkAaOUjDoDkus3", "name": "Kontenjan",        "desc": "Kontenjan takibi"},
 ]
 
 # ── Logging setup ────────────────────────────────────────────────────────────
