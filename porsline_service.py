@@ -14,7 +14,7 @@ from datetime import datetime, date
 from typing import Optional
 
 # ── Config ────────────────────────────────────────────────────────────────────
-_BASE = "https://survey.porsline.ir/api"
+_BASE = "https://survey.porsline.ir"
 _TOKEN = os.environ.get("PORSLINE_API_KEY", "")
 
 # Ay adları → sayı (Türkçe)
@@ -59,28 +59,43 @@ def _get(path: str, params: dict = None) -> dict:
 
 def test_connection() -> dict:
     """API anahtarının çalışıp çalışmadığını test eder."""
-    result = _get("/v2/surveys/")
+    result = _get("/api/folders/")
     if "error" in result:
         return {"ok": False, "hata": result["error"], "detay": result.get("detail", "")}
-    return {"ok": True, "toplam": result.get("count", "?")}
+    # Kaç anket var?
+    surveys = []
+    for folder in (result if isinstance(result, list) else result.get("results", [])):
+        surveys.extend(folder.get("surveys", []))
+    return {"ok": True, "klasor_sayisi": len(result) if isinstance(result, list) else result.get("count", "?"), "anket_sayisi": len(surveys)}
 
 
 def list_surveys(page: int = 1, page_size: int = 50) -> dict:
-    """Tüm anketleri listeler."""
-    result = _get("/v2/surveys/", {"page": page, "page_size": page_size})
+    """
+    Folders endpoint üzerinden tüm anketleri toplar.
+    Porsline'da survey listeleme endpoint'i yok; klasörler içinden çıkarılır.
+    """
+    result = _get("/api/folders/")
     if "error" in result:
         return {"ok": False, "hata": result["error"]}
+
+    folders = result if isinstance(result, list) else result.get("results", [])
+    surveys = []
+    for folder in folders:
+        for s in folder.get("surveys", []):
+            s["_folder"] = folder.get("title", "")
+            surveys.append(s)
+
     return {
         "ok":      True,
-        "count":   result.get("count", 0),
-        "surveys": result.get("results", []),
-        "next":    result.get("next"),
+        "count":   len(surveys),
+        "surveys": surveys,
+        "next":    None,
     }
 
 
 def get_survey_detail(survey_id: str) -> dict:
     """Bir anketin detaylarını getirir."""
-    result = _get(f"/v2/surveys/{survey_id}/")
+    result = _get(f"/api/v2/surveys/{survey_id}/")
     if "error" in result:
         return {"ok": False, "hata": result["error"]}
     return {"ok": True, "survey": result}
@@ -89,7 +104,7 @@ def get_survey_detail(survey_id: str) -> dict:
 def get_responses(survey_id: str, page: int = 1, page_size: int = 100) -> dict:
     """Bir anketin yanıtlarını getirir."""
     result = _get(
-        f"/v2/surveys/{survey_id}/responses/results-table/",
+        f"/api/v2/surveys/{survey_id}/responses/results-table/",
         {"page": page, "page_size": page_size},
     )
     if "error" in result:
