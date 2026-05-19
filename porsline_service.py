@@ -48,7 +48,7 @@ def _get(path: str, params: dict = None) -> dict:
         },
     )
     import time as _time
-    for attempt in range(3):
+    for attempt in range(2):
         try:
             with urllib.request.urlopen(req, timeout=20) as r:
                 return json.loads(r.read())
@@ -59,14 +59,15 @@ def _get(path: str, params: dict = None) -> dict:
             except Exception:
                 pass
             if e.code == 429:
-                # Rate limit — bekle ve tekrar dene
-                wait = (attempt + 1) * 5  # 5s, 10s, 15s
-                _time.sleep(wait)
-                continue
+                if attempt == 0:
+                    # İlk 429 → 30 saniye bekle, bir kez daha dene
+                    _time.sleep(30)
+                    continue
+                return {"error": 429, "detail": "Rate limit"}
             return {"error": e.code, "detail": body}
         except Exception as e:
             return {"error": str(e)}
-    return {"error": 429, "detail": "Rate limit: 3 denemede geçilemedi"}
+    return {"error": 429, "detail": "Rate limit"}
 
 
 # ── API çağrıları ─────────────────────────────────────────────────────────────
@@ -132,29 +133,33 @@ def _get_survey_from_folders(survey_id: str) -> Optional[dict]:
 
 
 def get_survey_detail(survey_id: str) -> dict:
-    """Bir anketin detaylarını getirir. v2 başarısız → folders fallback."""
-    result = _get(f"/api/v2/surveys/{survey_id}/")
-    if "error" not in result:
-        return {"ok": True, "survey": result}
-
-    # v2 çalışmadı → folders listesinden bul
+    """
+    Bir anketin detaylarını getirir.
+    /api/v2/surveys/{id}/ rate-limit'e çok takılıyor —
+    direkt folders cache'i kullan (zaten 150 anketi içeriyor).
+    Sadece folders'da bulunamazsa v2'yi dene.
+    """
+    # Önce cache'den bak (API çağrısı yok)
     s = _get_survey_from_folders(survey_id)
     if s:
         return {"ok": True, "survey": s}
+
+    # Cache boş veya anket bulunamadı → v2 dene
+    result = _get(f"/api/v2/surveys/{survey_id}/")
+    if "error" not in result:
+        return {"ok": True, "survey": result}
 
     return {"ok": False, "hata": result.get("error", "survey bulunamadı")}
 
 
 def get_responses(survey_id: str, page: int = 1, page_size: int = 100) -> dict:
-    """Bir anketin yanıtlarını getirir. Birden fazla endpoint pattern'i dener."""
+    """Bir anketin yanıtlarını getirir. results-table → yoksa responses/ dener."""
     params = {"page": page, "page_size": page_size}
 
-    # Deneme sırası: bilinen Porsline endpoint pattern'leri
     endpoints = [
         f"/api/v2/surveys/{survey_id}/responses/results-table/",
         f"/api/surveys/{survey_id}/responses/results-table/",
         f"/api/v2/surveys/{survey_id}/responses/",
-        f"/api/surveys/{survey_id}/responses/",
     ]
 
     last_error = None
@@ -162,22 +167,17 @@ def get_responses(survey_id: str, page: int = 1, page_size: int = 100) -> dict:
         result = _get(ep, params)
         if "error" in result:
             last_error = result["error"]
-            # 404 → sonraki pattern'i dene; 429/diğer → dur
             if result["error"] == 404:
-                continue
-            break
-        # Başarılı — hangi format?
+                continue  # sonraki URL'yi dene
+            break  # 429 veya başka hata → dur
+        # Başarılı
         header = result.get("header") or result.get("headers") or []
-        body   = result.get("body")   or result.get("results") or result.get("responses") or []
+        body   = (result.get("body") or result.get("results")
+                  or result.get("responses") or [])
         count  = (result.get("responders_count") or result.get("count")
                   or result.get("total") or len(body))
-        return {
-            "ok":       True,
-            "header":   header,
-            "body":     body,
-            "count":    count,
-            "_endpoint": ep,   # hangi endpoint çalıştı (debug için)
-        }
+        return {"ok": True, "header": header, "body": body,
+                "count": count, "_endpoint": ep}
 
     return {"ok": False, "hata": last_error or "responses endpoint bulunamadı"}
 
@@ -201,6 +201,93 @@ def get_all_responses(survey_id: str) -> dict:
         page += 1
 
     return {"ok": True, "header": header, "body": all_rows, "count": len(all_rows)}
+
+
+def build_header_from_questions(questions: list) -> list:
+    """
+    Survey detayındaki questions listesinden header oluşturur.
+    results-table endpoint'i çalışmadığında kullanılır.
+    Sadece type=7 (yıldız) ve type=2/3 (metin/seçim) sorularını alır.
+    """
+    return [q.get("title", "") for q in questions if q.get("type") in (2, 3, 7)]
+
+
+def parse_response_from_questions(questions: list, response: dict) -> dict:
+    """
+    /api/v2/surveys/{id}/responses/ endpoint'inden gelen tek yanıtı parse eder.
+    response örneği: {"id": 123, "answers": [{"question": 456, "answer": "3"}, ...]}
+    questions: survey detayındaki sorular listesi.
+    """
+    # Soru ID → soru objesi haritası
+    q_map = {q["id"]: q for q in questions}
+
+    # Cevapları soru ID'ye göre indeksle
+    answers_by_q = {}
+    for ans in (response.get("answers") or response.get("answer_list") or []):
+        q_id = ans.get("question") or ans.get("question_id")
+        val  = ans.get("answer") or ans.get("value") or ans.get("text") or ""
+        if q_id:
+            answers_by_q[q_id] = val
+
+    musteri_adi  = ""
+    acente_adi   = ""
+    rehber_puani = None
+    otobus_puani = None
+    sofor_puani  = None
+    program_puani= None
+    otel_puanlari= {}
+    tavsiye_puan = None
+
+    for q in questions:
+        qid   = q["id"]
+        title = q.get("title", "").lower()
+        qtype = q.get("type")
+        val   = answers_by_q.get(qid)
+
+        if val is None:
+            continue
+
+        if qtype == 2:  # metin
+            if any(k in title for k in ["isim", "soyisim", "ad"]):
+                musteri_adi = str(val).strip()
+        elif qtype == 3:  # seçim
+            if "acente" in title:
+                acente_adi = str(val).strip()
+        elif qtype == 7:  # yıldız
+            v = _safe_float(val)
+            if "rehber" in title:
+                rehber_puani = v
+            elif "otobüs" in title or "otobus" in title or "konfor" in title:
+                otobus_puani = v
+            elif "şoför" in title or "sofor" in title or "şofor" in title:
+                sofor_puani = v
+            elif "program" in title:
+                program_puani = v
+            elif "tavsiye" in title or "öneri" in title or "önerir" in title:
+                tavsiye_puan = v
+            elif any(k in title for k in ["otel", "hotel"]):
+                short = q.get("title", "")[:60]
+                if v is not None:
+                    otel_puanlari[short] = v
+
+    all_scores = [v for v in [rehber_puani, otobus_puani, sofor_puani, program_puani]
+                  + list(otel_puanlari.values()) if v is not None]
+    genel_puan = round(sum(all_scores) / len(all_scores), 2) if all_scores else None
+
+    return {
+        "musteri_adi":  musteri_adi,
+        "acente_adi":   acente_adi,
+        "rehber_adi":   "",
+        "genel_puan":   genel_puan,
+        "rehber_puani": rehber_puani,
+        "puan_detay": {
+            "oteller":  otel_puanlari,
+            "otobus":   otobus_puani,
+            "sofor":    sofor_puani,
+            "program":  program_puani,
+            "tavsiye":  tavsiye_puan,
+        },
+    }
 
 
 # ── Survey başlığı parse ──────────────────────────────────────────────────────

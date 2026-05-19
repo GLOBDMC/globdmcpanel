@@ -2106,26 +2106,46 @@ def porsline_sync_survey(survey_id: str, request: Request):
     from porsline_service import (
         get_survey_detail, get_all_responses,
         parse_survey_title, parse_response_row, detect_bolge,
+        _get_survey_from_folders, build_header_from_questions,
+        parse_response_from_questions,
     )
     from survey_matcher import SurveyMatcher, TourRecord, SurveyRecord
 
-    # Anket detayı
+    # Anket detayı — folders cache'den gelir, ekstra API çağrısı yok
     detail = get_survey_detail(survey_id)
     if not detail["ok"]:
         return JSONResponse({"ok": False, "hata": detail.get("hata")}, status_code=500)
 
-    survey = detail["survey"]
+    survey       = detail["survey"]
     title        = survey.get("title") or survey.get("name") or ""
-    created_date = survey.get("created_date") or survey.get("created_at") or survey.get("created") or ""
-    parsed = parse_survey_title(title, created_date)
+    created_date = survey.get("created_date") or survey.get("created_at") or ""
+    questions    = survey.get("questions") or []
+    parsed       = parse_survey_title(title, created_date)
 
-    # Tüm yanıtları çek
+    # Yanıtları çek — results-table çalışıyorsa onu kullan
     resp = get_all_responses(survey_id)
-    if not resp["ok"]:
-        return JSONResponse({"ok": False, "hata": resp.get("hata")}, status_code=500)
 
-    header = resp["header"]
-    rows   = resp["body"]
+    # results-table başarısız (429 veya 404) → questions bazlı parse yap
+    use_question_parse = False
+    if not resp["ok"]:
+        if resp.get("hata") == 429:
+            return JSONResponse({"ok": False, "hata": 429,
+                                 "mesaj": "Rate limit — birkaç dakika bekleyip tekrar deneyin"},
+                                status_code=429)
+        # 404 veya başka hata → responses/ endpoint'ini dene
+        from porsline_service import _get
+        resp2 = _get(f"/api/v2/surveys/{survey_id}/responses/",
+                     {"page": 1, "page_size": 100})
+        if "error" in resp2:
+            return JSONResponse({"ok": False, "hata": resp2["error"],
+                                 "mesaj": "Yanıt endpoint'i bulunamadı"}, status_code=500)
+        rows = (resp2.get("results") or resp2.get("responses") or
+                resp2.get("body") or [])
+        header = build_header_from_questions(questions)
+        use_question_parse = True
+    else:
+        header = resp["header"]
+        rows   = resp["body"]
 
     # Turları yükle → matcher kur (yanıt olmasa bile match bilgisi response'da olsun)
     tours = _survey_load_tours()
@@ -2251,13 +2271,22 @@ def porsline_sync_survey(survey_id: str, request: Request):
         ON CONFLICT (porsline_response_id) DO NOTHING
     """
 
+    # Rehber adını header veya questions'dan çıkar
+    from porsline_service import _extract_guide_name
+    rehber_adi_header = _extract_guide_name(header) if header else (parsed.get("rehber_adi") or "")
+
     with db_engine.connect() as conn:
         for i, row in enumerate(rows):
-            parsed_row = parse_response_row(header, row)
-            resp_id    = f"porsline_{survey_id}_{i}"
+            # Parse stratejisi: results-table formatı mı, /responses/ formatı mı?
+            if use_question_parse:
+                parsed_row = parse_response_from_questions(questions, row)
+            else:
+                parsed_row = parse_response_row(header, row)
 
-            # Rehber adı: önce yanıttan, yoksa başlıktan
-            rehber_adi = parsed_row.get("rehber_adi") or parsed.get("rehber_adi") or ""
+            resp_id = f"porsline_{survey_id}_{i}"
+
+            # Rehber adı: header'dan → yanıttan → başlıktan
+            rehber_adi = rehber_adi_header or parsed_row.get("rehber_adi") or parsed.get("rehber_adi") or ""
 
             try:
                 result = conn.execute(text(insert_sql), {
