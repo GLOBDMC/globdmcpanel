@@ -1753,6 +1753,118 @@ def survey_auto_confirm(survey_id: int, request: Request):
     return JSONResponse({"ok": True})
 
 
+@app.get("/api/survey/results")
+def survey_results(
+    request:   Request,
+    sayfa:     int = 0,
+    limit:     int = 50,
+    rehber:    str = "",
+    tur:       str = "",
+    batch:     str = "",
+    min_puan:  float = None,
+    siralama:  str = "yeni",   # yeni | puan_asc | puan_desc
+):
+    """Tüm import edilmiş anket yanıtlarını döndürür (sayfalı, filtrelenebilir)."""
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    filters  = ["match_status != 'rejected'"]
+    params: dict = {"limit": limit, "offset": sayfa * limit}
+
+    if rehber:
+        filters.append("LOWER(rehber_adi) LIKE LOWER(:rehber)")
+        params["rehber"] = f"%{rehber}%"
+    if tur:
+        filters.append("(LOWER(tur_adi_ham) LIKE LOWER(:tur) OR LOWER(matched_jt_kodu) LIKE LOWER(:tur))")
+        params["tur"] = f"%{tur}%"
+    if batch:
+        filters.append("import_batch = :batch")
+        params["batch"] = batch
+    if min_puan is not None:
+        filters.append("genel_puan >= :min_puan")
+        params["min_puan"] = min_puan
+
+    where = "WHERE " + " AND ".join(filters) if filters else ""
+
+    order_map = {
+        "yeni":      "hs.created_at DESC",
+        "puan_asc":  "hs.genel_puan ASC NULLS LAST",
+        "puan_desc": "hs.genel_puan DESC NULLS LAST",
+        "kalkis":    "hs.kalkis_tarihi DESC",
+    }
+    order = order_map.get(siralama, "hs.created_at DESC")
+
+    with db_engine.connect() as conn:
+        total = conn.execute(text(
+            f"SELECT COUNT(*) FROM historical_surveys hs {where}"
+        ), params).scalar()
+
+        rows = conn.execute(text(f"""
+            SELECT
+                hs.id,
+                hs.tur_adi_ham,
+                hs.kalkis_tarihi,
+                hs.musteri_adi,
+                hs.rehber_adi,
+                hs.acente_adi,
+                hs.genel_puan,
+                hs.rehber_puani,
+                hs.puan_detay,
+                hs.yorum,
+                hs.match_status,
+                hs.match_confidence,
+                hs.matched_jt_kodu,
+                hs.import_batch,
+                hs.created_at::text,
+                t.tur_adi   AS eslesen_tur
+            FROM historical_surveys hs
+            LEFT JOIN turlar t ON t.id = hs.matched_tur_id
+            {where}
+            ORDER BY {order}
+            LIMIT :limit OFFSET :offset
+        """), params).fetchall()
+
+        # Rehber özeti (filtreye göre)
+        guide_rows = conn.execute(text(f"""
+            SELECT
+                rehber_adi,
+                COUNT(*) AS adet,
+                ROUND(AVG(genel_puan)::numeric,2)   AS ort_genel,
+                ROUND(AVG(rehber_puani)::numeric,2) AS ort_rehber,
+                MIN(kalkis_tarihi) AS ilk_kalkis,
+                MAX(kalkis_tarihi) AS son_kalkis
+            FROM historical_surveys hs
+            {where.replace('match_status !=', 'hs.match_status !=')}
+            GROUP BY rehber_adi
+            HAVING rehber_adi <> ''
+            ORDER BY adet DESC
+            LIMIT 20
+        """), params).fetchall()
+
+    def row_to_dict(r):
+        d = dict(r._mapping)
+        if d.get("puan_detay") and isinstance(d["puan_detay"], str):
+            try:
+                d["puan_detay"] = json.loads(d["puan_detay"])
+            except Exception:
+                d["puan_detay"] = {}
+        for k, v in d.items():
+            if hasattr(v, "isoformat"):
+                d[k] = v.isoformat()
+            elif v is None:
+                d[k] = None
+        return d
+
+    return JSONResponse({
+        "ok":       True,
+        "total":    total,
+        "sayfa":    sayfa,
+        "items":    [row_to_dict(r) for r in rows],
+        "rehberler": [dict(r._mapping) for r in guide_rows],
+    })
+
+
 @app.get("/api/survey/search-tours")
 def survey_search_tours(request: Request, q: str = ""):
     """

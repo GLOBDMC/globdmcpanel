@@ -105,6 +105,22 @@
     </div>
 </div>
 
+<!-- Tab navigasyon -->
+<div class="flex gap-1 mb-5 border-b border-slate-800/60">
+    <button onclick="switchTab('review')" id="tab-review"
+            class="tab-btn active px-4 py-2 text-sm font-medium rounded-t-lg transition-colors">
+        İnceleme Kuyruğu
+        <span id="tabBadgeReview" class="ml-1.5 text-xs text-yellow-400 font-normal"></span>
+    </button>
+    <button onclick="switchTab('results')" id="tab-results"
+            class="tab-btn px-4 py-2 text-sm font-medium rounded-t-lg transition-colors">
+        Sonuçlar
+        <span id="tabBadgeResults" class="ml-1.5 text-xs text-slate-500 font-normal"></span>
+    </button>
+</div>
+
+<!-- ═══ SEKME: İnceleme Kuyruğu ═══ -->
+<div id="tabContent-review">
 <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
 
     <!-- Sol: Batch listesi + İntelligence özeti -->
@@ -193,6 +209,59 @@
     </div>
 
 </div>
+</div> <!-- /tabContent-review -->
+
+<!-- ═══ SEKME: Sonuçlar ═══ -->
+<div id="tabContent-results" class="hidden">
+
+    <!-- Filtre satırı -->
+    <div class="card mb-4">
+        <div class="flex flex-wrap items-center gap-3">
+            <input type="text" id="filterRehber" placeholder="Rehber filtrele..."
+                   class="text-xs bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-1.5 text-slate-300 placeholder-slate-600 w-40"
+                   oninput="debounceResults()" />
+            <input type="text" id="filterTur" placeholder="Tur / JT kodu..."
+                   class="text-xs bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-1.5 text-slate-300 placeholder-slate-600 w-44"
+                   oninput="debounceResults()" />
+            <select id="filterSiralama" onchange="loadResults()"
+                    class="text-xs bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-1.5 text-slate-300 w-40">
+                <option value="yeni">En Yeni</option>
+                <option value="puan_desc">Puan ↓</option>
+                <option value="puan_asc">Puan ↑</option>
+                <option value="kalkis">Kalkış Tarihi</option>
+            </select>
+            <button onclick="loadResults()" class="btn-secondary text-xs px-3 py-1.5">Uygula</button>
+            <span id="resultsTotalLabel" class="text-xs text-slate-500 ml-auto"></span>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 xl:grid-cols-4 gap-6">
+
+        <!-- Sol: Rehber özeti -->
+        <div class="xl:col-span-1">
+            <div class="card sticky top-4">
+                <h3 class="text-xs font-semibold text-slate-400 mb-3 uppercase tracking-wide">Rehber Performansı</h3>
+                <div id="guideLeaderboard">
+                    <div class="text-xs text-slate-600 text-center py-4">Yükleniyor...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sağ: Yanıt listesi -->
+        <div class="xl:col-span-3">
+            <div id="resultsList">
+                <div class="text-center py-10 text-slate-600 text-sm">Sonuçlar yükleniyor...</div>
+            </div>
+            <!-- Pagination -->
+            <div id="resultsPagination" class="hidden flex justify-between items-center mt-4">
+                <button onclick="resultsPrevPage()" id="btnResPrev" class="btn-secondary text-xs px-3 py-1.5">← Önceki</button>
+                <span id="resPagInfo" class="text-xs text-slate-500"></span>
+                <button onclick="resultsNextPage()" id="btnResNext" class="btn-secondary text-xs px-3 py-1.5">Sonraki →</button>
+            </div>
+        </div>
+
+    </div>
+</div> <!-- /tabContent-results -->
 
 <!-- ── Import Modal ────────────────────────────────────────────────────── -->
 <div id="importModal" class="fixed inset-0 z-50 hidden items-center justify-center">
@@ -283,6 +352,46 @@
 </div>
 
 <style>
+.tab-btn {
+    color: #64748b;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+}
+.tab-btn:hover { color: #94a3b8; }
+.tab-btn.active { color: #e2e8f0; border-bottom-color: #3b82f6; }
+
+.result-card {
+    background: rgba(15,23,41,.6);
+    border: 1px solid rgba(255,255,255,.05);
+    border-radius: 10px;
+    padding: 14px;
+    transition: border-color .2s;
+}
+.result-card:hover { border-color: rgba(255,255,255,.1); }
+
+.puan-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    font-size: 13px;
+    font-weight: 700;
+}
+.puan-high   { background: rgba(34,197,94,.15);  color: #4ade80; }
+.puan-medium { background: rgba(234,179,8,.15);  color: #facc15; }
+.puan-low    { background: rgba(239,68,68,.15);  color: #f87171; }
+.puan-none   { background: rgba(100,116,139,.1); color: #64748b; }
+
+.pill {
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: rgba(100,116,139,.12);
+    color: #94a3b8;
+    border: 1px solid rgba(100,116,139,.2);
+}
+
 .confidence-bar-bg { background: rgba(100,116,139,.15); border-radius: 999px; height: 4px; }
 .confidence-bar    { border-radius: 999px; height: 4px; transition: width .4s ease; }
 .conf-high   { background: #4ade80; }
@@ -727,6 +836,162 @@ function showToast(msg, type = 'info') {
     setTimeout(() => { t.style.opacity='0'; setTimeout(() => t.remove(), 400); }, 3500);
 }
 
+/* ── Tab sistemi ─────────────────────────────────────────── */
+function switchTab(name) {
+    ['review','results'].forEach(t => {
+        document.getElementById(`tabContent-${t}`).classList.toggle('hidden', t !== name);
+        document.getElementById(`tab-${t}`).classList.toggle('active', t === name);
+    });
+    if (name === 'results' && !_resultsLoaded) loadResults();
+}
+
+/* ── Sonuçlar sekmesi ────────────────────────────────────── */
+let _resPage = 0, _resTotal = 0, _resPageSize = 50;
+let _resultsLoaded = false;
+let _resDebounce = null;
+
+function debounceResults() {
+    clearTimeout(_resDebounce);
+    _resDebounce = setTimeout(loadResults, 400);
+}
+
+function loadResults() {
+    _resPage = 0;
+    fetchResultsPage();
+}
+
+function fetchResultsPage() {
+    const rehber   = document.getElementById('filterRehber').value.trim();
+    const tur      = document.getElementById('filterTur').value.trim();
+    const siralama = document.getElementById('filterSiralama').value;
+    const params   = new URLSearchParams({
+        sayfa: _resPage, limit: _resPageSize,
+        rehber, tur, siralama
+    });
+
+    document.getElementById('resultsList').innerHTML = `
+        <div class="text-center py-8 text-slate-600 text-sm">
+            <svg class="w-5 h-5 mx-auto mb-2 animate-spin text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+            Yükleniyor...
+        </div>`;
+
+    fetch(`/api/survey/results?${params}`)
+        .then(r => r.json())
+        .then(data => {
+            if (!data.ok) return;
+            _resultsLoaded = true;
+            _resTotal = data.total;
+            document.getElementById('resultsTotalLabel').textContent = `${_resTotal} yanıt`;
+            document.getElementById('tabBadgeResults').textContent   = _resTotal ? `(${_resTotal})` : '';
+            renderResults(data.items);
+            renderGuideLeaderboard(data.rehberler || []);
+            renderResultsPagination();
+        });
+}
+
+function renderResults(items) {
+    const el = document.getElementById('resultsList');
+    if (!items.length) {
+        el.innerHTML = '<div class="text-center py-10 text-slate-600 text-sm">Sonuç bulunamadı</div>';
+        return;
+    }
+
+    let html = '<div class="space-y-3">';
+    for (const it of items) {
+        const puan = it.genel_puan != null ? parseFloat(it.genel_puan) : null;
+        const puanCls = puan == null ? 'puan-none' : puan >= 4 ? 'puan-high' : puan >= 3 ? 'puan-medium' : 'puan-low';
+        const puanTxt = puan != null ? puan.toFixed(1) : '—';
+
+        const rehberPuan = it.rehber_puani != null ? parseFloat(it.rehber_puani).toFixed(1) : null;
+        const detay = it.puan_detay || {};
+        const oteller = detay.oteller || {};
+        const otelEntries = Object.entries(oteller).slice(0, 3);
+
+        // Detay pill'leri
+        const pills = [];
+        if (detay.otobus != null)  pills.push(`<span class="pill">🚌 ${parseFloat(detay.otobus).toFixed(1)}</span>`);
+        if (detay.sofor != null)   pills.push(`<span class="pill">🧭 ${parseFloat(detay.sofor).toFixed(1)}</span>`);
+        if (detay.program != null) pills.push(`<span class="pill">📋 ${parseFloat(detay.program).toFixed(1)}</span>`);
+        for (const [otelAdi, puan] of otelEntries) {
+            pills.push(`<span class="pill">🏨 ${parseFloat(puan).toFixed(1)}</span>`);
+        }
+
+        const matchBadge = it.match_status === 'matched'
+            ? `<span class="text-xs text-green-400 bg-green-900/20 border border-green-700/20 rounded px-1.5 py-0.5">${escHtml(it.matched_jt_kodu || 'Eşlendi')}</span>`
+            : `<span class="text-xs text-yellow-400 bg-yellow-900/20 border border-yellow-700/20 rounded px-1.5 py-0.5">İnceleme</span>`;
+
+        html += `
+        <div class="result-card">
+            <div class="flex items-start gap-3">
+                <div class="puan-badge ${puanCls} flex-shrink-0">${puanTxt}</div>
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-start justify-between gap-2 mb-1">
+                        <div class="text-sm font-medium text-slate-200 truncate">${escHtml(it.tur_adi_ham || '—')}</div>
+                        ${matchBadge}
+                    </div>
+                    <div class="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-500 mb-2">
+                        ${it.kalkis_tarihi ? `<span>📅 ${it.kalkis_tarihi}</span>` : ''}
+                        ${it.musteri_adi   ? `<span>👤 ${escHtml(it.musteri_adi)}</span>` : ''}
+                        ${it.rehber_adi    ? `<span>🎙 ${escHtml(it.rehber_adi)}${rehberPuan ? ` <strong class="text-slate-400">${rehberPuan}</strong>` : ''}</span>` : ''}
+                        ${it.acente_adi    ? `<span>🏢 ${escHtml(it.acente_adi)}</span>` : ''}
+                    </div>
+                    ${pills.length ? `<div class="flex flex-wrap gap-1.5">${pills.join('')}</div>` : ''}
+                    ${it.yorum ? `<div class="mt-2 text-xs text-slate-400 italic border-l-2 border-slate-700/60 pl-2 line-clamp-2">"${escHtml(it.yorum)}"</div>` : ''}
+                </div>
+            </div>
+        </div>`;
+    }
+    html += '</div>';
+    el.innerHTML = html;
+}
+
+function renderGuideLeaderboard(guides) {
+    const el = document.getElementById('guideLeaderboard');
+    if (!guides.length) {
+        el.innerHTML = '<div class="text-xs text-slate-600 text-center py-3">Veri yok</div>';
+        return;
+    }
+    const maxAdet = Math.max(...guides.map(g => g.adet));
+    let html = '<div class="space-y-3">';
+    for (const g of guides) {
+        const pct  = Math.round((g.adet / maxAdet) * 100);
+        const puan = g.ort_genel != null ? parseFloat(g.ort_genel).toFixed(1) : '—';
+        const cls  = parseFloat(puan) >= 4 ? 'text-green-400' : parseFloat(puan) >= 3 ? 'text-yellow-400' : 'text-red-400';
+        html += `
+        <div class="cursor-pointer hover:opacity-80" onclick="filterByGuide('${escAttr(g.rehber_adi)}')">
+            <div class="flex justify-between items-center mb-0.5">
+                <span class="text-xs text-slate-300 truncate flex-1">${escHtml(g.rehber_adi)}</span>
+                <span class="text-xs font-semibold ${cls} ml-2 flex-shrink-0">${puan}</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <div class="flex-1 h-1 bg-slate-800 rounded-full overflow-hidden">
+                    <div class="h-full rounded-full ${parseFloat(puan) >= 4 ? 'bg-green-500' : parseFloat(puan) >= 3 ? 'bg-yellow-500' : 'bg-red-500'}" style="width:${pct}%"></div>
+                </div>
+                <span class="text-xs text-slate-600 flex-shrink-0">${g.adet}</span>
+            </div>
+        </div>`;
+    }
+    html += '</div>';
+    el.innerHTML = html;
+}
+
+function filterByGuide(name) {
+    document.getElementById('filterRehber').value = name;
+    loadResults();
+}
+
+function renderResultsPagination() {
+    const pag = document.getElementById('resultsPagination');
+    if (_resTotal <= _resPageSize) { pag.classList.add('hidden'); return; }
+    pag.classList.remove('hidden');
+    const totalPages = Math.ceil(_resTotal / _resPageSize);
+    document.getElementById('btnResPrev').disabled = _resPage === 0;
+    document.getElementById('btnResNext').disabled = _resPage >= totalPages - 1;
+    document.getElementById('resPagInfo').textContent = `Sayfa ${_resPage+1} / ${totalPages}`;
+}
+function resultsPrevPage() { if (_resPage > 0) { _resPage--; fetchResultsPage(); } }
+function resultsNextPage() { _resPage++; fetchResultsPage(); }
+
 /* ── Porsline Sync ────────────────────────────────────────── */
 let _porslineSurveys = [];
 
@@ -941,7 +1206,14 @@ async function syncAllPorsline() {
 /* ── Init ─────────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {
     loadStats();
-    loadReviewList();
+    loadReviewList().then ? loadReviewList() : loadReviewList();
+    // Review badge güncelle
+    fetch('/api/survey/stats').then(r=>r.json()).then(d=>{
+        if (d.ok && d.stats) {
+            const n = d.stats.inceleme || 0;
+            document.getElementById('tabBadgeReview').textContent = n > 0 ? `(${Math.round(n)})` : '';
+        }
+    });
 });
 </script>
 {% endblock %}
