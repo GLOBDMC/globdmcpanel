@@ -2704,6 +2704,14 @@ def dashboard(request: Request):
     doluluk_pct    = round(toplam_satilan / toplam_pax * 100, 1) if toplam_pax > 0 else 0
     bos_pct        = round(100 - doluluk_pct, 1)
 
+    # Haftalık doluluk değişimi (snapshot verisinden)
+    haftalik_degisim = None
+    try:
+        from snapshot_repository import get_weekly_occupancy_change
+        haftalik_degisim = get_weekly_occupancy_change(db_engine)
+    except Exception:
+        pass
+
     bugun = datetime.today().strftime("%d %B %Y")
 
     return templates.TemplateResponse(
@@ -2726,6 +2734,7 @@ def dashboard(request: Request):
             "toplam_kalan": toplam_kalan,
             "doluluk_pct": doluluk_pct,
             "bos_pct": bos_pct,
+            "haftalik_degisim": haftalik_degisim,
         }
     )
 
