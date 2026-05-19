@@ -172,3 +172,74 @@ def get_snapshot_count(engine: Engine) -> int:
     """Toplam snapshot kayıt sayısı."""
     with engine.connect() as conn:
         return conn.execute(text("SELECT COUNT(*) FROM tour_snapshots")).scalar() or 0
+
+
+def get_weekly_occupancy_change(engine: Engine) -> dict | None:
+    """
+    Son 1 haftadaki doluluk değişimini hesaplar.
+    En son snapshot günü ile 7 gün önceki snapshot gününü karşılaştırır.
+    Returns:
+        {"current_pct": float, "prev_pct": float, "delta": float, "current_date": date, "prev_date": date}
+        ya da None (yeterli veri yoksa)
+    """
+    sql = text("""
+        WITH ranked_dates AS (
+            SELECT DISTINCT snapshot_date
+            FROM tour_snapshots
+            ORDER BY snapshot_date DESC
+            LIMIT 14
+        ),
+        date_pairs AS (
+            SELECT
+                (SELECT snapshot_date FROM ranked_dates ORDER BY snapshot_date DESC OFFSET 0 LIMIT 1) AS current_date,
+                (SELECT snapshot_date FROM ranked_dates ORDER BY snapshot_date DESC OFFSET 6 LIMIT 1) AS prev_date
+        ),
+        current_snap AS (
+            SELECT
+                SUM(current_sales)              AS total_sales,
+                SUM(current_quota)              AS total_quota
+            FROM tour_snapshots t, date_pairs
+            WHERE t.snapshot_date = date_pairs.current_date
+              AND current_quota > 0
+        ),
+        prev_snap AS (
+            SELECT
+                SUM(current_sales)              AS total_sales,
+                SUM(current_quota)              AS total_quota
+            FROM tour_snapshots t, date_pairs
+            WHERE t.snapshot_date = date_pairs.prev_date
+              AND current_quota > 0
+        )
+        SELECT
+            date_pairs.current_date,
+            date_pairs.prev_date,
+            CASE WHEN current_snap.total_quota > 0
+                 THEN ROUND(current_snap.total_sales::numeric / current_snap.total_quota * 100, 1)
+                 ELSE NULL END AS current_pct,
+            CASE WHEN prev_snap.total_quota > 0
+                 THEN ROUND(prev_snap.total_sales::numeric / prev_snap.total_quota * 100, 1)
+                 ELSE NULL END AS prev_pct
+        FROM date_pairs, current_snap, prev_snap
+    """)
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(sql).fetchone()
+        if not row:
+            return None
+        r = dict(row._mapping)
+        if r.get("current_pct") is None or r.get("prev_pct") is None:
+            return None
+        # Yeterince farklı tarih yoksa (aynı güne denk geldiyse) None dön
+        if r["current_date"] == r["prev_date"]:
+            return None
+        delta = float(r["current_pct"]) - float(r["prev_pct"])
+        return {
+            "current_pct":  float(r["current_pct"]),
+            "prev_pct":     float(r["prev_pct"]),
+            "delta":        round(delta, 1),
+            "current_date": r["current_date"],
+            "prev_date":    r["prev_date"],
+        }
+    except Exception as exc:
+        logger.warning("get_weekly_occupancy_change hata: %s", exc)
+        return None
