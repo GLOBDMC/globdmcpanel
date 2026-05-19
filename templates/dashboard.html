@@ -399,7 +399,7 @@ const dolulukCtx = document.getElementById('dolulukChart').getContext('2d');
 new Chart(dolulukCtx, {
     type: 'bar',
     data: {
-        labels: ['Son Yerler (1-5)', 'Yakında Dolu (6-10)', 'Bol Yer (11+)'],
+        labels: ['Son Yerler (1-5)', 'Yakında Dolu (6-10)', 'Açık Satış (11+)'],
         datasets: [{
             data: [{{ son_yerler }}, {{ yakin_dolu }}, {{ bol }}],
             backgroundColor: ['rgba(245,158,11,0.7)', 'rgba(253,224,71,0.7)', 'rgba(16,185,129,0.7)'],
@@ -488,7 +488,7 @@ const riskCtx = document.getElementById('riskChart').getContext('2d');
 new Chart(riskCtx, {
     type: 'doughnut',
     data: {
-        labels: ['Son Yerler', 'Yakında Dolu', 'Bol Yer'],
+        labels: ['Son Yerler', 'Yakında Dolu', 'Açık Satış'],
         datasets: [{
             data: [{{ son_yerler }}, {{ yakin_dolu }}, {{ bol }}],
             backgroundColor: ['rgba(245,158,11,0.8)', 'rgba(253,224,71,0.8)', 'rgba(16,185,129,0.8)'],
