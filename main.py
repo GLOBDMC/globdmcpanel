@@ -1255,8 +1255,10 @@ def _apify_post(path: str, body: dict = None) -> dict:
 
 
 def _apify_actor_status(actor_id: str) -> dict:
-    """Bir actor'ın son run bilgisini döndürür."""
-    result = _apify_get(f"/acts/{actor_id}/runs/last")
+    """Bir task ya da actor'ın son run bilgisini döndürür. Task endpoint önce denenir."""
+    result = _apify_get(f"/actor-tasks/{actor_id}/runs/last")
+    if result.get("error") == 404:
+        result = _apify_get(f"/acts/{actor_id}/runs/last")
     data = result.get("data", {})
     if not data:
         return {"status": "NEVER_RUN", "startedAt": None, "finishedAt": None, "durationSecs": None}
