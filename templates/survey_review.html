@@ -214,6 +214,18 @@
 <!-- ═══ SEKME: Sonuçlar ═══ -->
 <div id="tabContent-results" class="hidden">
 
+        <!-- Bölge kartları -->
+        <div class="mb-5">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Bölgeler</h3>
+                <button onclick="clearBolgeFilter()" id="btnClearBolge"
+                        class="hidden text-xs text-slate-500 hover:text-slate-300 transition-colors">✕ Filtreyi temizle</button>
+            </div>
+            <div id="bolgeCards" class="flex flex-wrap gap-2">
+                <div class="text-xs text-slate-600 py-2">Yükleniyor...</div>
+            </div>
+        </div>
+
     <!-- Filtre satırı -->
     <div class="card mb-4">
         <div class="flex flex-wrap items-center gap-3">
@@ -230,6 +242,7 @@
                 <option value="puan_asc">Puan ↑</option>
                 <option value="kalkis">Kalkış Tarihi</option>
             </select>
+            <input type="hidden" id="filterBolge" value="" />
             <button onclick="loadResults()" class="btn-secondary text-xs px-3 py-1.5">Uygula</button>
             <span id="resultsTotalLabel" class="text-xs text-slate-500 ml-auto"></span>
         </div>
@@ -382,6 +395,14 @@
 .puan-medium { background: rgba(234,179,8,.15);  color: #facc15; }
 .puan-low    { background: rgba(239,68,68,.15);  color: #f87171; }
 .puan-none   { background: rgba(100,116,139,.1); color: #64748b; }
+
+.bolge-card {
+    background: rgba(15,23,41,.6);
+    border-color: rgba(255,255,255,.07);
+    cursor: pointer;
+}
+.bolge-card:hover { border-color: rgba(255,255,255,.15); background: rgba(30,41,59,.6); }
+.bolge-card.active { border-color: rgba(59,130,246,.5); background: rgba(59,130,246,.08); }
 
 .pill {
     font-size: 10px;
@@ -842,7 +863,69 @@ function switchTab(name) {
         document.getElementById(`tabContent-${t}`).classList.toggle('hidden', t !== name);
         document.getElementById(`tab-${t}`).classList.toggle('active', t === name);
     });
-    if (name === 'results' && !_resultsLoaded) loadResults();
+    if (name === 'results') {
+        loadBolgeCards();
+        if (!_resultsLoaded) loadResults();
+    }
+}
+
+/* ── Bölge kartları ──────────────────────────────────────── */
+const _BOLGE_EMOJI = {
+    "Japonya":"🇯🇵","İtalya":"🇮🇹","İspanya":"🇪🇸","Fransa":"🇫🇷",
+    "Benelux":"🇧🇪","Rusya":"🇷🇺","Fas":"🇲🇦","Yunanistan":"🇬🇷",
+    "Portekiz":"🇵🇹","İngiltere":"🇬🇧","Almanya":"🇩🇪","İsviçre":"🇨🇭",
+    "Avusturya":"🇦🇹","Balkanlar":"🌍","Doğu Avrupa":"🏰",
+    "İskandinav":"🇸🇪","Uzak Doğu":"🌏","Mısır":"🇪🇬","Dubai":"🇦🇪",
+    "Amerika":"🇺🇸","Güney Amerika":"🌎","Afrika":"🌍",
+    "Orta Asya":"🗺️","Kafkasya":"⛰️","Türkiye İç":"🇹🇷","Diğer":"📋",
+};
+
+function loadBolgeCards() {
+    fetch('/api/survey/bolgeler')
+        .then(r => r.json())
+        .then(data => {
+            if (!data.ok) return;
+            renderBolgeCards(data.bolge_list);
+        });
+}
+
+function renderBolgeCards(list) {
+    const el = document.getElementById('bolgeCards');
+    if (!list.length) { el.innerHTML = '<div class="text-xs text-slate-600">Bölge verisi yok</div>'; return; }
+
+    const activeBolge = document.getElementById('filterBolge').value;
+    let html = '';
+    for (const b of list) {
+        const emoji = _BOLGE_EMOJI[b.bolge] || '🌐';
+        const puan  = b.ort_puan != null ? parseFloat(b.ort_puan) : null;
+        const puanTxt = puan != null ? puan.toFixed(1) : '—';
+        const puanCls = puan == null ? 'text-slate-500' : puan >= 4 ? 'text-green-400' : puan >= 3 ? 'text-yellow-400' : 'text-red-400';
+        const active  = activeBolge === b.bolge;
+        html += `
+        <button onclick="setBolgeFilter('${escAttr(b.bolge)}')"
+                class="bolge-card ${active ? 'active' : ''} flex flex-col items-center px-3 py-2 rounded-xl border transition-all text-center min-w-[90px]"
+                style="min-width:90px">
+            <span class="text-xl mb-0.5">${emoji}</span>
+            <span class="text-xs font-medium text-slate-200 leading-tight">${escHtml(b.bolge)}</span>
+            <span class="text-xs ${puanCls} font-semibold mt-0.5">★ ${puanTxt}</span>
+            <span class="text-xs text-slate-600">${b.adet} yanıt</span>
+        </button>`;
+    }
+    el.innerHTML = html;
+}
+
+function setBolgeFilter(bolge) {
+    document.getElementById('filterBolge').value = bolge;
+    document.getElementById('btnClearBolge').classList.remove('hidden');
+    loadBolgeCards();   // active state güncelle
+    loadResults();
+}
+
+function clearBolgeFilter() {
+    document.getElementById('filterBolge').value = '';
+    document.getElementById('btnClearBolge').classList.add('hidden');
+    loadBolgeCards();
+    loadResults();
 }
 
 /* ── Sonuçlar sekmesi ────────────────────────────────────── */
@@ -866,7 +949,8 @@ function fetchResultsPage() {
     const siralama = document.getElementById('filterSiralama').value;
     const params   = new URLSearchParams({
         sayfa: _resPage, limit: _resPageSize,
-        rehber, tur, siralama
+        rehber, tur, siralama,
+        bolge: document.getElementById('filterBolge').value,
     });
 
     document.getElementById('resultsList').innerHTML = `

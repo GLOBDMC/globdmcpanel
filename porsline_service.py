@@ -383,3 +383,72 @@ def parse_response_row(header: list[str], row: list) -> dict:
             "tavsiye":  str(get(i_tavsiye) or ""),
         },
     }
+
+
+# ── Bölge tespiti ─────────────────────────────────────────────────────────────
+
+_BOLGELER: dict[str, list[str]] = {
+    "Japonya":      ["japon", "tokyo", "osaka", "kyoto"],
+    "İtalya":       ["italya", "roma", "venedik", "floransa", "napoli", "milano", "sicilya"],
+    "İspanya":      ["ispanya", "madrid", "barselona", "sevilla", "granada", "endulus", "endülüs", "katalonya"],
+    "Fransa":       ["fransa", "paris", "nice", "lyon", "strasbourg", "versay", "normandiya"],
+    "Benelux":      ["benelux", "amsterdam", "bruksel", "brüssel", "belcika", "belçika", "hollanda", "luksemburg", "lüksemburg"],
+    "Rusya":        ["rusya", "moskova", "petersburg", "st.pete"],
+    "Fas":          ["fas", "marakes", "marakeş", "kazablanka", "fes", "agadir", "rabat"],
+    "Yunanistan":   ["yunanistan", "atina", "selanik", "rodos", "girit", "santorini", "mikonos"],
+    "Portekiz":     ["portekiz", "lizbon", "porto"],
+    "İngiltere":    ["ingiltere", "londra", "manchester", "edinburgh"],
+    "Almanya":      ["almanya", "berlin", "frankfurt", "munih", "münchen", "hamburg", "dusseldorf"],
+    "İsviçre":      ["isviçre", "svicre", "zurich", "zürih", "cenevre", "bern", "interlaken", "luzern"],
+    "Avusturya":    ["avusturya", "viyana", "salzburg", "innsbruck"],
+    "Balkanlar":    ["balkan", "belgrad", "zagreb", "dubrovnik", "budva", "karadag", "karadağ", "bosna", "hersek", "makedonya", "arnavutluk", "slovenya"],
+    "Doğu Avrupa":  ["prag", "budapeşte", "budapes", "varsova", "varşova", "bratislava", "cek", "çek", "polonya", "macaristan", "slovakya", "romanya", "bulgaristan"],
+    "İskandinav":   ["norvec", "norveç", "isvec", "isveç", "danimarka", "finlandiya", "oslo", "stockholm", "kopenhag", "helsinki", "bergen", "fjord"],
+    "Uzak Doğu":    ["tayland", "bali", "singapur", "vietnam", "endonezya", "kamboçya", "kambocya", "malezya", "filipin", "uzakdogu", "uzakdoğu"],
+    "Mısır":        ["misir", "mısır", "kahire", "luksor", "hurgada", "sharm", "nil"],
+    "Dubai":        ["dubai", "abu dabi", "bae", "katar", "kuvait", "bahreyn", "umman"],
+    "Amerika":      ["amerika", "new york", "los angeles", "miami", "kanada", "toronto", "las vegas", "chicago"],
+    "Güney Amerika":["brezilya", "arjantin", "peru", "kolombiya", "şili", "santiago", "buenos aires", "rio"],
+    "Afrika":       ["kenya", "tanzanya", "güney afrika", "cape town", "safarı", "safari", "zanzibar"],
+    "Orta Asya":    ["orta asya", "özbekistan", "kazakistan", "türkmenistan", "tacikistan", "semerkant", "buhara"],
+    "Kafkasya":     ["gürcistan", "ermeni", "azerbaycan", "tiflis", "bakü", "erivan", "kazbek"],
+    "Türkiye İç":   ["kapadokya", "efes", "pamukkale", "antalya", "bodrum", "fethiye", "ege", "karadeniz", "dogu anadolu", "doğu anadolu"],
+}
+
+
+def detect_bolge(tur_adi: str, tags: list = None) -> str:
+    """
+    Tur adı ve/veya Porsline tag listesinden bölge tespit eder.
+    Tags: [{"id": 210, "label": "Japonya"}, ...] formatında.
+    """
+    # Önce tag'lardan bak (en güvenilir)
+    if tags:
+        for tag in tags:
+            label = str(tag.get("label") or "").strip()
+            if not label:
+                continue
+            label_norm = label.lower()
+            for bolge, keywords in _BOLGELER.items():
+                bolge_norm = bolge.lower()
+                if label_norm == bolge_norm or label_norm in keywords:
+                    return bolge
+
+    # Tur adından keyword tarama
+    if tur_adi:
+        tur_norm = tur_adi.lower()
+        # Aksanları kaldır
+        import unicodedata
+        tur_norm_ascii = "".join(
+            c for c in unicodedata.normalize("NFKD", tur_norm)
+            if not unicodedata.combining(c)
+        )
+        for bolge, keywords in _BOLGELER.items():
+            for kw in keywords:
+                kw_ascii = "".join(
+                    c for c in unicodedata.normalize("NFKD", kw.lower())
+                    if not unicodedata.combining(c)
+                )
+                if kw_ascii in tur_norm_ascii or kw.lower() in tur_norm:
+                    return bolge
+
+    return ""

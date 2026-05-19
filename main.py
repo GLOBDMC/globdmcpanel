@@ -435,6 +435,15 @@ def tablo_olustur():
                 created_at          TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
             )
         """))
+        # Bölge sütunları
+        conn.execute(text(
+            "ALTER TABLE historical_surveys ADD COLUMN IF NOT EXISTS "
+            "bolge VARCHAR(100) DEFAULT ''"
+        ))
+        conn.execute(text(
+            "ALTER TABLE porsline_surveys ADD COLUMN IF NOT EXISTS "
+            "bolge VARCHAR(100) DEFAULT ''"
+        ))
         # Porsline response_id: duplicate önleme
         conn.execute(text(
             "ALTER TABLE historical_surveys ADD COLUMN IF NOT EXISTS "
@@ -1763,6 +1772,7 @@ def survey_results(
     batch:     str = "",
     min_puan:  float = None,
     siralama:  str = "yeni",   # yeni | puan_asc | puan_desc
+    bolge:     str = "",
 ):
     """Tüm import edilmiş anket yanıtlarını döndürür (sayfalı, filtrelenebilir)."""
     kullanici = oturum_kullanicisi(request)
@@ -1784,6 +1794,9 @@ def survey_results(
     if min_puan is not None:
         filters.append("genel_puan >= :min_puan")
         params["min_puan"] = min_puan
+    if bolge:
+        filters.append("hs.bolge = :bolge")
+        params["bolge"] = bolge
 
     where = "WHERE " + " AND ".join(filters) if filters else ""
 
@@ -1862,6 +1875,36 @@ def survey_results(
         "sayfa":    sayfa,
         "items":    [row_to_dict(r) for r in rows],
         "rehberler": [dict(r._mapping) for r in guide_rows],
+    })
+
+
+@app.get("/api/survey/bolgeler")
+def survey_bolgeler(request: Request):
+    """Bölge bazlı istatistikler."""
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    with db_engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT
+                COALESCE(NULLIF(bolge,''), 'Diğer') AS bolge,
+                COUNT(*)                                        AS adet,
+                ROUND(AVG(genel_puan)::numeric, 2)             AS ort_puan,
+                ROUND(AVG(rehber_puani)::numeric, 2)           AS ort_rehber,
+                COUNT(DISTINCT rehber_adi)
+                    FILTER (WHERE rehber_adi <> '')             AS rehber_sayisi,
+                MIN(kalkis_tarihi)                              AS ilk_kalkis,
+                MAX(kalkis_tarihi)                              AS son_kalkis
+            FROM historical_surveys
+            WHERE match_status != 'rejected'
+            GROUP BY COALESCE(NULLIF(bolge,''), 'Diğer')
+            ORDER BY adet DESC
+        """)).fetchall()
+
+    return JSONResponse({
+        "ok":     True,
+        "bolge_list": [dict(r._mapping) for r in rows],
     })
 
 
@@ -2006,7 +2049,7 @@ def porsline_sync_survey(survey_id: str, request: Request):
 
     from porsline_service import (
         get_survey_detail, get_all_responses,
-        parse_survey_title, parse_response_row,
+        parse_survey_title, parse_response_row, detect_bolge,
     )
     from survey_matcher import SurveyMatcher, TourRecord, SurveyRecord
 
@@ -2048,6 +2091,36 @@ def porsline_sync_survey(survey_id: str, request: Request):
     match_status    = match_result.status
     match_method    = match_result.method
 
+    # Bölge tespiti
+    survey_tags = survey.get("tags") or []
+    bolge = detect_bolge(parsed["tur_adi"], tags=survey_tags)
+
+    # JT kodu direkt eşleşme: başlıkta veya tag'da JT kodu varsa fuzzy'yi atla
+    jt_direct = None
+    for tag in survey_tags:
+        lbl = str(tag.get("label") or "")
+        if re.match(r'^[A-Z]{1,4}[-_]?\d{4,8}$', lbl.strip()):
+            jt_direct = lbl.strip()
+            break
+    if not jt_direct:
+        # Başlıkta JT kodu ara: GJ-24001, GT2024001 vb.
+        jt_m = re.search(r'\b([A-Z]{1,4}[-_]?\d{4,8})\b', title)
+        if jt_m:
+            jt_direct = jt_m.group(1)
+
+    if jt_direct:
+        with db_engine.connect() as conn_jt:
+            row_jt = conn_jt.execute(
+                text("SELECT id, jt_kodu FROM turlar WHERE jt_kodu = :jt"),
+                {"jt": jt_direct}
+            ).fetchone()
+        if row_jt:
+            matched_tur_id  = row_jt[0]
+            matched_jt_kodu = row_jt[1]
+            confidence      = 100
+            match_status    = "matched"
+            match_method    = "jt_direct"
+
     if not rows:
         return JSONResponse({
             "ok":           True,
@@ -2067,15 +2140,16 @@ def porsline_sync_survey(survey_id: str, request: Request):
         conn.execute(text("""
             INSERT INTO porsline_surveys
                 (porsline_survey_id, survey_title, parsed_tur_adi, parsed_kalkis,
-                 parsed_havayolu, parsed_gece, matched_tur_id, matched_jt_kodu,
+                 parsed_havayolu, parsed_gece, bolge, matched_tur_id, matched_jt_kodu,
                  match_status, match_confidence, response_count, last_synced_at)
             VALUES
-                (:sid, :title, :tur_adi, :kalkis, :havayolu, :gece,
+                (:sid, :title, :tur_adi, :kalkis, :havayolu, :gece, :bolge,
                  :tur_id, :jt, :status, :conf, :rcount, NOW())
             ON CONFLICT (porsline_survey_id) DO UPDATE SET
                 survey_title     = EXCLUDED.survey_title,
                 parsed_tur_adi   = EXCLUDED.parsed_tur_adi,
                 parsed_kalkis    = EXCLUDED.parsed_kalkis,
+                bolge            = EXCLUDED.bolge,
                 matched_tur_id   = EXCLUDED.matched_tur_id,
                 matched_jt_kodu  = EXCLUDED.matched_jt_kodu,
                 match_status     = EXCLUDED.match_status,
@@ -2089,6 +2163,7 @@ def porsline_sync_survey(survey_id: str, request: Request):
             "kalkis":  parsed.get("kalkis_str") or "",
             "havayolu":parsed.get("havayolu") or "",
             "gece":    parsed.get("gece"),
+            "bolge":   bolge,
             "tur_id":  matched_tur_id,
             "jt":      matched_jt_kodu,
             "status":  match_status,
@@ -2107,13 +2182,15 @@ def porsline_sync_survey(survey_id: str, request: Request):
             kalkis_tarihi, genel_puan, rehber_puani, puan_detay,
             tur_adi_ham, matched_tur_id, matched_jt_kodu,
             match_confidence, match_method, match_status,
-            import_batch, porsline_response_id, porsline_survey_id
+            import_batch, porsline_response_id, porsline_survey_id,
+            bolge
         ) VALUES (
             :survey_date, :musteri, :rehber, :acente,
             :kalkis, :genel_puan, :rehber_puani, :puan_detay,
             :tur_adi, :tur_id, :jt,
             :conf, :method, :status,
-            :batch, :resp_id, :survey_id
+            :batch, :resp_id, :survey_id,
+            :bolge
         )
         ON CONFLICT (porsline_response_id) DO NOTHING
     """
@@ -2145,6 +2222,7 @@ def porsline_sync_survey(survey_id: str, request: Request):
                     "batch":       f"porsline_{survey_id}",
                     "resp_id":     resp_id,
                     "survey_id":   survey_id,
+                    "bolge":       bolge,
                 })
                 if result.rowcount > 0:
                     eklenen += 1
