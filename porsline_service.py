@@ -146,7 +146,46 @@ def get_all_responses(survey_id: str) -> dict:
 
 # ── Survey başlığı parse ──────────────────────────────────────────────────────
 
-def parse_survey_title(title: str) -> dict:
+def _infer_year(gun: int, ay: int, created_date_str: str) -> Optional[int]:
+    """
+    Anket oluşturma tarihinden kalkış yılını tahmin eder.
+
+    Kural: kalkış tarihi oluşturma tarihinden ≤ 180 gün ÖNCESİNDE olmalı.
+    Örn: Anket 2024-08-15'te oluşturulmuş, kalkış "23 Temmuz" → 2024.
+         Anket 2024-01-10'da oluşturulmuş, kalkış "23 Temmuz" → muhtemelen 2023.
+    """
+    if not created_date_str:
+        return None
+    created = None
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%d-%m-%Y", "%d.%m.%Y"):
+        try:
+            created = datetime.strptime(created_date_str[:19], fmt[:len(created_date_str[:19])]).date()
+            break
+        except Exception:
+            pass
+    if not isinstance(created, date):
+        # Fallback: try just parsing the first 10 chars
+        try:
+            created = datetime.strptime(created_date_str[:10], "%Y-%m-%d").date()
+        except Exception:
+            return None
+
+    # Aynı yıl içinde bu gün-ay created'dan önce mi?
+    from datetime import date as _date
+    for year_offset in (0, -1, 1):
+        try:
+            candidate = _date(created.year + year_offset, ay, gun)
+        except ValueError:
+            continue
+        diff = (created - candidate).days
+        # Kalkış, anket oluşturmadan 0-365 gün önce olabilir
+        if 0 <= diff <= 365:
+            return candidate.year
+
+    return created.year  # son çare: created yılını kullan
+
+
+def parse_survey_title(title: str, created_date: str = "") -> dict:
     """
     Porsline anket başlığından tur bilgilerini çıkarır.
 
@@ -157,22 +196,31 @@ def parse_survey_title(title: str) -> dict:
       {
         "kalkis_gun":  14,
         "kalkis_ay":   5,
-        "kalkis_str":  "14-05-2024",   # yıl bilinmiyorsa None
+        "kalkis_str":  "14-05-2024",   # yıl created_date'den tahmin edilir
         "tur_adi":     "Comfort İspanya & Endülüs",
         "havayolu":    "Pegasus",
         "gece":        7,
       }
+
+    created_date: Porsline'dan gelen anket oluşturma tarihi (yıl tahmini için).
     """
     result = {
-        "kalkis_gun": None,
-        "kalkis_ay":  None,
-        "kalkis_str": None,
-        "tur_adi":    title,
-        "havayolu":   None,
-        "gece":       None,
+        "kalkis_gun":  None,
+        "kalkis_ay":   None,
+        "kalkis_str":  None,
+        "tur_adi":     title,
+        "havayolu":    None,
+        "gece":        None,
+        "rehber_adi":  None,
     }
 
     t = title.strip()
+
+    # Rehber adı: başlığın sonunda " - Ad Soyad" kalıbı
+    rehber_match = re.search(r'\s*[-–]\s*([A-ZÇĞIİŞÖÜa-zçğışöü][a-zçğışöüA-ZÇĞIİŞÖÜ]+(?:\s+[A-ZÇĞIİŞÖÜa-zçğışöü][a-zçğışöüA-ZÇĞIİŞÖÜ]+)+)\s*$', t)
+    if rehber_match:
+        result["rehber_adi"] = rehber_match.group(1).strip()
+        t = t[:rehber_match.start()].strip()
 
     # "Memnuniyet Anketi" ve benzeri sonekler temizle
     t = re.sub(r'\s*(memnuniyet\s*)?anketi?\s*$', '', t, flags=re.IGNORECASE).strip()
@@ -217,6 +265,8 @@ def parse_survey_title(title: str) -> dict:
         if ay:
             result["kalkis_gun"] = gun
             result["kalkis_ay"]  = ay
+            if not yil:
+                yil = _infer_year(gun, ay, created_date)
             if yil:
                 try:
                     result["kalkis_str"] = f"{gun:02d}-{ay:02d}-{yil}"

@@ -1827,8 +1827,9 @@ def porsline_surveys(request: Request):
 
     # Her anket için parsed bilgiyi ekle
     for s in all_surveys:
-        title = s.get("title") or s.get("name") or ""
-        s["parsed"] = parse_survey_title(title)
+        title        = s.get("title") or s.get("name") or ""
+        created_date = s.get("created_at") or s.get("create_date") or s.get("created") or ""
+        s["parsed"]  = parse_survey_title(title, created_date)
 
     return JSONResponse({"ok": True, "surveys": all_surveys, "count": len(all_surveys)})
 
@@ -1885,8 +1886,9 @@ def porsline_sync_survey(survey_id: str, request: Request):
         return JSONResponse({"ok": False, "hata": detail.get("hata")}, status_code=500)
 
     survey = detail["survey"]
-    title  = survey.get("title") or survey.get("name") or ""
-    parsed = parse_survey_title(title)
+    title        = survey.get("title") or survey.get("name") or ""
+    created_date = survey.get("created_at") or survey.get("create_date") or survey.get("created") or ""
+    parsed = parse_survey_title(title, created_date)
 
     # Tüm yanıtları çek
     resp = get_all_responses(survey_id)
@@ -1904,10 +1906,11 @@ def porsline_sync_survey(survey_id: str, request: Request):
     matcher = SurveyMatcher(tours)
 
     # Anket başlığından SurveyRecord oluştur (tüm yanıtlar bu tur adıyla eşleşecek)
+    # Rehber adını başlıktan al (header parse'da da yakalanır ama başlıkta varsa daha güvenilir)
     survey_record = SurveyRecord(
         tur_adi=parsed["tur_adi"],
         kalkis_tarihi=parsed.get("kalkis_str") or "",
-        rehber_adi="",  # yanıttan gelecek
+        rehber_adi=parsed.get("rehber_adi") or "",
         destinasyon="",
     )
     match_result = matcher.match_one(survey_record)
@@ -1979,8 +1982,8 @@ def porsline_sync_survey(survey_id: str, request: Request):
             parsed_row = parse_response_row(header, row)
             resp_id    = f"porsline_{survey_id}_{i}"
 
-            # Rehber adını yanıttan güncelle
-            rehber_adi = parsed_row.get("rehber_adi") or ""
+            # Rehber adı: önce yanıttan, yoksa başlıktan
+            rehber_adi = parsed_row.get("rehber_adi") or parsed.get("rehber_adi") or ""
 
             try:
                 result = conn.execute(text(insert_sql), {
@@ -2099,9 +2102,13 @@ def porsline_sync_all(request: Request):
                 results.append({"survey_id": sid, "ok": False, "hata": detail.get("hata")})
                 continue
 
-            survey = detail["survey"]
-            title  = survey.get("title") or survey.get("name") or ""
-            parsed = parse_survey_title(title)
+            survey       = detail["survey"]
+            title        = survey.get("title") or survey.get("name") or ""
+            created_date = survey.get("created_at") or survey.get("create_date") or survey.get("created") or ""
+            # Fallback: list_surveys'den gelen created_date
+            if not created_date:
+                created_date = s.get("created_at") or s.get("create_date") or ""
+            parsed = parse_survey_title(title, created_date)
 
             resp = get_all_responses(sid)
             if not resp["ok"]:
@@ -2113,7 +2120,11 @@ def porsline_sync_all(request: Request):
 
             tours = _survey_load_tours()
             matcher = SurveyMatcher(tours)
-            sr = SurveyRecord(tur_adi=parsed["tur_adi"], kalkis_tarihi=parsed.get("kalkis_str") or "")
+            sr = SurveyRecord(
+                tur_adi=parsed["tur_adi"],
+                kalkis_tarihi=parsed.get("kalkis_str") or "",
+                rehber_adi=parsed.get("rehber_adi") or "",
+            )
             mr = matcher.match_one(sr)
 
             matched_tur_id  = mr.best_match.tour.id if mr.best_match else None
@@ -2156,7 +2167,7 @@ def porsline_sync_all(request: Request):
                             ON CONFLICT (porsline_response_id) DO NOTHING
                         """), {
                             "musteri":  pr.get("musteri_adi") or "",
-                            "rehber":   pr.get("rehber_adi") or "",
+                            "rehber":   pr.get("rehber_adi") or parsed.get("rehber_adi") or "",
                             "acente":   pr.get("acente_adi") or "",
                             "kalkis":   parsed.get("kalkis_str") or "",
                             "genel":    pr.get("genel_puan"),
