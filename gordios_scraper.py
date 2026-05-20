@@ -71,56 +71,19 @@ def scrape_tour_detail(jt_kodu: str) -> dict:
             page.goto(GORDIOS_LOGIN_URL, wait_until="domcontentloaded", timeout=30_000)
             page.wait_for_load_state("networkidle", timeout=15_000)
 
-            # Tüm input'ları logla — field adlarını debug için
-            all_inputs = page.query_selector_all("input")
-            input_info = []
-            for inp in all_inputs:
-                input_info.append({
-                    "type": inp.get_attribute("type"),
-                    "name": inp.get_attribute("name"),
-                    "id":   inp.get_attribute("id"),
-                    "placeholder": inp.get_attribute("placeholder"),
-                })
-            logger.info("[gordios] login form inputs: %s", input_info)
+            # Kesin alan adları: ScopeCode, Username, Password
+            page.fill('input[name="ScopeCode"]', GORDIOS_INSTITUTION)
+            logger.info("[gordios] ScopeCode girildi: %s", GORDIOS_INSTITUTION)
 
-            # Form'daki text input'larını sırayla al (password hariç)
-            text_inputs = [
-                i for i in all_inputs
-                if (i.get_attribute("type") or "text").lower()
-                   not in ("password", "hidden", "submit", "button", "checkbox", "radio")
-                and i.is_visible()
-            ]
-            logger.info("[gordios] görünür text input sayısı: %d", len(text_inputs))
+            page.fill('input[name="Username"]', GORDIOS_USERNAME)
+            logger.info("[gordios] Username girildi: %s", GORDIOS_USERNAME)
 
-            # Sıra: 1→Kurum kodu, 2→Kullanıcı adı (sayfadaki sırayla)
-            if len(text_inputs) >= 1:
-                text_inputs[0].fill(GORDIOS_INSTITUTION)
-                logger.info("[gordios] kurum kodu girildi (input[0]): name=%s",
-                            text_inputs[0].get_attribute("name"))
-            if len(text_inputs) >= 2:
-                text_inputs[1].fill(GORDIOS_USERNAME)
-                logger.info("[gordios] kullanıcı adı girildi (input[1])")
+            page.fill('input[name="Password"]', GORDIOS_PASSWORD)
+            logger.info("[gordios] Password girildi")
 
-            # Şifre
-            page.fill('input[type="password"]', GORDIOS_PASSWORD)
-
-            # Submit — tüm submit türlerini dene
-            submitted = False
-            for sel in ['button[type="submit"]', 'input[type="submit"]',
-                        'button:has-text("Giriş")', 'button:has-text("Login")',
-                        'button:has-text("Oturum")', 'button.btn-primary']:
-                try:
-                    if page.is_visible(sel, timeout=500):
-                        page.click(sel)
-                        submitted = True
-                        logger.info("[gordios] submit tıklandı: %s", sel)
-                        break
-                except Exception:
-                    pass
-            if not submitted:
-                # Son çare: form submit
-                page.evaluate("document.querySelector('form').submit()")
-                logger.warning("[gordios] form.submit() ile gönderildi")
+            # Submit — input[type="submit"] (button yok, value="Giriş Yap")
+            page.click('input[type="submit"]')
+            logger.info("[gordios] submit tıklandı")
 
             # Backoffice'e yönlendirmeyi bekle
             try:
