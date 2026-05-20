@@ -145,8 +145,25 @@ def scrape_tour_detail(jt_kodu: str) -> dict:
                 elif all_inputs:
                     all_inputs[0].fill(jt_kodu)
 
-            # Listele
-            page.click('button:has-text("Listele"), input[value="Listele"]')
+            # Listele — birden fazla seçici dene, fallback: Enter
+            listele_clicked = False
+            for sel in [
+                'input[value="Listele"]', 'button:has-text("Listele")',
+                'input[value="Ara"]', 'button:has-text("Ara")',
+                'input[type="submit"]', 'button[type="submit"]',
+            ]:
+                try:
+                    if page.is_visible(sel, timeout=1_000):
+                        page.click(sel)
+                        listele_clicked = True
+                        logger.info("[gordios] listele tıklandı: %s", sel)
+                        break
+                except Exception:
+                    pass
+            if not listele_clicked:
+                # Son çare: JT kodu alanında Enter
+                page.keyboard.press("Enter")
+                logger.warning("[gordios] listele: Enter ile gönderildi")
             page.wait_for_load_state("networkidle", timeout=15_000)
 
             # ── 3. SONUÇTAN TUR LİNKİNE TIK ─────────────────────────────────

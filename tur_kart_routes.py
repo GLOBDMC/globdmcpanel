@@ -135,30 +135,46 @@ def create_tur_kart_router(db_engine, templates) -> APIRouter:
                     page.wait_for_load_state("networkidle", timeout=15_000)
 
                 url_after = page.url
-                # Sayfadaki hata mesajını al
-                error_text = ""
-                for sel in [".error", ".alert", ".validation-summary-errors",
-                            '[class*="error"]', '[class*="alert"]', '.text-danger']:
+
+                # Backoffice'e git
+                from gordios_scraper import GORDIOS_TOUR_LIST
+                page.goto(GORDIOS_TOUR_LIST, wait_until="networkidle", timeout=30_000)
+                url_bo = page.url
+
+                # Tüm input ve button'ları topla
+                inputs_bo, buttons_bo = [], []
+                for inp in page.query_selector_all("input"):
+                    inputs_bo.append({
+                        "type": inp.get_attribute("type"),
+                        "name": inp.get_attribute("name"),
+                        "id":   inp.get_attribute("id"),
+                        "value": inp.get_attribute("value"),
+                        "visible": inp.is_visible(),
+                    })
+                for btn in page.query_selector_all("button, input[type=submit], input[type=button]"):
                     try:
-                        el = page.query_selector(sel)
-                        if el:
-                            error_text = el.inner_text()[:300]
-                            break
+                        buttons_bo.append({
+                            "tag":  btn.evaluate("el => el.tagName"),
+                            "type": btn.get_attribute("type"),
+                            "text": (btn.inner_text() or btn.get_attribute("value") or "")[:60],
+                            "visible": btn.is_visible(),
+                        })
                     except Exception:
                         pass
-                # Screenshot
-                ss_b64 = base64.b64encode(page.screenshot()).decode()
-                # Page text snippet
-                page_text = page.inner_text("body")[:500] if page.query_selector("body") else ""
+                page_text = ""
+                try:
+                    page_text = page.inner_text("body")[:300]
+                except Exception:
+                    pass
                 browser.close()
 
             return JSONResponse({
-                "url_before": url_before,
-                "url_after":  url_after,
-                "login_ok":   GORDIOS_BO_BASE in url_after,
-                "error_text": error_text,
-                "page_text":  page_text,
-                "screenshot_base64": ss_b64[:500] + "...",
+                "login_url_after": url_after,
+                "login_ok": GORDIOS_BO_BASE in url_after or GORDIOS_BO_BASE in url_bo,
+                "backoffice_url": url_bo,
+                "backoffice_inputs":  inputs_bo,
+                "backoffice_buttons": buttons_bo,
+                "page_text": page_text,
                 "env": {
                     "institution": GORDIOS_INSTITUTION,
                     "username":    GORDIOS_USERNAME,
@@ -288,6 +304,37 @@ def _upsert_tur_detay(db_engine, jt_kodu: str, data: dict, status: str):
             conn.commit()
     except Exception as e:
         logger.error("_upsert_tur_detay [%s]: %s", jt_kodu, e)
+
+
+def gordios_sync_all_tours(db_engine):
+    """
+    Tüm aktif turları Gordios'tan senkronize eder.
+    Scheduler tarafından günlük çalıştırılır.
+    Son 24 saatte sync edilmişleri atlar.
+    """
+    try:
+        with db_engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT t.jt_kodu FROM turlar t
+                LEFT JOIN tur_detaylar d ON t.jt_kodu = d.jt_kodu
+                WHERE t.jt_kodu IS NOT NULL AND t.jt_kodu != ''
+                  AND (d.gordios_sync_at IS NULL
+                       OR d.gordios_sync_at < NOW() - INTERVAL '23 hours')
+                ORDER BY t.kalkis_tarihi
+                LIMIT 50
+            """)).fetchall()
+        jt_kodlari = [r[0] for r in rows]
+        logger.info("[gordios-auto] %d tur sync edilecek", len(jt_kodlari))
+        for jt_kodu in jt_kodlari:
+            try:
+                data = _run_gordios_sync(jt_kodu)
+                status = "error" if data.get("hata") else "ok"
+                _upsert_tur_detay(db_engine, jt_kodu, data, status)
+                logger.info("[gordios-auto] %s → %s", jt_kodu, status)
+            except Exception as e:
+                logger.error("[gordios-auto] %s hata: %s", jt_kodu, e)
+    except Exception as e:
+        logger.error("[gordios-auto] genel hata: %s", e)
 
 
 def _run_gordios_sync(jt_kodu: str) -> dict:

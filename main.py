@@ -898,6 +898,18 @@ async def lifespan(app: FastAPI):
         # Günlük snapshot job (02:00 TRT = 23:00 UTC)
         from snapshot_scheduler import setup_snapshot_scheduler
         setup_snapshot_scheduler(scheduler, db_engine)
+        # Günlük Gordios sync (03:00 TRT = 00:00 UTC)
+        try:
+            from tur_kart_routes import gordios_sync_all_tours
+            scheduler.add_job(
+                gordios_sync_all_tours, 'cron',
+                hour=0, minute=0,
+                args=[db_engine],
+                id='gordios_daily_sync',
+            )
+            logger.info("Gordios günlük sync job eklendi (00:00 UTC)")
+        except Exception as _ge:
+            logger.warning("Gordios scheduler eklenemedi: %s", _ge)
         scheduler.start()
         logger.info("Scheduler baslatildi — ilk sync 10s sonra")
     except Exception as e:
