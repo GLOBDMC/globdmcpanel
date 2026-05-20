@@ -2097,47 +2097,83 @@ def survey_search_tours(request: Request, q: str = ""):
 
 # ── Rehber API route'ları ────────────────────────────────────────────────────
 
+def _ensure_rehberler_table():
+    """rehberler tablosu yoksa oluşturur — her API çağrısında güvenli kontrol."""
+    try:
+        with db_engine.connect() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS rehberler (
+                    id          SERIAL PRIMARY KEY,
+                    ad_soyad    VARCHAR(300) NOT NULL,
+                    e_posta     VARCHAR(200) DEFAULT '',
+                    telefon     VARCHAR(50)  DEFAULT '',
+                    aktif       BOOLEAN      DEFAULT TRUE,
+                    notlar      TEXT         DEFAULT '',
+                    created_at  TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                    updated_at  TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_rehberler_ad ON rehberler(ad_soyad)"))
+            conn.execute(text(
+                "ALTER TABLE historical_surveys ADD COLUMN IF NOT EXISTS "
+                "rehber_id INTEGER REFERENCES rehberler(id) ON DELETE SET NULL"
+            ))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_hs_rehber_id ON historical_surveys(rehber_id)"))
+            conn.execute(text(
+                "ALTER TABLE turlar ADD COLUMN IF NOT EXISTS "
+                "rehber_id INTEGER REFERENCES rehberler(id) ON DELETE SET NULL"
+            ))
+            conn.commit()
+    except Exception as e:
+        logger.warning("_ensure_rehberler_table: %s", e)
+
+
 @app.get("/api/rehberler")
 def rehberler_listesi(request: Request):
     kullanici = oturum_kullanicisi(request)
     if not kullanici or kullanici["rol"] != "admin":
         return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
-    with db_engine.connect() as conn:
-        rows = conn.execute(text("""
-            SELECT
-                r.id, r.ad_soyad, r.e_posta, r.telefon, r.aktif, r.notlar, r.created_at,
-                COUNT(hs.id)                                                     AS anket_sayisi,
-                ROUND(AVG(CASE WHEN hs.genel_puan IS NOT NULL
-                          THEN CAST(hs.genel_puan AS NUMERIC) END), 2)           AS ort_genel,
-                ROUND(AVG(CASE WHEN hs.rehber_puani IS NOT NULL
-                          THEN CAST(hs.rehber_puani AS NUMERIC) END), 2)         AS ort_rehber,
-                COUNT(DISTINCT hs.matched_jt_kodu)
-                    FILTER (WHERE hs.matched_jt_kodu != '')                      AS tur_sayisi
-            FROM rehberler r
-            LEFT JOIN historical_surveys hs ON hs.rehber_id = r.id
-                AND hs.match_status = 'matched'
-            GROUP BY r.id
-            ORDER BY r.aktif DESC, r.ad_soyad
-        """)).fetchall()
-    return JSONResponse({
-        "ok": True,
-        "rehberler": [
-            {
-                "id":          r[0],
-                "ad_soyad":    r[1],
-                "e_posta":     r[2] or "",
-                "telefon":     r[3] or "",
-                "aktif":       r[4],
-                "notlar":      r[5] or "",
-                "created_at":  r[6].isoformat() if r[6] else None,
-                "anket_sayisi": int(r[7] or 0),
-                "ort_genel":   float(r[8]) if r[8] is not None else None,
-                "ort_rehber":  float(r[9]) if r[9] is not None else None,
-                "tur_sayisi":  int(r[10] or 0),
-            }
-            for r in rows
-        ]
-    })
+    _ensure_rehberler_table()
+    try:
+        with db_engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT
+                    r.id, r.ad_soyad, r.e_posta, r.telefon, r.aktif, r.notlar, r.created_at,
+                    COUNT(hs.id)                                                     AS anket_sayisi,
+                    ROUND(AVG(CASE WHEN hs.genel_puan IS NOT NULL
+                              THEN CAST(hs.genel_puan AS NUMERIC) END), 2)           AS ort_genel,
+                    ROUND(AVG(CASE WHEN hs.rehber_puani IS NOT NULL
+                              THEN CAST(hs.rehber_puani AS NUMERIC) END), 2)         AS ort_rehber,
+                    COUNT(DISTINCT hs.matched_jt_kodu)
+                        FILTER (WHERE hs.matched_jt_kodu != '')                      AS tur_sayisi
+                FROM rehberler r
+                LEFT JOIN historical_surveys hs ON hs.rehber_id = r.id
+                    AND hs.match_status = 'matched'
+                GROUP BY r.id
+                ORDER BY r.aktif DESC, r.ad_soyad
+            """)).fetchall()
+        return JSONResponse({
+            "ok": True,
+            "rehberler": [
+                {
+                    "id":           r[0],
+                    "ad_soyad":     r[1],
+                    "e_posta":      r[2] or "",
+                    "telefon":      r[3] or "",
+                    "aktif":        r[4],
+                    "notlar":       r[5] or "",
+                    "created_at":   r[6].isoformat() if r[6] else None,
+                    "anket_sayisi": int(r[7] or 0),
+                    "ort_genel":    float(r[8]) if r[8] is not None else None,
+                    "ort_rehber":   float(r[9]) if r[9] is not None else None,
+                    "tur_sayisi":   int(r[10] or 0),
+                }
+                for r in rows
+            ]
+        })
+    except Exception as exc:
+        logger.error("rehberler_listesi hata: %s", exc, exc_info=True)
+        return JSONResponse({"ok": False, "hata": str(exc)}, status_code=500)
 
 
 @app.post("/api/rehberler")
@@ -2149,23 +2185,27 @@ async def rehber_ekle(request: Request):
     ad_soyad = (body.get("ad_soyad") or "").strip()
     if not ad_soyad:
         return JSONResponse({"hata": "Ad soyad zorunlu"}, status_code=400)
-    with db_engine.connect() as conn:
-        row = conn.execute(text("""
-            INSERT INTO rehberler (ad_soyad, e_posta, telefon, aktif, notlar)
-            VALUES (:ad, :ep, :tel, :aktif, :not)
-            ON CONFLICT DO NOTHING
-            RETURNING id
-        """), {
-            "ad": ad_soyad,
-            "ep": (body.get("e_posta") or "").strip(),
-            "tel": (body.get("telefon") or "").strip(),
-            "aktif": body.get("aktif", True),
-            "not": (body.get("notlar") or "").strip(),
-        }).fetchone()
-        conn.commit()
-    if not row:
-        return JSONResponse({"hata": "Eklenemedi"}, status_code=500)
-    return JSONResponse({"ok": True, "id": row[0]})
+    _ensure_rehberler_table()
+    try:
+        with db_engine.connect() as conn:
+            row = conn.execute(text("""
+                INSERT INTO rehberler (ad_soyad, e_posta, telefon, aktif, notlar)
+                VALUES (:ad, :ep, :tel, :aktif, :not)
+                RETURNING id
+            """), {
+                "ad":    ad_soyad,
+                "ep":    (body.get("e_posta") or "").strip(),
+                "tel":   (body.get("telefon") or "").strip(),
+                "aktif": body.get("aktif", True),
+                "not":   (body.get("notlar") or "").strip(),
+            }).fetchone()
+            conn.commit()
+        if not row:
+            return JSONResponse({"hata": "Eklenemedi"}, status_code=500)
+        return JSONResponse({"ok": True, "id": row[0]})
+    except Exception as exc:
+        logger.error("rehber_ekle hata: %s", exc, exc_info=True)
+        return JSONResponse({"ok": False, "hata": str(exc)}, status_code=500)
 
 
 @app.put("/api/rehberler/{rid}")
