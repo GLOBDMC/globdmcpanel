@@ -117,6 +117,11 @@
         Sonuçlar
         <span id="tabBadgeResults" class="ml-1.5 text-xs text-slate-500 font-normal"></span>
     </button>
+    <button onclick="switchTab('rehberler')" id="tab-rehberler"
+            class="tab-btn px-4 py-2 text-sm font-medium rounded-t-lg transition-colors">
+        Rehberler
+        <span id="tabBadgeRehberler" class="ml-1.5 text-xs text-slate-500 font-normal"></span>
+    </button>
 </div>
 
 <!-- ═══ SEKME: İnceleme Kuyruğu ═══ -->
@@ -276,6 +281,103 @@
 
     </div>
 </div> <!-- /tabContent-results -->
+
+<!-- ═══ SEKME: Rehberler ═══ -->
+<div id="tabContent-rehberler" class="hidden">
+
+    <!-- Araç çubuğu -->
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-5">
+        <div class="flex items-center gap-2">
+            <input type="text" id="rehberSearch" placeholder="Rehber ara..."
+                   autocomplete="off"
+                   class="text-xs bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-1.5 text-slate-300 placeholder-slate-600 w-48"
+                   oninput="filterRehberCards(this.value)" />
+        </div>
+        <div class="flex items-center gap-2">
+            <button onclick="rehberAutoImport()"
+                    class="btn-secondary text-xs px-3 py-1.5">
+                <svg class="w-3 h-3 mr-1 inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                Anketlerden İçe Aktar
+            </button>
+            <button onclick="rehberLinkAll()"
+                    class="btn-secondary text-xs px-3 py-1.5">
+                <svg class="w-3 h-3 mr-1 inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                Anketleri Eşleştir
+            </button>
+            <button onclick="openRehberModal()"
+                    class="text-xs px-3 py-1.5 rounded-lg font-medium bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-600/30 transition-colors">
+                + Rehber Ekle
+            </button>
+        </div>
+    </div>
+
+    <!-- Rehber kartları grid -->
+    <div id="rehberGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        <div class="text-sm text-slate-600 text-center py-12 col-span-full">Yükleniyor...</div>
+    </div>
+</div> <!-- /tabContent-rehberler -->
+
+<!-- ── Rehber Ekle/Düzenle Modal ───────────────────────────────────────── -->
+<div id="rehberModal" class="fixed inset-0 z-50 hidden items-center justify-center">
+    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="closeRehberModal()"></div>
+    <div class="relative bg-[#0f1729] border border-slate-700/60 rounded-xl shadow-2xl p-6 w-full max-w-md mx-4">
+        <h3 class="text-sm font-semibold text-slate-100 mb-4" id="rehberModalTitle">Rehber Ekle</h3>
+        <div class="space-y-3">
+            <div>
+                <label class="text-xs text-slate-500 mb-1 block">Ad Soyad *</label>
+                <input type="text" id="rmAdSoyad" placeholder="Ad Soyad"
+                       class="w-full text-sm bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-slate-200 placeholder-slate-600" />
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="text-xs text-slate-500 mb-1 block">E-posta</label>
+                    <input type="email" id="rmEposta" placeholder="ornek@mail.com"
+                           class="w-full text-sm bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-slate-200 placeholder-slate-600" />
+                </div>
+                <div>
+                    <label class="text-xs text-slate-500 mb-1 block">Telefon</label>
+                    <input type="text" id="rmTelefon" placeholder="+90 5xx..."
+                           class="w-full text-sm bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-slate-200 placeholder-slate-600" />
+                </div>
+            </div>
+            <div>
+                <label class="text-xs text-slate-500 mb-1 block">Notlar</label>
+                <textarea id="rmNotlar" rows="2" placeholder="Opsiyonel notlar..."
+                          class="w-full text-sm bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-slate-200 placeholder-slate-600 resize-none"></textarea>
+            </div>
+            <div class="flex items-center gap-2">
+                <input type="checkbox" id="rmAktif" checked class="rounded" />
+                <label for="rmAktif" class="text-xs text-slate-400">Aktif</label>
+            </div>
+        </div>
+        <input type="hidden" id="rmId" value="" />
+        <div class="flex gap-2 mt-5">
+            <button onclick="closeRehberModal()" class="flex-1 py-2 rounded-lg text-sm text-slate-400 border border-slate-700 hover:bg-slate-800 transition-colors">İptal</button>
+            <button onclick="saveRehber()" class="flex-1 py-2 rounded-lg text-sm font-semibold bg-blue-600 hover:bg-blue-500 text-white transition-colors">Kaydet</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── Rehber Detay Modal ───────────────────────────────────────────────── -->
+<div id="rehberDetailModal" class="fixed inset-0 z-50 hidden items-center justify-center">
+    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="closeRehberDetail()"></div>
+    <div class="relative bg-[#0f1729] border border-slate-700/60 rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
+        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-700/40">
+            <h3 class="text-sm font-semibold text-slate-100" id="rdmName">—</h3>
+            <div class="flex items-center gap-2">
+                <button onclick="editRehberFromDetail()" class="text-xs text-blue-400 hover:text-blue-300">Düzenle</button>
+                <button onclick="closeRehberDetail()" class="text-slate-500 hover:text-slate-300 text-lg leading-none">×</button>
+            </div>
+        </div>
+        <div class="px-6 py-4 max-h-[70vh] overflow-y-auto">
+            <!-- İstatistikler -->
+            <div class="grid grid-cols-3 gap-3 mb-5" id="rdmStats"></div>
+            <!-- Anket listesi -->
+            <p class="text-xs text-slate-500 uppercase font-medium mb-3 tracking-wide">Son Anketler</p>
+            <div id="rdmAnketler" class="space-y-2"></div>
+        </div>
+    </div>
+</div>
 
 <!-- ── Import Modal ────────────────────────────────────────────────────── -->
 <div id="importModal" class="fixed inset-0 z-50 hidden items-center justify-center">
@@ -860,13 +962,16 @@ function showToast(msg, type = 'info') {
 
 /* ── Tab sistemi ─────────────────────────────────────────── */
 function switchTab(name) {
-    ['review','results'].forEach(t => {
+    ['review','results','rehberler'].forEach(t => {
         document.getElementById(`tabContent-${t}`).classList.toggle('hidden', t !== name);
         document.getElementById(`tab-${t}`).classList.toggle('active', t === name);
     });
     if (name === 'results') {
         loadBolgeCards();
         if (!_resultsLoaded) loadResults();
+    }
+    if (name === 'rehberler') {
+        loadRehberler();
     }
 }
 
@@ -1392,5 +1497,250 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 });
+
+/* ═══════════════════════════════════════════════════════════════
+   REHBERLER SEKMESİ
+═══════════════════════════════════════════════════════════════ */
+let _rehberlerData = [];
+let _editingRehberId = null;
+
+async function loadRehberler() {
+    const grid = document.getElementById('rehberGrid');
+    grid.innerHTML = '<div class="text-sm text-slate-600 text-center py-12 col-span-full">Yükleniyor...</div>';
+    try {
+        const res = await fetch('/api/rehberler');
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.hata || 'Hata');
+        _rehberlerData = data.rehberler || [];
+        document.getElementById('tabBadgeRehberler').textContent = _rehberlerData.length ? `(${_rehberlerData.length})` : '';
+        renderRehberCards(_rehberlerData);
+    } catch(e) {
+        grid.innerHTML = `<div class="text-sm text-red-400 text-center py-12 col-span-full">Yüklenemedi: ${e.message}</div>`;
+    }
+}
+
+function renderRehberCards(list) {
+    const grid = document.getElementById('rehberGrid');
+    if (!list.length) {
+        grid.innerHTML = `
+        <div class="col-span-full text-center py-16">
+            <div class="w-12 h-12 rounded-full bg-slate-800 flex items-center justify-center mx-auto mb-3">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#475569" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+            </div>
+            <p class="text-sm text-slate-500">Henüz rehber yok.</p>
+            <p class="text-xs text-slate-600 mt-1">"Anketlerden İçe Aktar" ile otomatik oluşturabilirsiniz.</p>
+        </div>`;
+        return;
+    }
+    grid.innerHTML = list.map(r => {
+        const puan = r.ort_rehber != null ? r.ort_rehber.toFixed(1) : (r.ort_genel != null ? r.ort_genel.toFixed(1) : '—');
+        const puanNum = r.ort_rehber ?? r.ort_genel ?? null;
+        const puanColor = puanNum == null ? '#475569'
+            : puanNum >= 4.5 ? '#34D399'
+            : puanNum >= 3.5 ? '#FBBF24'
+            : '#F87171';
+        const aktifBadge = r.aktif
+            ? `<span style="font-size:10px;padding:2px 7px;border-radius:999px;background:rgba(52,211,153,.12);color:#34D399;border:1px solid rgba(52,211,153,.25);">Aktif</span>`
+            : `<span style="font-size:10px;padding:2px 7px;border-radius:999px;background:rgba(100,116,139,.12);color:#64748B;border:1px solid rgba(100,116,139,.2);">Pasif</span>`;
+        return `
+        <div class="card cursor-pointer hover:border-blue-700/40 transition-colors group" onclick="openRehberDetail(${r.id})"
+             style="border-color:rgba(255,255,255,0.07);" data-ad="${(r.ad_soyad||'').toLowerCase()}">
+            <div class="flex items-start justify-between mb-3">
+                <div class="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-white flex-shrink-0"
+                     style="background:linear-gradient(135deg,#1d4ed8,#6366f1);">
+                    ${r.ad_soyad.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase()}
+                </div>
+                <div class="flex items-center gap-1.5">
+                    ${aktifBadge}
+                    <button onclick="event.stopPropagation();openRehberModal(${r.id})"
+                            class="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-slate-300 transition-all p-1 rounded">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
+                </div>
+            </div>
+            <div class="font-semibold text-slate-100 text-sm mb-1 truncate">${r.ad_soyad}</div>
+            ${r.e_posta ? `<div class="text-xs text-slate-500 truncate mb-2">${r.e_posta}</div>` : '<div class="mb-2"></div>'}
+            <div class="flex items-end justify-between mt-3 pt-3 border-t border-white/5">
+                <div class="text-center">
+                    <div class="text-base font-bold" style="color:${puanColor};">${puan}</div>
+                    <div class="text-slate-600" style="font-size:10px;">puan</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-base font-bold text-slate-300">${r.anket_sayisi}</div>
+                    <div class="text-slate-600" style="font-size:10px;">anket</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-base font-bold text-slate-300">${r.tur_sayisi}</div>
+                    <div class="text-slate-600" style="font-size:10px;">tur</div>
+                </div>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function filterRehberCards(q) {
+    const lq = q.toLowerCase();
+    const filtered = lq ? _rehberlerData.filter(r => r.ad_soyad.toLowerCase().includes(lq)) : _rehberlerData;
+    renderRehberCards(filtered);
+}
+
+/* ── Rehber Modal (ekle/düzenle) ──────────────────────────── */
+function openRehberModal(id = null) {
+    _editingRehberId = id;
+    document.getElementById('rehberModalTitle').textContent = id ? 'Rehber Düzenle' : 'Rehber Ekle';
+    if (id) {
+        const r = _rehberlerData.find(x => x.id === id);
+        if (r) {
+            document.getElementById('rmAdSoyad').value  = r.ad_soyad  || '';
+            document.getElementById('rmEposta').value   = r.e_posta   || '';
+            document.getElementById('rmTelefon').value  = r.telefon   || '';
+            document.getElementById('rmNotlar').value   = r.notlar    || '';
+            document.getElementById('rmAktif').checked  = r.aktif;
+        }
+    } else {
+        document.getElementById('rmAdSoyad').value = '';
+        document.getElementById('rmEposta').value  = '';
+        document.getElementById('rmTelefon').value = '';
+        document.getElementById('rmNotlar').value  = '';
+        document.getElementById('rmAktif').checked = true;
+    }
+    const m = document.getElementById('rehberModal');
+    m.classList.remove('hidden'); m.classList.add('flex');
+}
+
+function closeRehberModal() {
+    const m = document.getElementById('rehberModal');
+    m.classList.add('hidden'); m.classList.remove('flex');
+    _editingRehberId = null;
+}
+
+async function saveRehber() {
+    const body = {
+        ad_soyad: document.getElementById('rmAdSoyad').value.trim(),
+        e_posta:  document.getElementById('rmEposta').value.trim(),
+        telefon:  document.getElementById('rmTelefon').value.trim(),
+        notlar:   document.getElementById('rmNotlar').value.trim(),
+        aktif:    document.getElementById('rmAktif').checked,
+    };
+    if (!body.ad_soyad) { alert('Ad soyad zorunlu'); return; }
+    const method = _editingRehberId ? 'PUT' : 'POST';
+    const url    = _editingRehberId ? `/api/rehberler/${_editingRehberId}` : '/api/rehberler';
+    const res = await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const data = await res.json();
+    if (data.ok) {
+        closeRehberModal();
+        loadRehberler();
+    } else {
+        alert(data.hata || 'Kayıt başarısız');
+    }
+}
+
+/* ── Rehber Detay Modal ───────────────────────────────────── */
+let _detailRehberId = null;
+function openRehberDetail(id) {
+    _detailRehberId = id;
+    const r = _rehberlerData.find(x => x.id === id);
+    if (!r) return;
+    document.getElementById('rdmName').textContent = r.ad_soyad;
+    // İstatistikler
+    const puan = r.ort_rehber != null ? r.ort_rehber.toFixed(1) : (r.ort_genel != null ? r.ort_genel.toFixed(1) : '—');
+    document.getElementById('rdmStats').innerHTML = `
+        <div class="text-center p-3 rounded-lg" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);">
+            <div class="text-xl font-bold text-emerald-400">${puan}</div>
+            <div class="text-xs text-slate-500 mt-1">Ort. Puan</div>
+        </div>
+        <div class="text-center p-3 rounded-lg" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);">
+            <div class="text-xl font-bold text-blue-400">${r.anket_sayisi}</div>
+            <div class="text-xs text-slate-500 mt-1">Anket</div>
+        </div>
+        <div class="text-center p-3 rounded-lg" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);">
+            <div class="text-xl font-bold text-purple-400">${r.tur_sayisi}</div>
+            <div class="text-xs text-slate-500 mt-1">Tur</div>
+        </div>`;
+    // Anketleri yükle
+    document.getElementById('rdmAnketler').innerHTML = '<div class="text-xs text-slate-600 text-center py-4">Yükleniyor...</div>';
+    const m = document.getElementById('rehberDetailModal');
+    m.classList.remove('hidden'); m.classList.add('flex');
+    fetch(`/api/rehberler/${id}/anketler`)
+        .then(r => r.json())
+        .then(d => {
+            if (!d.ok || !d.anketler.length) {
+                document.getElementById('rdmAnketler').innerHTML = '<div class="text-xs text-slate-600 text-center py-4">Henüz anket yok</div>';
+                return;
+            }
+            document.getElementById('rdmAnketler').innerHTML = d.anketler.map(a => {
+                const pColor = a.genel_puan >= 4.5 ? '#34D399' : a.genel_puan >= 3.5 ? '#FBBF24' : '#F87171';
+                return `<div class="flex items-center gap-3 py-2 border-b border-white/5">
+                    <div class="text-sm font-bold flex-shrink-0" style="color:${pColor};min-width:28px;">${a.genel_puan != null ? a.genel_puan.toFixed(1) : '—'}</div>
+                    <div class="flex-1 min-w-0">
+                        <div class="text-xs text-slate-300 truncate">${a.musteri_adi || '—'}</div>
+                        <div class="text-slate-600" style="font-size:10px;">${a.survey_date || ''} ${a.jt_kodu ? '· '+a.jt_kodu : ''}</div>
+                    </div>
+                    ${a.yorum ? `<div class="text-slate-500 text-xs truncate max-w-[120px]" title="${a.yorum.replace(/"/g,'')}">${a.yorum.substring(0,40)}...</div>` : ''}
+                </div>`;
+            }).join('');
+        });
+}
+
+function closeRehberDetail() {
+    const m = document.getElementById('rehberDetailModal');
+    m.classList.add('hidden'); m.classList.remove('flex');
+    _detailRehberId = null;
+}
+
+function editRehberFromDetail() {
+    closeRehberDetail();
+    if (_detailRehberId) openRehberModal(_detailRehberId);
+}
+
+/* ── Otomatik işlemler ────────────────────────────────────── */
+async function rehberAutoImport() {
+    const btn = event.target.closest('button');
+    btn.disabled = true; btn.textContent = 'İçe aktarılıyor...';
+    try {
+        const res = await fetch('/api/rehberler/auto-import', { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+            showToastR(`✓ ${data.eklendi} rehber eklendi, ${data.atlandi} zaten vardı`, 'success');
+            loadRehberler();
+        } else {
+            showToastR(data.hata || 'Hata', 'error');
+        }
+    } catch { showToastR('Bağlantı hatası', 'error'); }
+    finally {
+        btn.disabled = false;
+        btn.innerHTML = `<svg class="w-3 h-3 mr-1 inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Anketlerden İçe Aktar`;
+    }
+}
+
+async function rehberLinkAll() {
+    const btn = event.target.closest('button');
+    btn.disabled = true; btn.textContent = 'Eşleştiriliyor...';
+    try {
+        const res = await fetch('/api/rehberler/link-all', { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+            showToastR(`✓ ${data.baglandi} anket rehberlere bağlandı`, 'success');
+            loadRehberler();
+        } else {
+            showToastR(data.hata || 'Hata', 'error');
+        }
+    } catch { showToastR('Bağlantı hatası', 'error'); }
+    finally {
+        btn.disabled = false;
+        btn.innerHTML = `<svg class="w-3 h-3 mr-1 inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Anketleri Eşleştir`;
+    }
+}
+
+function showToastR(msg, type = 'success') {
+    const t = document.createElement('div');
+    const color = type === 'error'
+        ? 'bg-red-900/80 border-red-700/50 text-red-300'
+        : 'bg-green-900/80 border-green-700/50 text-green-300';
+    t.className = `fixed bottom-6 right-6 z-50 px-4 py-3 rounded-lg border text-sm shadow-xl ${color} transition-opacity`;
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 400); }, 3500);
+}
 </script>
 {% endblock %}

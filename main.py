@@ -457,6 +457,29 @@ def tablo_olustur():
             "ALTER TABLE historical_surveys ADD COLUMN IF NOT EXISTS "
             "puan_detay JSONB"
         ))
+        # ── Rehberler tablosu ────────────────────────────────────────────
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS rehberler (
+                id          SERIAL PRIMARY KEY,
+                ad_soyad    VARCHAR(300) NOT NULL,
+                e_posta     VARCHAR(200) DEFAULT '',
+                telefon     VARCHAR(50)  DEFAULT '',
+                aktif       BOOLEAN      DEFAULT TRUE,
+                notlar      TEXT         DEFAULT '',
+                created_at  TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                updated_at  TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text(
+            "ALTER TABLE historical_surveys ADD COLUMN IF NOT EXISTS "
+            "rehber_id INTEGER REFERENCES rehberler(id) ON DELETE SET NULL"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_hs_rehber_id ON historical_surveys(rehber_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_rehberler_ad ON rehberler(ad_soyad)"
+        ))
         # unique: aynı yanıt iki kez girilmez
         conn.execute(text("""
             DO $$
@@ -2003,6 +2026,224 @@ def survey_search_tours(request: Request, q: str = ""):
             {
                 "id": r[0], "jt_kodu": r[1],
                 "tur_adi": r[2], "kalkis_tarihi": r[3], "rehber": r[4]
+            }
+            for r in rows
+        ]
+    })
+
+
+# ── Rehber API route'ları ────────────────────────────────────────────────────
+
+@app.get("/api/rehberler")
+def rehberler_listesi(request: Request):
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+    with db_engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT
+                r.id, r.ad_soyad, r.e_posta, r.telefon, r.aktif, r.notlar, r.created_at,
+                COUNT(hs.id)                                                     AS anket_sayisi,
+                ROUND(AVG(CASE WHEN hs.genel_puan IS NOT NULL
+                          THEN CAST(hs.genel_puan AS NUMERIC) END), 2)           AS ort_genel,
+                ROUND(AVG(CASE WHEN hs.rehber_puani IS NOT NULL
+                          THEN CAST(hs.rehber_puani AS NUMERIC) END), 2)         AS ort_rehber,
+                COUNT(DISTINCT hs.matched_jt_kodu)
+                    FILTER (WHERE hs.matched_jt_kodu != '')                      AS tur_sayisi
+            FROM rehberler r
+            LEFT JOIN historical_surveys hs ON hs.rehber_id = r.id
+                AND hs.match_status = 'matched'
+            GROUP BY r.id
+            ORDER BY r.aktif DESC, r.ad_soyad
+        """)).fetchall()
+    return JSONResponse({
+        "ok": True,
+        "rehberler": [
+            {
+                "id":          r[0],
+                "ad_soyad":    r[1],
+                "e_posta":     r[2] or "",
+                "telefon":     r[3] or "",
+                "aktif":       r[4],
+                "notlar":      r[5] or "",
+                "created_at":  r[6].isoformat() if r[6] else None,
+                "anket_sayisi": int(r[7] or 0),
+                "ort_genel":   float(r[8]) if r[8] is not None else None,
+                "ort_rehber":  float(r[9]) if r[9] is not None else None,
+                "tur_sayisi":  int(r[10] or 0),
+            }
+            for r in rows
+        ]
+    })
+
+
+@app.post("/api/rehberler")
+async def rehber_ekle(request: Request):
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+    body = await request.json()
+    ad_soyad = (body.get("ad_soyad") or "").strip()
+    if not ad_soyad:
+        return JSONResponse({"hata": "Ad soyad zorunlu"}, status_code=400)
+    with db_engine.connect() as conn:
+        row = conn.execute(text("""
+            INSERT INTO rehberler (ad_soyad, e_posta, telefon, aktif, notlar)
+            VALUES (:ad, :ep, :tel, :aktif, :not)
+            ON CONFLICT DO NOTHING
+            RETURNING id
+        """), {
+            "ad": ad_soyad,
+            "ep": (body.get("e_posta") or "").strip(),
+            "tel": (body.get("telefon") or "").strip(),
+            "aktif": body.get("aktif", True),
+            "not": (body.get("notlar") or "").strip(),
+        }).fetchone()
+        conn.commit()
+    if not row:
+        return JSONResponse({"hata": "Eklenemedi"}, status_code=500)
+    return JSONResponse({"ok": True, "id": row[0]})
+
+
+@app.put("/api/rehberler/{rid}")
+async def rehber_guncelle(rid: int, request: Request):
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+    body = await request.json()
+    with db_engine.connect() as conn:
+        conn.execute(text("""
+            UPDATE rehberler SET
+                ad_soyad   = :ad,
+                e_posta    = :ep,
+                telefon    = :tel,
+                aktif      = :aktif,
+                notlar     = :not,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :id
+        """), {
+            "id":    rid,
+            "ad":    (body.get("ad_soyad") or "").strip(),
+            "ep":    (body.get("e_posta") or "").strip(),
+            "tel":   (body.get("telefon") or "").strip(),
+            "aktif": body.get("aktif", True),
+            "not":   (body.get("notlar") or "").strip(),
+        })
+        conn.commit()
+    return JSONResponse({"ok": True})
+
+
+@app.delete("/api/rehberler/{rid}")
+def rehber_sil(rid: int, request: Request):
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+    with db_engine.connect() as conn:
+        # Önce bu rehbere bağlı anketleri bağsız bırak
+        conn.execute(text("UPDATE historical_surveys SET rehber_id=NULL WHERE rehber_id=:id"), {"id": rid})
+        conn.execute(text("DELETE FROM rehberler WHERE id=:id"), {"id": rid})
+        conn.commit()
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/rehberler/auto-import")
+def rehber_auto_import(request: Request):
+    """historical_surveys'deki benzersiz rehber_adi'larını rehberler tablosuna aktar."""
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+    with db_engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT DISTINCT TRIM(rehber_adi) AS ad
+            FROM historical_surveys
+            WHERE rehber_adi IS NOT NULL AND TRIM(rehber_adi) != ''
+            ORDER BY ad
+        """)).fetchall()
+        eklendi = atlandi = 0
+        for r in rows:
+            ad = r[0].strip()
+            if not ad:
+                continue
+            result = conn.execute(text("""
+                INSERT INTO rehberler (ad_soyad) VALUES (:ad)
+                ON CONFLICT DO NOTHING
+                RETURNING id
+            """), {"ad": ad})
+            if result.rowcount > 0:
+                eklendi += 1
+            else:
+                atlandi += 1
+        conn.commit()
+    return JSONResponse({"ok": True, "eklendi": eklendi, "atlandi": atlandi})
+
+
+@app.post("/api/rehberler/{rid}/link-surveys")
+def rehber_link_surveys(rid: int, request: Request):
+    """Rehber adıyla eşleşen tüm anketleri bu rehbere bağla."""
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+    with db_engine.connect() as conn:
+        rehber = conn.execute(
+            text("SELECT ad_soyad FROM rehberler WHERE id=:id"), {"id": rid}
+        ).fetchone()
+        if not rehber:
+            return JSONResponse({"hata": "Rehber bulunamadı"}, status_code=404)
+        result = conn.execute(text("""
+            UPDATE historical_surveys
+            SET rehber_id = :rid
+            WHERE LOWER(TRIM(rehber_adi)) = LOWER(:ad)
+              AND rehber_id IS NULL
+        """), {"rid": rid, "ad": rehber[0]})
+        conn.commit()
+    return JSONResponse({"ok": True, "baglandi": result.rowcount})
+
+
+@app.post("/api/rehberler/link-all")
+def rehber_link_all(request: Request):
+    """Tüm rehberleri isim eşleşmesiyle anketlere bağla."""
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+    with db_engine.connect() as conn:
+        result = conn.execute(text("""
+            UPDATE historical_surveys hs
+            SET rehber_id = r.id
+            FROM rehberler r
+            WHERE LOWER(TRIM(hs.rehber_adi)) = LOWER(r.ad_soyad)
+              AND hs.rehber_id IS NULL
+        """))
+        conn.commit()
+    return JSONResponse({"ok": True, "baglandi": result.rowcount})
+
+
+@app.get("/api/rehberler/{rid}/anketler")
+def rehber_anketleri(rid: int, request: Request):
+    """Bir rehberin tüm anketleri."""
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+    with db_engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT id, survey_date, musteri_adi, genel_puan, rehber_puani,
+                   matched_jt_kodu, match_status, yorum
+            FROM historical_surveys
+            WHERE rehber_id = :rid
+            ORDER BY survey_date DESC, id DESC
+            LIMIT 50
+        """), {"rid": rid}).fetchall()
+    return JSONResponse({
+        "ok": True,
+        "anketler": [
+            {
+                "id":            r[0],
+                "survey_date":   r[1] or "",
+                "musteri_adi":   r[2] or "",
+                "genel_puan":    float(r[3]) if r[3] is not None else None,
+                "rehber_puani":  float(r[4]) if r[4] is not None else None,
+                "jt_kodu":       r[5] or "",
+                "match_status":  r[6] or "",
+                "yorum":         r[7] or "",
             }
             for r in rows
         ]
