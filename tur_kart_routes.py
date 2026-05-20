@@ -101,7 +101,7 @@ def create_tur_kart_router(db_engine, templates) -> APIRouter:
 
     @router.get("/api/gordios/debug-login")
     def gordios_debug_login(request: Request):
-        """Login sayfasındaki input'ları gösterir — credentials girilmez."""
+        """Login'i dener, sonucu ve hata mesajını döndürür."""
         from main import oturum_kullanicisi
         kullanici = oturum_kullanicisi(request)
         if not kullanici or kullanici["rol"] != "admin":
@@ -111,38 +111,58 @@ def create_tur_kart_router(db_engine, templates) -> APIRouter:
         except ImportError:
             return JSONResponse({"hata": "playwright kurulu değil"})
         try:
-            from gordios_scraper import GORDIOS_LOGIN_URL, GORDIOS_INSTITUTION, GORDIOS_USERNAME
+            from gordios_scraper import (GORDIOS_LOGIN_URL, GORDIOS_INSTITUTION,
+                                         GORDIOS_USERNAME, GORDIOS_PASSWORD,
+                                         GORDIOS_BO_BASE)
+            import base64
             with sync_playwright() as pw:
                 browser = pw.chromium.launch(headless=True,
                     args=["--no-sandbox", "--disable-dev-shm-usage"])
                 page = browser.new_page()
                 page.goto(GORDIOS_LOGIN_URL, wait_until="networkidle", timeout=30_000)
-                inputs = []
-                for inp in page.query_selector_all("input"):
-                    inputs.append({
-                        "type":        inp.get_attribute("type"),
-                        "name":        inp.get_attribute("name"),
-                        "id":          inp.get_attribute("id"),
-                        "placeholder": inp.get_attribute("placeholder"),
-                        "visible":     inp.is_visible(),
-                        "value":       inp.get_attribute("value"),
-                    })
-                buttons = []
-                for btn in page.query_selector_all("button"):
-                    buttons.append({
-                        "type": btn.get_attribute("type"),
-                        "text": btn.inner_text()[:50],
-                        "visible": btn.is_visible(),
-                    })
-                url = page.url
+                url_before = page.url
+
+                # Doldur
+                page.fill('input[name="ScopeCode"]', GORDIOS_INSTITUTION)
+                page.fill('input[name="Username"]', GORDIOS_USERNAME)
+                page.fill('input[name="Password"]', GORDIOS_PASSWORD)
+
+                # Submit + navigation bekle
+                page.click('input[type="submit"]')
+                try:
+                    page.wait_for_url(f"{GORDIOS_BO_BASE}/**", timeout=20_000)
+                except Exception:
+                    page.wait_for_load_state("networkidle", timeout=15_000)
+
+                url_after = page.url
+                # Sayfadaki hata mesajını al
+                error_text = ""
+                for sel in [".error", ".alert", ".validation-summary-errors",
+                            '[class*="error"]', '[class*="alert"]', '.text-danger']:
+                    try:
+                        el = page.query_selector(sel)
+                        if el:
+                            error_text = el.inner_text()[:300]
+                            break
+                    except Exception:
+                        pass
+                # Screenshot
+                ss_b64 = base64.b64encode(page.screenshot()).decode()
+                # Page text snippet
+                page_text = page.inner_text("body")[:500] if page.query_selector("body") else ""
                 browser.close()
+
             return JSONResponse({
-                "url": url,
-                "inputs": inputs,
-                "buttons": buttons,
+                "url_before": url_before,
+                "url_after":  url_after,
+                "login_ok":   GORDIOS_BO_BASE in url_after,
+                "error_text": error_text,
+                "page_text":  page_text,
+                "screenshot_base64": ss_b64[:500] + "...",
                 "env": {
                     "institution": GORDIOS_INSTITUTION,
-                    "username_set": bool(GORDIOS_USERNAME),
+                    "username":    GORDIOS_USERNAME,
+                    "password_len": len(GORDIOS_PASSWORD),
                 }
             })
         except Exception as e:
