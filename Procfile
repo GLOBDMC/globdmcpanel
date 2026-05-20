@@ -1,1 +1,1 @@
-web: playwright install chromium --with-deps && uvicorn main:app --host 0.0.0.0 --port $PORT
+web: python -m playwright install chromium --with-deps; uvicorn main:app --host 0.0.0.0 --port $PORT
