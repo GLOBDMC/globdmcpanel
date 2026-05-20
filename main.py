@@ -2127,6 +2127,21 @@ def rehberler_listesi(request: Request):
     if not kullanici or kullanici["rol"] != "admin":
         return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
     _ensure_rehberler_table()
+    def _build_rehber_rows(rows, with_stats: bool):
+        result = []
+        for r in rows:
+            item = {
+                "id":       r[0], "ad_soyad": r[1],
+                "e_posta":  r[2] or "", "telefon": r[3] or "",
+                "aktif":    r[4], "notlar": r[5] or "",
+                "created_at": r[6].isoformat() if r[6] else None,
+                "anket_sayisi": int(r[7] or 0) if with_stats else 0,
+                "ort_genel":  float(r[8]) if with_stats and r[8] is not None else None,
+                "ort_rehber": float(r[9]) if with_stats and r[9] is not None else None,
+                "tur_sayisi": int(r[10] or 0) if with_stats else 0,
+            }
+            result.append(item)
+        return result
     try:
         with db_engine.connect() as conn:
             rows = conn.execute(text("""
@@ -2145,28 +2160,22 @@ def rehberler_listesi(request: Request):
                 GROUP BY r.id
                 ORDER BY r.aktif DESC, r.ad_soyad
             """)).fetchall()
-        return JSONResponse({
-            "ok": True,
-            "rehberler": [
-                {
-                    "id":           r[0],
-                    "ad_soyad":     r[1],
-                    "e_posta":      r[2] or "",
-                    "telefon":      r[3] or "",
-                    "aktif":        r[4],
-                    "notlar":       r[5] or "",
-                    "created_at":   r[6].isoformat() if r[6] else None,
-                    "anket_sayisi": int(r[7] or 0),
-                    "ort_genel":    float(r[8]) if r[8] is not None else None,
-                    "ort_rehber":   float(r[9]) if r[9] is not None else None,
-                    "tur_sayisi":   int(r[10] or 0),
-                }
-                for r in rows
-            ]
-        })
+        return JSONResponse({"ok": True, "rehberler": _build_rehber_rows(rows, True)})
     except Exception as exc:
-        logger.error("rehberler_listesi hata: %s", exc, exc_info=True)
-        return JSONResponse({"ok": False, "hata": str(exc)}, status_code=500)
+        # historical_surveys tablosu henüz yoksa sadece rehberler tablosundan dön
+        logger.warning("rehberler_listesi JOIN sorgusu başarısız, fallback: %s", exc)
+        try:
+            with db_engine.connect() as conn:
+                rows = conn.execute(text("""
+                    SELECT id, ad_soyad, e_posta, telefon, aktif, notlar, created_at,
+                           0, NULL, NULL, 0
+                    FROM rehberler
+                    ORDER BY aktif DESC, ad_soyad
+                """)).fetchall()
+            return JSONResponse({"ok": True, "rehberler": _build_rehber_rows(rows, False)})
+        except Exception as exc2:
+            logger.error("rehberler_listesi fallback hata: %s", exc2, exc_info=True)
+            return JSONResponse({"ok": False, "hata": str(exc2)}, status_code=500)
 
 
 @app.post("/api/rehberler")
