@@ -1297,10 +1297,11 @@ function syncSinglePorsline(surveyId, btn) {
                 btn.className = 'text-xs px-2.5 py-1 rounded font-medium bg-green-600/20 text-green-400 border border-green-600/30';
                 const statusLabel = d.match_status || '—';
                 const confLabel   = d.confidence != null ? `${d.confidence}%` : '—';
-                const zatenVar = d.zaten_var ?? 0;
+                const zatenVar  = d.zaten_var   ?? 0;
+                const yanit     = d.yanit_sayisi ?? 0;
                 const yeniLabel = d.eklenen > 0
                     ? `+${d.eklenen} kayıt`
-                    : (zatenVar > 0 ? `✓ ${zatenVar} zaten DB'de` : `+0 kayıt`);
+                    : (zatenVar > 0 ? `✓ ${zatenVar} zaten DB'de` : `+0 (API:${yanit})`);
                 statusEl.textContent = `${yeniLabel} · ${statusLabel}(${confLabel})`;
                 statusEl.className = 'text-xs ml-1 ' + (d.eklenen > 0 ? 'text-green-400' : 'text-slate-500');
                 loadStats();

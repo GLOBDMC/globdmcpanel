@@ -2650,6 +2650,15 @@ def porsline_sync_survey(survey_id: str, request: Request):
         header = resp["header"]
         rows   = resp["body"]
 
+    logger.info(
+        "PORSLINE_SYNC [%s] rows=%d header_len=%d use_q=%s endpoint=%s",
+        survey_id, len(rows), len(header) if header else 0,
+        use_question_parse, resp.get("_endpoint", "n/a")
+    )
+    if rows:
+        logger.info("PORSLINE_SYNC [%s] ilk row tipi=%s örnek=%s",
+                    survey_id, type(rows[0]).__name__, str(rows[0])[:200])
+
     # Turları yükle → matcher kur (yanıt olmasa bile match bilgisi response'da olsun)
     tours = _survey_load_tours()
     matcher = SurveyMatcher(tours)
