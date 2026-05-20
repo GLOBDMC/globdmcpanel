@@ -458,34 +458,6 @@ def tablo_olustur():
             "ALTER TABLE historical_surveys ADD COLUMN IF NOT EXISTS "
             "puan_detay JSONB"
         ))
-        # ── Rehberler tablosu ────────────────────────────────────────────
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS rehberler (
-                id          SERIAL PRIMARY KEY,
-                ad_soyad    VARCHAR(300) NOT NULL,
-                e_posta     VARCHAR(200) DEFAULT '',
-                telefon     VARCHAR(50)  DEFAULT '',
-                aktif       BOOLEAN      DEFAULT TRUE,
-                notlar      TEXT         DEFAULT '',
-                created_at  TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
-                updated_at  TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
-            )
-        """))
-        conn.execute(text(
-            "ALTER TABLE historical_surveys ADD COLUMN IF NOT EXISTS "
-            "rehber_id INTEGER REFERENCES rehberler(id) ON DELETE SET NULL"
-        ))
-        conn.execute(text(
-            "CREATE INDEX IF NOT EXISTS idx_hs_rehber_id ON historical_surveys(rehber_id)"
-        ))
-        conn.execute(text(
-            "CREATE INDEX IF NOT EXISTS idx_rehberler_ad ON rehberler(ad_soyad)"
-        ))
-        # turlar.rehber_id → rehberler tablosu oluştuktan SONRA ekle
-        conn.execute(text(
-            "ALTER TABLE turlar ADD COLUMN IF NOT EXISTS "
-            "rehber_id INTEGER REFERENCES rehberler(id) ON DELETE SET NULL"
-        ))
         # unique: aynı yanıt iki kez girilmez
         conn.execute(text("""
             DO $$
@@ -561,6 +533,41 @@ def tablo_olustur():
         create_snapshot_table(db_engine)
     except Exception as e:
         logger.error("Snapshot tablosu olusturulamadi: %s", e)
+
+    # Rehberler tablosu — ayrı bağlantıda, izole
+    try:
+        with db_engine.connect() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS rehberler (
+                    id          SERIAL PRIMARY KEY,
+                    ad_soyad    VARCHAR(300) NOT NULL,
+                    e_posta     VARCHAR(200) DEFAULT '',
+                    telefon     VARCHAR(50)  DEFAULT '',
+                    aktif       BOOLEAN      DEFAULT TRUE,
+                    notlar      TEXT         DEFAULT '',
+                    created_at  TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                    updated_at  TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_rehberler_ad ON rehberler(ad_soyad)"
+            ))
+            conn.execute(text(
+                "ALTER TABLE historical_surveys ADD COLUMN IF NOT EXISTS "
+                "rehber_id INTEGER REFERENCES rehberler(id) ON DELETE SET NULL"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_hs_rehber_id ON historical_surveys(rehber_id)"
+            ))
+            conn.execute(text(
+                "ALTER TABLE turlar ADD COLUMN IF NOT EXISTS "
+                "rehber_id INTEGER REFERENCES rehberler(id) ON DELETE SET NULL"
+            ))
+            conn.commit()
+        logger.info("Rehberler tablosu hazir")
+    except Exception as e:
+        logger.error("Rehberler tablosu olusturulamadi: %s", e)
+
     logger.info("Tablolar hazir")
 
 
