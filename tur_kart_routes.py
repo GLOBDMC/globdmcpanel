@@ -339,15 +339,15 @@ def gordios_sync_all_tours(db_engine):
 
 def _run_gordios_sync(jt_kodu: str) -> dict:
     """Playwright scraper'ı thread'de çalıştırır.
-    Gordios AbroadTourPlan → Periyot Kodu alanına JT kodu → Listele → tura tıkla.
+    Gordios AbroadTourPlan → Periyot Kodu alanına JT kodu → Listele → tura tıkla → PDF parse.
     """
     from gordios_scraper import scrape_tour_detail
     raw = scrape_tour_detail(jt_kodu)
     return {
-        "plan_id":       raw.get("plan_id"),
-        "pdf_url":       raw.get("pdf_url"),
-        "ucus_json":     _json.dumps(raw.get("ucus_listesi", []), ensure_ascii=False),
-        "program_json":  "[]",
-        "program_baslik": "",
-        "hata":          raw.get("hata"),
+        "plan_id":        raw.get("plan_id"),
+        "pdf_url":        raw.get("pdf_url"),
+        "ucus_json":      _json.dumps(raw.get("ucus_listesi", []), ensure_ascii=False),
+        "program_json":   _json.dumps(raw.get("program_gunler", []), ensure_ascii=False),
+        "program_baslik": raw.get("program_baslik", ""),
+        "hata":           raw.get("hata"),
     }
