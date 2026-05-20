@@ -1280,33 +1280,82 @@ def _apify_post(path: str, body: dict = None) -> dict:
         return {"error": str(e)}
 
 
-def _apify_actor_status(actor_id: str) -> dict:
-    """Bir task ya da actor'ın son run bilgisini döndürür. Task endpoint önce denenir."""
-    result = _apify_get(f"/actor-tasks/{actor_id}/runs/last")
-    if result.get("error") == 404:
-        result = _apify_get(f"/acts/{actor_id}/runs/last")
-    data = result.get("data", {})
+# Task ID → Actor ID cache (uygulama ömrü boyunca saklanır)
+_apify_act_id_cache: dict = {}
+
+def _apify_get_act_id(task_id: str) -> str:
+    """Task'a ait actor ID'yi döndürür; cache'lenir."""
+    if task_id not in _apify_act_id_cache:
+        detail = _apify_get(f"/actor-tasks/{task_id}")
+        act_id = (detail.get("data") or {}).get("actId", "")
+        _apify_act_id_cache[task_id] = act_id
+    return _apify_act_id_cache[task_id]
+
+
+def _apify_actor_status(task_id: str) -> dict:
+    """
+    Task son run'ı VE ilgili actor son run'ını karşılaştırır,
+    hangisi daha güncel ise onu döndürür.
+    Böylece Apify schedule'ı actor'ı doğrudan çalıştırsa da yakalanır.
+    """
+    from datetime import datetime as _dt
+
+    def parse_ts(iso: str):
+        if not iso:
+            return None
+        try:
+            return _dt.fromisoformat(iso.replace("Z", "+00:00"))
+        except Exception:
+            return None
+
+    def extract(data: dict) -> dict:
+        if not data:
+            return {}
+        started  = data.get("startedAt")
+        finished = data.get("finishedAt")
+        duration = None
+        s = parse_ts(started)
+        f = parse_ts(finished)
+        if s and f:
+            duration = round((f - s).total_seconds())
+        return {
+            "status":       data.get("status", "UNKNOWN"),
+            "startedAt":    started,
+            "finishedAt":   finished,
+            "durationSecs": duration,
+            "runId":        data.get("id"),
+        }
+
+    # 1) Task son run'ı
+    task_data = (_apify_get(f"/actor-tasks/{task_id}/runs/last")).get("data") or {}
+
+    # 2) Actor son run'ı (schedule actor'ı doğrudan çalıştırıyor olabilir)
+    act_id    = _apify_get_act_id(task_id)
+    actor_data = {}
+    if act_id:
+        actor_data = (_apify_get(f"/acts/{act_id}/runs/last")).get("data") or {}
+
+    # 3) Hangisi daha güncel?
+    ts_task  = parse_ts((task_data  or {}).get("startedAt", ""))
+    ts_actor = parse_ts((actor_data or {}).get("startedAt", ""))
+
+    if ts_actor and (not ts_task or ts_actor > ts_task):
+        data = actor_data
+    elif task_data:
+        data = task_data
+    else:
+        data = {}
+
     if not data:
         return {"status": "NEVER_RUN", "startedAt": None, "finishedAt": None, "durationSecs": None}
 
-    started  = data.get("startedAt")
-    finished = data.get("finishedAt")
-    duration = None
-    if started and finished:
-        from datetime import datetime as _dt
-        try:
-            s = _dt.fromisoformat(started.replace("Z", "+00:00"))
-            f = _dt.fromisoformat(finished.replace("Z", "+00:00"))
-            duration = round((f - s).total_seconds())
-        except Exception:
-            pass
-
+    result = extract(data)
     return {
-        "status":      data.get("status", "UNKNOWN"),
-        "startedAt":   started,
-        "finishedAt":  finished,
-        "durationSecs": duration,
-        "runId":       data.get("id"),
+        "status":       result.get("status", "UNKNOWN"),
+        "startedAt":    result.get("startedAt"),
+        "finishedAt":   result.get("finishedAt"),
+        "durationSecs": result.get("durationSecs"),
+        "runId":        result.get("runId"),
     }
 
 
