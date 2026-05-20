@@ -1,0 +1,562 @@
+{% extends "base.html" %}
+{% block title %}Misafir Deneyimi{% endblock %}
+{% block breadcrumb %}Misafir Deneyimi{% endblock %}
+
+{% block styles %}
+<style>
+:root {
+  --accent: #3B82F6;
+  --accent2: #8B5CF6;
+  --green: #10B981;
+  --amber: #F59E0B;
+  --red: #EF4444;
+  --surface: #0f1623;
+  --surface2: #151e2d;
+  --border: rgba(255,255,255,0.07);
+}
+
+/* ── Stat kartları ─────────────────────────────────── */
+.stat-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px 20px;
+}
+.stat-val  { font-size: 1.75rem; font-weight: 700; line-height: 1; }
+.stat-lbl  { font-size: .72rem; color: #64748B; margin-top: 4px; text-transform: uppercase; letter-spacing: .05em; }
+
+/* ── Sekmeler ──────────────────────────────────────── */
+.tab-btn {
+  padding: 7px 16px; border-radius: 8px; border: 1px solid transparent;
+  font-size: .8rem; font-weight: 500; color: #64748B; cursor: pointer;
+  transition: all .15s;
+}
+.tab-btn:hover  { color: #94A3B8; background: rgba(255,255,255,0.04); }
+.tab-btn.active { background: rgba(59,130,246,.12); border-color: rgba(59,130,246,.25); color: #60A5FA; }
+
+/* ── Rehber kartları ───────────────────────────────── */
+.guide-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px;
+  cursor: pointer;
+  transition: border-color .15s, transform .15s;
+}
+.guide-card:hover { border-color: rgba(59,130,246,.35); transform: translateY(-1px); }
+.guide-card.active-card { border-color: #3B82F6; background: rgba(59,130,246,.06); }
+
+.stars { color: #F59E0B; letter-spacing: 1px; }
+
+.puan-bar-bg { background: rgba(255,255,255,.06); border-radius: 99px; height: 5px; }
+.puan-bar    { border-radius: 99px; height: 5px; background: linear-gradient(90deg,#3B82F6,#8B5CF6); }
+
+/* ── Filtre inputları ──────────────────────────────── */
+.f-input {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: .8rem;
+  color: #e2e8f0;
+  width: 100%;
+  outline: none;
+  transition: border-color .15s;
+}
+.f-input:focus { border-color: rgba(59,130,246,.4); }
+.f-input::placeholder { color: #475569; }
+
+/* ── Anket tablosu ─────────────────────────────────── */
+.anket-tablo { width: 100%; border-collapse: separate; border-spacing: 0 4px; }
+.anket-tablo thead th {
+  font-size: .7rem; text-transform: uppercase; letter-spacing: .06em;
+  color: #475569; padding: 6px 12px; text-align: left; white-space: nowrap;
+}
+.anket-row {
+  background: var(--surface2);
+  border-radius: 10px;
+  transition: background .1s;
+}
+.anket-row:hover { background: #1a2438; }
+.anket-row td {
+  padding: 11px 12px; font-size: .82rem; color: #CBD5E1;
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+}
+.anket-row td:first-child { border-left: 1px solid var(--border); border-radius: 10px 0 0 10px; }
+.anket-row td:last-child  { border-right: 1px solid var(--border); border-radius: 0 10px 10px 0; }
+
+.badge-eslesti { background: rgba(16,185,129,.12); color: #34D399; border: 1px solid rgba(16,185,129,.2); }
+.badge-arsiv   { background: rgba(100,116,139,.12); color: #94A3B8; border: 1px solid rgba(100,116,139,.2); }
+.badge         { padding: 2px 8px; border-radius: 99px; font-size: .68rem; font-weight: 600; white-space: nowrap; }
+
+/* ── Sync sekme ────────────────────────────────────── */
+.sync-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 6px;
+}
+.sync-title { font-size: .82rem; font-weight: 500; color: #e2e8f0; flex: 1; min-width: 0; }
+.sync-sub   { font-size: .72rem; color: #64748B; margin-top: 1px; }
+.sync-btn {
+  padding: 5px 14px; border-radius: 7px; border: none; cursor: pointer;
+  font-size: .75rem; font-weight: 600;
+  background: rgba(139,92,246,.2); color: #A78BFA;
+  border: 1px solid rgba(139,92,246,.25);
+  white-space: nowrap; transition: all .15s;
+}
+.sync-btn:hover   { background: rgba(139,92,246,.3); }
+.sync-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ── Yükleniyor ────────────────────────────────────── */
+.skeleton { background: linear-gradient(90deg,#1a2235 25%,#1e2a40 50%,#1a2235 75%);
+            background-size: 200% 100%; animation: shimmer 1.4s infinite; border-radius: 8px; }
+@keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin .8s linear infinite; display: inline-block; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- ── Özet İstatistikler ─────────────────────────────────────────────────── -->
+<div id="statsBar" class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+  <div class="stat-card">
+    <div class="stat-val text-blue-400" id="st-toplam">—</div>
+    <div class="stat-lbl">Toplam Yanıt</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-val text-yellow-400" id="st-puan">—</div>
+    <div class="stat-lbl">Ort. Genel Puan</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-val text-purple-400" id="st-rehber">—</div>
+    <div class="stat-lbl">Ort. Rehber Puanı</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-val text-green-400" id="st-eslesen">—</div>
+    <div class="stat-lbl">Tur Eşleşmesi</div>
+  </div>
+</div>
+
+<!-- ── Sekmeler ───────────────────────────────────────────────────────────── -->
+<div class="flex gap-2 mb-5">
+  <button class="tab-btn active" onclick="sekme('rehberler')">👤 Rehberler</button>
+  <button class="tab-btn" onclick="sekme('anketler')">📋 Anketler</button>
+  <button class="tab-btn" onclick="sekme('sync')">🔄 Sync Merkezi</button>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     SEKME 1 — REHBERLER
+     ══════════════════════════════════════════════════════════════════════ -->
+<div id="panel-rehberler">
+  <div id="rehberGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+    <!-- JS ile doldurulur -->
+    <div class="skeleton h-32 col-span-full"></div>
+  </div>
+
+  <!-- Seçili rehber detayı -->
+  <div id="rehberDetay" class="hidden mt-6">
+    <div class="flex items-center gap-3 mb-4">
+      <button onclick="rehberDetayKapat()"
+        class="text-xs text-slate-500 hover:text-white flex items-center gap-1">
+        ← Geri
+      </button>
+      <h3 id="rdBaslik" class="text-base font-semibold text-white"></h3>
+    </div>
+    <div id="rdAnketler" class="space-y-2">
+      <!-- rehber anketleri -->
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     SEKME 2 — ANKETLER
+     ══════════════════════════════════════════════════════════════════════ -->
+<div id="panel-anketler" class="hidden">
+
+  <!-- Filtreler -->
+  <div class="bg-[#151e2d] border border-white/[.07] rounded-xl p-4 mb-4">
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+      <input class="f-input" id="f-arama"  placeholder="Başlık veya tur adı…" oninput="debounceFiltrele()">
+      <input class="f-input" id="f-rehber" placeholder="Rehber adı…"          oninput="debounceFiltrele()">
+      <select class="f-input" id="f-bolge" onchange="filtrele()">
+        <option value="">Tüm Bölgeler</option>
+      </select>
+      <select class="f-input" id="f-durum" onchange="filtrele()">
+        <option value="">Tüm Durumlar</option>
+        <option value="matched">✓ Tur Eşleşti</option>
+        <option value="review">⏳ Arşiv</option>
+        <option value="pending">Bekliyor</option>
+      </select>
+      <select class="f-input" id="f-siralama" onchange="filtrele()">
+        <option value="yeni">En Yeni</option>
+        <option value="puan_desc">En Yüksek Puan</option>
+        <option value="puan_asc">En Düşük Puan</option>
+        <option value="kalkis">Kalkış Tarihi</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Tablo -->
+  <div class="bg-[#151e2d] border border-white/[.07] rounded-xl overflow-hidden">
+    <div class="flex items-center justify-between px-4 py-3 border-b border-white/[.07]">
+      <span id="anketSayac" class="text-xs text-slate-500">Yükleniyor…</span>
+      <div class="flex gap-2">
+        <button onclick="sayfaGeri()"  id="btnGeri"  class="text-xs text-slate-500 hover:text-white disabled:opacity-30 px-2">‹ Önceki</button>
+        <span id="sayfaNo" class="text-xs text-slate-600"></span>
+        <button onclick="sayfaIleri()" id="btnIleri" class="text-xs text-slate-500 hover:text-white disabled:opacity-30 px-2">Sonraki ›</button>
+      </div>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="anket-tablo">
+        <thead>
+          <tr>
+            <th>Tur / Başlık</th>
+            <th>Kalkış</th>
+            <th>Rehber</th>
+            <th>Bölge</th>
+            <th class="text-center">Puan</th>
+            <th class="text-center">Rehber ★</th>
+            <th>JT Kodu</th>
+            <th class="text-center">Durum</th>
+          </tr>
+        </thead>
+        <tbody id="anketTbody">
+          <tr><td colspan="8" class="text-center text-slate-600 py-10">Yükleniyor…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     SEKME 3 — SYNC MERKEZİ
+     ══════════════════════════════════════════════════════════════════════ -->
+<div id="panel-sync" class="hidden">
+
+  <div class="flex items-center justify-between mb-4">
+    <div>
+      <p class="text-sm text-slate-400">Porsline'daki anketleri çek ve DB'ye kaydet</p>
+    </div>
+    <div class="flex gap-2">
+      <button onclick="syncListele()"
+        class="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-white/10 text-xs text-slate-400 hover:text-white hover:border-blue-500/40 transition">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+        </svg>
+        Listele
+      </button>
+      <button id="syncAllBtn" onclick="syncTumunu()"
+        class="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-purple-600/20 border border-purple-500/25 text-xs text-purple-300 hover:bg-purple-600/30 transition">
+        <svg id="syncAllIco" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+        </svg>
+        Tümünü Sync Et
+      </button>
+    </div>
+  </div>
+
+  <div id="syncSayac" class="text-xs text-slate-600 mb-3"></div>
+  <div id="syncListe" class="space-y-1.5">
+    <p class="text-slate-600 text-sm text-center py-8">Listelemek için "Listele" butonuna tıklayın</p>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ─── Durum ───────────────────────────────────────────────────────────────────
+let _sayfa = 0, _toplamSayfa = 0, _toplamKayit = 0;
+let _filtreler = { arama: '', rehber: '', bolge: '', durum: '', siralama: 'yeni' };
+let _debounceTimer = null;
+let _aktifRehber = null;
+let _porslineAnketler = [];
+
+// ─── Sekme yönetimi ──────────────────────────────────────────────────────────
+function sekme(ad) {
+  ['rehberler','anketler','sync'].forEach(s => {
+    document.getElementById('panel-' + s).classList.toggle('hidden', s !== ad);
+  });
+  document.querySelectorAll('.tab-btn').forEach((b, i) => {
+    b.classList.toggle('active', ['rehberler','anketler','sync'][i] === ad);
+  });
+  if (ad === 'anketler' && !document.querySelector('#anketTbody .anket-row')) filtrele();
+  if (ad === 'rehberler' && document.getElementById('rehberGrid').querySelector('.skeleton')) yukleStat();
+}
+
+// ─── İstatistikler ───────────────────────────────────────────────────────────
+async function yukleStat() {
+  const r = await fetch('/api/survey/stats').then(r => r.json()).catch(() => ({}));
+  if (!r.ok) return;
+  const s = r.stats || {};
+  document.getElementById('st-toplam').textContent  = (s.toplam || 0).toLocaleString('tr');
+  document.getElementById('st-puan').textContent    = s.ort_puan   ? s.ort_puan.toFixed(1) + ' ★' : '—';
+  document.getElementById('st-rehber').textContent  = s.ort_rehber_puan ? s.ort_rehber_puan.toFixed(1) + ' ★' : '—';
+  const eslenen = s.eslendi || 0, toplam = s.toplam || 1;
+  document.getElementById('st-eslesen').textContent = Math.round(eslenen / toplam * 100) + '%';
+  yukleRehberler();
+}
+
+// ─── Rehberler ───────────────────────────────────────────────────────────────
+async function yukleRehberler() {
+  const r = await fetch('/api/survey/results?limit=0&sayfa=0').then(r=>r.json()).catch(()=>({}));
+  if (!r.ok) return;
+  const grid = document.getElementById('rehberGrid');
+  const rehberler = (r.rehberler || []).filter(g => g.rehber_adi && g.rehber_adi.trim());
+  if (!rehberler.length) {
+    grid.innerHTML = '<p class="text-slate-600 text-sm col-span-full text-center py-10">Henüz rehber verisi yok</p>';
+    return;
+  }
+  const maxAdet = Math.max(...rehberler.map(g => g.adet || 1));
+  grid.innerHTML = rehberler.map(g => {
+    const puan     = parseFloat(g.ort_genel  || 0);
+    const rPuan    = parseFloat(g.ort_rehber || 0);
+    const yildiz   = puanYildiz(puan);
+    const barPct   = Math.round((g.adet / maxAdet) * 100);
+    const renkCls  = puan >= 4.5 ? 'text-green-400' : puan >= 3.5 ? 'text-yellow-400' : 'text-red-400';
+    return `
+    <div class="guide-card" onclick="rehberDetayAc('${esc(g.rehber_adi)}')">
+      <div class="flex items-start justify-between mb-3">
+        <div>
+          <div class="font-semibold text-white text-sm">${esc(g.rehber_adi)}</div>
+          <div class="text-xs text-slate-500 mt-0.5">${g.adet} yanıt · ${g.son_kalkis || '—'}</div>
+        </div>
+        <span class="text-lg font-bold ${renkCls}">${puan > 0 ? puan.toFixed(1) : '—'}</span>
+      </div>
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-xs text-slate-500">Rehber</span>
+        <span class="text-xs text-yellow-400 font-semibold">${rPuan > 0 ? rPuan.toFixed(1) + ' ★' : '—'}</span>
+      </div>
+      <div class="puan-bar-bg mt-1">
+        <div class="puan-bar" style="width:${barPct}%"></div>
+      </div>
+      <div class="text-xs text-slate-600 mt-1">${barPct}% yanıt payı</div>
+    </div>`;
+  }).join('');
+}
+
+function rehberDetayAc(ad) {
+  _aktifRehber = ad;
+  document.getElementById('rehberGrid').classList.add('hidden');
+  document.getElementById('rehberDetay').classList.remove('hidden');
+  document.getElementById('rdBaslik').textContent = ad;
+  yukleRehberAnketleri(ad);
+}
+
+function rehberDetayKapat() {
+  _aktifRehber = null;
+  document.getElementById('rehberDetay').classList.add('hidden');
+  document.getElementById('rehberGrid').classList.remove('hidden');
+}
+
+async function yukleRehberAnketleri(ad) {
+  const cont = document.getElementById('rdAnketler');
+  cont.innerHTML = '<div class="skeleton h-8"></div>'.repeat(5);
+  const enc = encodeURIComponent(ad);
+  const r = await fetch(`/api/survey/results?limit=100&rehber=${enc}&siralama=kalkis`)
+    .then(r => r.json()).catch(() => ({}));
+  if (!r.ok || !r.items?.length) {
+    cont.innerHTML = '<p class="text-slate-600 text-sm text-center py-6">Veri bulunamadı</p>';
+    return;
+  }
+  cont.innerHTML = r.items.map(item => {
+    const puan = item.genel_puan != null ? parseFloat(item.genel_puan).toFixed(1) + ' ★' : '—';
+    const renkCls = item.genel_puan >= 4.5 ? 'text-green-400' : item.genel_puan >= 3.5 ? 'text-yellow-400' : 'text-red-400';
+    const durum = durumuGoster(item.match_status, item.matched_jt_kodu);
+    return `
+    <div class="flex items-center gap-3 px-4 py-3 bg-[#151e2d] border border-white/[.07] rounded-xl">
+      <div class="flex-1 min-w-0">
+        <div class="text-sm font-medium text-white truncate">${esc(item.tur_adi_ham || '—')}</div>
+        <div class="text-xs text-slate-500 mt-0.5">${item.kalkis_tarihi || '—'} · ${esc(item.acente_adi || '')}</div>
+      </div>
+      <span class="text-sm font-bold ${renkCls}">${puan}</span>
+      ${durum}
+    </div>`;
+  }).join('');
+}
+
+// ─── Anketler tablosu ─────────────────────────────────────────────────────────
+function debounceFiltrele() {
+  clearTimeout(_debounceTimer);
+  _debounceTimer = setTimeout(filtrele, 350);
+}
+
+function filtrele() {
+  _sayfa = 0;
+  yukleAnketler();
+}
+
+async function yukleAnketler() {
+  const tbody = document.getElementById('anketTbody');
+  tbody.innerHTML = '<tr><td colspan="8" class="py-10 text-center"><span class="skeleton inline-block w-40 h-4"></span></td></tr>';
+
+  const params = new URLSearchParams({
+    sayfa: _sayfa, limit: 50,
+    arama:    document.getElementById('f-arama').value.trim(),
+    rehber:   document.getElementById('f-rehber').value.trim(),
+    bolge:    document.getElementById('f-bolge').value,
+    siralama: document.getElementById('f-siralama').value,
+  });
+  const durum = document.getElementById('f-durum').value;
+  if (durum) params.set('tur', ''); // durum filtresi backend'de match_status ile
+
+  // Bölge listesini doldur (ilk yüklemede)
+  if (document.getElementById('f-bolge').options.length <= 1) yukleBolgeler();
+
+  const r = await fetch('/api/survey/results?' + params.toString() + (durum ? `&status=${durum}` : ''))
+    .then(r => r.json()).catch(() => ({}));
+
+  if (!r.ok || !r.items) {
+    tbody.innerHTML = '<tr><td colspan="8" class="py-10 text-center text-slate-600 text-sm">Veri alınamadı</td></tr>';
+    return;
+  }
+
+  _toplamKayit = r.total || 0;
+  _toplamSayfa = Math.ceil(_toplamKayit / 50);
+  document.getElementById('anketSayac').textContent = `${_toplamKayit.toLocaleString('tr')} yanıt`;
+  document.getElementById('sayfaNo').textContent = `${_sayfa + 1} / ${_toplamSayfa || 1}`;
+  document.getElementById('btnGeri').disabled  = _sayfa === 0;
+  document.getElementById('btnIleri').disabled = _sayfa >= _toplamSayfa - 1;
+
+  if (!r.items.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="py-10 text-center text-slate-600 text-sm">Sonuç bulunamadı</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = r.items.map(item => {
+    const puan  = item.genel_puan  != null ? parseFloat(item.genel_puan).toFixed(1)  : '—';
+    const rPuan = item.rehber_puani != null ? parseFloat(item.rehber_puani).toFixed(1) : '—';
+    const pRenk = item.genel_puan >= 4.5 ? 'text-green-400' : item.genel_puan >= 3.5 ? 'text-yellow-400' : item.genel_puan ? 'text-red-400' : 'text-slate-500';
+    const jt    = item.matched_jt_kodu || '<span class="text-slate-600">—</span>';
+    const durum = durumuGoster(item.match_status, item.matched_jt_kodu);
+    const bolge = item.bolge ? `<span class="text-slate-400">${esc(item.bolge)}</span>` : '<span class="text-slate-600">—</span>';
+    return `
+    <tr class="anket-row">
+      <td>
+        <div class="font-medium text-white text-xs leading-snug max-w-[220px] truncate">${esc(item.tur_adi_ham || '—')}</div>
+        ${item.eslesen_tur ? `<div class="text-xs text-blue-400 truncate max-w-[220px]">${esc(item.eslesen_tur)}</div>` : ''}
+      </td>
+      <td class="text-slate-400 text-xs whitespace-nowrap">${item.kalkis_tarihi || '—'}</td>
+      <td class="text-slate-300 text-xs max-w-[120px] truncate">${esc(item.rehber_adi || '—')}</td>
+      <td>${bolge}</td>
+      <td class="text-center font-semibold ${pRenk}">${puan}${puan !== '—' ? ' ★' : ''}</td>
+      <td class="text-center text-yellow-400 text-xs">${rPuan}${rPuan !== '—' ? ' ★' : ''}</td>
+      <td class="text-xs font-mono">${jt}</td>
+      <td class="text-center">${durum}</td>
+    </tr>`;
+  }).join('');
+}
+
+function sayfaGeri()  { if (_sayfa > 0) { _sayfa--; yukleAnketler(); } }
+function sayfaIleri() { if (_sayfa < _toplamSayfa - 1) { _sayfa++; yukleAnketler(); } }
+
+async function yukleBolgeler() {
+  const r = await fetch('/api/survey/bolgeler').then(r=>r.json()).catch(()=>({}));
+  if (!r.ok) return;
+  const sel = document.getElementById('f-bolge');
+  (r.bolgeler || []).forEach(b => {
+    const o = document.createElement('option');
+    o.value = b; o.textContent = b;
+    sel.appendChild(o);
+  });
+}
+
+// ─── Sync Merkezi ─────────────────────────────────────────────────────────────
+async function syncListele() {
+  const liste = document.getElementById('syncListe');
+  const sayac = document.getElementById('syncSayac');
+  liste.innerHTML = '<div class="skeleton h-12"></div>'.repeat(6);
+
+  const r = await fetch('/api/porsline/surveys').then(r=>r.json()).catch(()=>({}));
+  if (!r.ok) {
+    liste.innerHTML = `<p class="text-red-400 text-sm">${r.hata || 'Hata'}</p>`;
+    return;
+  }
+  _porslineAnketler = r.surveys || r.items || [];
+  sayac.textContent = `${_porslineAnketler.length} anket bulundu`;
+
+  liste.innerHTML = _porslineAnketler.map(s => {
+    const sid = s.id || s.survey_id;
+    return `
+    <div class="sync-row">
+      <div class="flex-1 min-w-0">
+        <div class="sync-title truncate">${esc(s.title || s.name || sid)}</div>
+        <div class="sync-sub">${s.responses_count ?? s.response_count ?? '?'} yanıt · ${s.created_date || s.created_at || ''}</div>
+      </div>
+      <span id="ss-${sid}" class="text-xs text-slate-600"></span>
+      <button id="sb-${sid}" class="sync-btn" onclick="syncTek('${sid}', '${esc(s.title||'')}')">Sync</button>
+    </div>`;
+  }).join('');
+}
+
+async function syncTek(sid, title) {
+  const btn = document.getElementById('sb-' + sid);
+  const st  = document.getElementById('ss-' + sid);
+  if (!btn) return;
+  btn.disabled = true; btn.textContent = '⏳';
+  const r = await fetch(`/api/porsline/survey/${sid}/sync`, {method:'POST'})
+    .then(r=>r.json()).catch(e => ({ok:false, hata: e.message}));
+
+  btn.textContent = r.ok ? '✓' : '✕';
+  btn.className = 'sync-btn ' + (r.ok ? 'text-green-400 border-green-500/20' : 'text-red-400 border-red-500/20');
+
+  if (r.ok) {
+    const yeni   = r.eklenen    || 0;
+    const mevcut = r.zaten_var  || 0;
+    const api    = r.yanit_sayisi || 0;
+    st.textContent = yeni > 0
+      ? `+${yeni} kayıt`
+      : (mevcut > 0 ? `✓ ${mevcut} kayıt` : `+0 (API:${api})`);
+    st.className = 'text-xs ' + (yeni > 0 ? 'text-green-400' : 'text-slate-500');
+    // İstatistikleri güncelle
+    yukleStat();
+  } else {
+    const hata = r.insert_hata || r.mesaj || r.hata || 'hata';
+    st.textContent = '⚠ ' + String(hata).slice(0, 60);
+    st.className = 'text-xs text-red-400';
+    btn.disabled = false;
+  }
+}
+
+async function syncTumunu() {
+  if (!_porslineAnketler.length) { await syncListele(); }
+  const btn = document.getElementById('syncAllBtn');
+  const ico = document.getElementById('syncAllIco');
+  btn.disabled = true;
+  ico.classList.add('spin');
+
+  const r = await fetch('/api/porsline/sync-all', {method:'POST'})
+    .then(r=>r.json()).catch(()=>({ok:false}));
+
+  ico.classList.remove('spin');
+  btn.disabled = false;
+  document.getElementById('syncSayac').textContent =
+    r.ok ? `${r.toplam || 0} anket için sync başlatıldı — arka planda devam ediyor` : (r.hata || 'Hata');
+}
+
+// ─── Yardımcılar ─────────────────────────────────────────────────────────────
+function durumuGoster(status, jt) {
+  if (status === 'matched' && jt)
+    return `<span class="badge badge-eslesti">✓ Eşleşti</span>`;
+  return `<span class="badge badge-arsiv">Arşiv</span>`;
+}
+
+function puanYildiz(puan) {
+  const tam = Math.floor(puan);
+  return '★'.repeat(tam) + (puan - tam >= .5 ? '½' : '') + '☆'.repeat(5 - Math.ceil(puan));
+}
+
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ─── Başlangıç ───────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', yukleStat);
+</script>
+{% endblock %}

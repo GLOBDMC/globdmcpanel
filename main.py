@@ -1527,6 +1527,20 @@ def _survey_load_tours():
     ]
 
 
+@app.get("/anketler")
+def anketler_sayfasi(request: Request):
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici:
+        return RedirectResponse("/login", status_code=302)
+    if kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+    return templates.TemplateResponse(
+        request=request,
+        name="anketler.html",
+        context={"kullanici": kullanici, "aktif_sayfa": "anketler"},
+    )
+
+
 @app.get("/survey-review")
 def survey_review_sayfasi(request: Request):
     kullanici = oturum_kullanicisi(request)
@@ -1963,6 +1977,7 @@ def survey_results(
     min_puan:  float = None,
     siralama:  str = "yeni",   # yeni | puan_asc | puan_desc
     bolge:     str = "",
+    status:    str = "",       # matched | review | pending
 ):
     """Tüm import edilmiş anket yanıtlarını döndürür (sayfalı, filtrelenebilir)."""
     kullanici = oturum_kullanicisi(request)
@@ -1972,6 +1987,9 @@ def survey_results(
     filters  = ["match_status != 'rejected'"]
     params: dict = {"limit": limit, "offset": sayfa * limit}
 
+    if status:
+        filters.append("match_status = :status")
+        params["status"] = status
     if rehber:
         filters.append("LOWER(rehber_adi) LIKE LOWER(:rehber)")
         params["rehber"] = f"%{rehber}%"
