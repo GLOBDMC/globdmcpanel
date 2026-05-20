@@ -28,6 +28,30 @@ _MONTHS_TR = {
 }
 
 
+# ── Yardımcı: Porsline lokalize alanları dict döndürebilir ───────────────────
+
+def _str_field(val) -> str:
+    """
+    Porsline API bazen title/label alanlarını lokalize dict olarak döner:
+      {"fa": "متن", "en": "Text"}
+    Bu fonksiyon her türlü değeri güvenli şekilde str'ye çevirir.
+    """
+    if val is None:
+        return ""
+    if isinstance(val, dict):
+        # Önce İngilizce, sonra Farsça, sonra ilk değer
+        for key in ("en", "fa", "tr"):
+            if val.get(key):
+                return str(val[key])
+        for v in val.values():
+            if v:
+                return str(v)
+        return ""
+    if isinstance(val, list):
+        return " ".join(_str_field(v) for v in val if v)
+    return str(val)
+
+
 # ── HTTP yardımcıları ─────────────────────────────────────────────────────────
 
 def _get(path: str, params: dict = None) -> dict:
@@ -205,7 +229,7 @@ def build_header_from_questions(questions: list) -> list:
     results-table endpoint'i çalışmadığında kullanılır.
     Sadece type=7 (yıldız) ve type=2/3 (metin/seçim) sorularını alır.
     """
-    return [q.get("title", "") for q in questions if q.get("type") in (2, 3, 7)]
+    return [_str_field(q.get("title")) for q in questions if q.get("type") in (2, 3, 7)]
 
 
 def parse_response_from_questions(questions: list, response: dict) -> dict:
@@ -236,7 +260,7 @@ def parse_response_from_questions(questions: list, response: dict) -> dict:
 
     for q in questions:
         qid   = q["id"]
-        title = q.get("title", "").lower()
+        title = _str_field(q.get("title")).lower()
         qtype = q.get("type")
         val   = answers_by_q.get(qid)
 
@@ -262,7 +286,7 @@ def parse_response_from_questions(questions: list, response: dict) -> dict:
             elif "tavsiye" in title or "öneri" in title or "önerir" in title:
                 tavsiye_puan = v
             elif any(k in title for k in ["otel", "hotel"]):
-                short = q.get("title", "")[:60]
+                short = _str_field(q.get("title"))[:60]
                 if v is not None:
                     otel_puanlari[short] = v
 
@@ -425,11 +449,11 @@ def parse_survey_title(title: str, created_date: str = "") -> dict:
 
 # ── Yanıt parse ───────────────────────────────────────────────────────────────
 
-def _find_col(header: list[str], keywords: list[str]) -> Optional[int]:
+def _find_col(header: list, keywords: list[str]) -> Optional[int]:
     """Header listesinde anahtar kelime içeren ilk sütun indeksini döndürür."""
     for kw in keywords:
         for i, h in enumerate(header):
-            if kw.lower() in h.lower():
+            if kw.lower() in _str_field(h).lower():
                 return i
     return None
 
@@ -443,15 +467,16 @@ def _safe_float(val) -> Optional[float]:
         return None
 
 
-def _extract_guide_name(header: list[str]) -> Optional[str]:
+def _extract_guide_name(header: list) -> Optional[str]:
     """
     Rehber sorusunun başlığından rehber adını çıkarır.
     Örn: "Tur rehberimizin bilgi ve ilgisinden memnun kaldınız mı?  (Derya Iberi)"
     → "Derya Iberi"
     """
     for h in header:
-        if "rehber" in h.lower():
-            m = re.search(r'\(([^)]+)\)', h)
+        h_str = _str_field(h)
+        if "rehber" in h_str.lower():
+            m = re.search(r'\(([^)]+)\)', h_str)
             if m:
                 return m.group(1).strip()
     return None
@@ -482,11 +507,11 @@ def parse_response_row(header: list[str], row: list) -> dict:
                      "sevilla", "madrid", "roma", "paris", "amsterdam",
                      "venedik", "istanbul", "ankara", "bodrum"]
     for i, h in enumerate(header):
-        if any(kw in h.lower() for kw in otel_keywords):
+        h_str = _str_field(h)
+        if any(kw in h_str.lower() for kw in otel_keywords):
             v = _safe_float(get(i))
             if v is not None:
-                # Başlıktan kısa isim çıkar
-                short = h.split("?")[0].strip()[:60]
+                short = h_str.split("?")[0].strip()[:60]
                 otel_puanlari[short] = v
 
     # Rehber adı header'dan
