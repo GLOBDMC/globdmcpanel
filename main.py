@@ -460,17 +460,27 @@ def tablo_olustur():
             "puan_detay JSONB"
         ))
         # unique: aynı yanıt iki kez girilmez
+        # NOT: DEFERRABLE constraint ON CONFLICT ile çalışmaz — non-deferrable olmalı
         conn.execute(text("""
             DO $$
             BEGIN
+                -- Varsa eski DEFERRABLE constraint'i düşür
+                IF EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'hs_porsline_response_uniq'
+                      AND condeferrable = TRUE
+                ) THEN
+                    ALTER TABLE historical_surveys
+                        DROP CONSTRAINT hs_porsline_response_uniq;
+                END IF;
+                -- Non-deferrable olarak yeniden oluştur
                 IF NOT EXISTS (
                     SELECT 1 FROM pg_constraint
                     WHERE conname = 'hs_porsline_response_uniq'
                 ) THEN
                     ALTER TABLE historical_surveys
                         ADD CONSTRAINT hs_porsline_response_uniq
-                        UNIQUE (porsline_response_id)
-                        DEFERRABLE INITIALLY DEFERRED;
+                        UNIQUE (porsline_response_id);
                 END IF;
             END $$;
         """))
