@@ -246,8 +246,14 @@ def download_pdf(plan_id: int, cookies: list) -> Optional[bytes]:
 def _parse_pdf(pdf_bytes: bytes) -> dict:
     """
     pdfplumber ile PDF'i parse eder.
-    Sayfa 3+  → günlük program
-    Sayfa 5   → uçuş tablosu
+
+    PDF yapısı (Gordios ExportTourPlanPdf):
+      Sayfa 1    : Glob DMC başlık + dahil/hariç hizmetler
+      Sayfa 2    : Katılım koşulları / notlar
+      Sayfa 3-N  : Günlük program  (her gün "X . GÜN\\n<lokasyon>\\n<açıklama>")
+      Sayfa N+1  : Uçak Bilgileri tablosu  ("Yön / Uçuş Num." başlıklı tablo)
+      Sayfa N+2  : Konaklama Bilgileri
+      Sayfa N+3+ : Yolcu listesi
 
     Returns:
         {
@@ -269,35 +275,58 @@ def _parse_pdf(pdf_bytes: bytes) -> dict:
             total = len(pdf.pages)
             logger.info("[gordios] PDF toplam sayfa: %d", total)
 
-            # ── Uçuş tablosu: sayfa 5 (index 4) ────────────────────────────
-            # Sayfa 5 yoksa son 2 sayfada da ara
-            ucus_pages = []
-            if total >= 5:
-                ucus_pages.append(pdf.pages[4])   # 5. sayfa
-            if total >= 4:
-                ucus_pages.append(pdf.pages[3])   # fallback: 4. sayfa
-            if total >= 6:
-                ucus_pages.append(pdf.pages[5])   # fallback: 6. sayfa
+            # ── Tur başlığı: sayfa 1'den al ─────────────────────────────────
+            if total >= 1:
+                out["program_baslik"] = _extract_tour_title(
+                    pdf.pages[0].extract_text() or ""
+                )
 
-            for p in ucus_pages:
-                ucuslar = _extract_flights_from_page(p)
-                if ucuslar:
-                    out["ucus_listesi"] = ucuslar
-                    logger.info("[gordios] uçuş tablosu bulundu sayfa %d", p.page_number)
+            # ── Sayfaları tara: program / uçuş bölümlerini ayırt et ─────────
+            program_text = ""
+            ucus_page    = None
+
+            UCUS_KEYWORDS  = ["uçak bilgi", "ucak bilgi", "yön\t", "yön ", "kalkış saati",
+                               "kalkis saati", "uçuş num", "ucus num"]
+            STOP_KEYWORDS  = ["konaklama bilgi", "yolcu liste", "konaklama\n"]
+
+            for i in range(2, total):          # sayfa 3 = index 2
+                page = pdf.pages[i]
+                raw  = page.extract_text() or ""
+                preview = raw[:400].lower()
+
+                if any(k in preview for k in UCUS_KEYWORDS):
+                    ucus_page = page
+                    logger.info("[gordios] uçuş sayfası: %d", i + 1)
                     break
 
-            # ── Günlük program: sayfa 3'ten sona kadar ──────────────────────
-            if total >= 3:
-                program_text = ""
-                for p in pdf.pages[2:]:  # sayfa 3 = index 2
-                    t = p.extract_text() or ""
-                    program_text += t + "\n"
+                if any(k in preview for k in STOP_KEYWORDS):
+                    logger.info("[gordios] program sonu sayfada: %d", i + 1)
+                    break
 
-                parsed_program = _extract_program_from_text(program_text)
-                out["program_gunler"] = parsed_program["gunler"]
-                out["program_baslik"] = parsed_program["baslik"]
-                logger.info("[gordios] günlük program: %d gün parse edildi",
-                            len(out["program_gunler"]))
+                program_text += raw + "\n"
+
+            # Fallback: uçuş sayfası bulunamadıysa sayfa 5'i dene
+            if not ucus_page:
+                for idx in [4, 3, 5]:          # 5. sayfa = index 4
+                    if total > idx:
+                        candidate = pdf.pages[idx]
+                        if _extract_flights_from_page(candidate):
+                            ucus_page = candidate
+                            logger.info("[gordios] uçuş fallback sayfa %d", idx + 1)
+                            break
+
+            # ── Uçuş tablosunu parse et ──────────────────────────────────────
+            if ucus_page:
+                out["ucus_listesi"] = _extract_flights_from_page(ucus_page)
+                logger.info("[gordios] uçuş satır sayısı: %d", len(out["ucus_listesi"]))
+
+            # ── Günlük programı parse et ─────────────────────────────────────
+            if program_text.strip():
+                parsed = _extract_program_from_text(program_text)
+                out["program_gunler"] = parsed["gunler"]
+                if not out["program_baslik"] and parsed["baslik"]:
+                    out["program_baslik"] = parsed["baslik"]
+                logger.info("[gordios] günlük program: %d gün", len(out["program_gunler"]))
 
     except Exception as e:
         logger.error("[gordios] PDF parse hatası: %s", e, exc_info=True)
@@ -375,54 +404,74 @@ def _extract_flights_from_page(page) -> list:
     return ucuslar
 
 
+def _extract_tour_title(page1_text: str) -> str:
+    """
+    Sayfa 1 metninden tur başlığını çıkar.
+    Glob DMC kapak sayfasında başlık, web sitesi satırından sonra gelir.
+    """
+    lines = [ln.strip() for ln in page1_text.splitlines() if ln.strip()]
+    # Web sitesi / telefon satırından sonraki ilk uzun satırı al
+    for i, line in enumerate(lines):
+        low = line.lower()
+        if "globdmc.com" in low or ("www." in low and "glob" in low):
+            if i + 1 < len(lines):
+                return lines[i + 1]
+    # Fallback: adres/telefon olmayan, 20+ karakter olan ilk satır
+    skip = {"mah.", "sk.", "no:", "telefon", "www.", "@", "glob dmc"}
+    for line in lines[2:10]:
+        if len(line) > 20 and not any(k in line.lower() for k in skip):
+            return line
+    return ""
+
+
 def _extract_program_from_text(text: str) -> dict:
     """
     PDF metin bloğundan günlük programı parse eder.
 
-    Desteklenen gün başlığı formatları:
-      "1. GÜN"  "1.GÜN"  "GÜN 1"  "1. GÜN - LONDRA"  "DAY 1"  vb.
+    Gordios PDF gün başlığı formatı (tam satır olarak):
+        "1 . GÜN"   veya   "1. GÜN"   (GÜN yerine GüN de gelebilir — encoding)
+    Bir sonraki satır: lokasyon/başlık  (ör. "ANKARA – MİLANO – COMO GÖLÜ")
+    Ardından: açıklama metni
 
     Returns:
         {"baslik": str, "gunler": [{"gun": int, "baslik": str, "icerik": str}, …]}
     """
     out = {"baslik": "", "gunler": []}
 
-    # Tur başlığını ilk satırdan al (bos olmayan ilk satır)
-    lines = text.splitlines()
-    for ln in lines:
-        ln = ln.strip()
-        if ln:
-            out["baslik"] = ln
-            break
-
-    # Gün başlığı regex — Türkçe ve İngilizce
+    # Gün başlığı: satırın tamamı "1 . GÜN" veya "1. GÜN" şeklinde
+    # GÜN harfi bazen GüN olarak çıkabiliyor (pdfplumber encoding farklılığı)
     GUN_PATTERN = re.compile(
-        r'(?:^|\n)\s*'
-        r'(?:'
-        r'(\d{1,2})\s*[.·]\s*G[ÜU]N'   # "1. GÜN" veya "1.GUN"
-        r'|G[ÜU]N\s*(\d{1,2})'          # "GÜN 1"
-        r'|DAY\s*(\d{1,2})'             # "DAY 1"
-        r')'
-        r'(?:\s*[-–:]\s*(.*))?',         # opsiyonel " - BAŞLIK"
+        r'^(\d{1,2})\s*\.\s*G[ÜüUu]N\s*$',
         re.IGNORECASE | re.MULTILINE,
     )
 
     matches = list(GUN_PATTERN.finditer(text))
+
     if not matches:
         # Hiç gün bulunamadıysa tüm metni tek blok olarak döndür
         icerik = text.strip()
+        # "Tur Programı" gibi başlık satırını çıkar
+        lines = icerik.splitlines()
+        for ln in lines:
+            if ln.strip():
+                out["baslik"] = ln.strip()
+                break
         if icerik:
             out["gunler"].append({"gun": 0, "baslik": "", "icerik": icerik})
         return out
 
     for i, m in enumerate(matches):
-        gun_no = int(m.group(1) or m.group(2) or m.group(3) or 0)
-        gun_baslik = (m.group(4) or "").strip()
+        gun_no = int(m.group(1))
 
-        # İçerik: bu eşleşmenin sonu ile bir sonraki eşleşmenin başı arası
+        # Bu eşleşmenin bitişinden sonraki metin bloğu
         start = m.end()
         end   = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        icerik = text[start:end].strip()
+        block = text[start:end].strip()
+
+        # Blokun ilk satırı = lokasyon başlığı, geri kalanı = açıklama
+        block_lines = [ln for ln in block.splitlines() if ln.strip()]
+        gun_baslik  = block_lines[0].strip() if block_lines else ""
+        icerik      = "\n".join(block_lines[1:]).strip() if len(block_lines) > 1 else ""
 
         out["gunler"].append({
             "gun":    gun_no,
