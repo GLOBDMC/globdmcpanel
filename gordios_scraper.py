@@ -48,7 +48,7 @@ def scrape_tour_detail(jt_kodu: str) -> dict:
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
-        result["hata"] = "playwright kurulu değil — pip install playwright && playwright install chromium"
+        result["hata"] = "Gordios senkronizasyonu bu ortamda devre dışı (playwright kurulu değil)"
         return result
 
     with sync_playwright() as pw:
