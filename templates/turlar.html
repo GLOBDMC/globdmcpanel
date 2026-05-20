@@ -219,11 +219,10 @@
                             {% endif %}
                         </td>
                         <td class="td-right text-slate-400">{{ tur[7] or '—' }}</td>
-                        <td class="rehber-hucre" data-jt="{{ tur[0] }}">
+                        <td class="rehber-hucre" data-jt="{{ tur[0] }}" data-rehber="{{ tur[8] or '' }}">
                             <span class="rehber-metin {% if not tur[8] %}text-slate-600 italic{% else %}text-slate-300{% endif %}">
                                 {{ tur[8] or 'Ekle...' }}
                             </span>
-                            <input type="text" class="rehber-input hidden" value="{{ tur[8] or '' }}" placeholder="Rehber adı..."/>
                         </td>
                     </tr>
                     {% endfor %}
@@ -505,45 +504,130 @@
         });
     });
 
-    // Rehber inline edit
+    // ── Rehber Dropdown ──────────────────────────────────────────
+    let _rehberListesi = [];   // [{id, ad_soyad}, ...]
+    let _activeHucre   = null;
+
+    // Sayfa yüklenince rehberleri çek
+    fetch('/api/rehberler')
+        .then(r => r.json())
+        .then(d => { if (d.ok) _rehberListesi = d.rehberler.filter(r => r.aktif); })
+        .catch(() => {});
+
+    // Dropdown HTML'ini body'ye ekle
+    const _ddEl = document.createElement('div');
+    _ddEl.id = 'rehberDropdown';
+    _ddEl.className = 'hidden';
+    _ddEl.style.cssText = 'position:fixed;z-index:9999;background:#0f1729;border:1px solid rgba(99,130,246,0.25);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,0.5);min-width:200px;max-width:280px;overflow:hidden;';
+    _ddEl.innerHTML = `
+        <div style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.06);">
+            <input id="rehberDdSearch" type="text" placeholder="Rehber ara..."
+                   autocomplete="off"
+                   style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:5px 10px;font-size:12px;color:#e2e8f0;outline:none;" />
+        </div>
+        <div id="rehberDdList" style="max-height:220px;overflow-y:auto;padding:4px;"></div>
+        <div style="padding:6px 8px;border-top:1px solid rgba(255,255,255,0.06);">
+            <button id="rehberDdKaldir"
+                style="width:100%;padding:5px;border-radius:6px;font-size:11px;color:#94A3B8;background:transparent;border:1px solid rgba(255,255,255,0.08);cursor:pointer;transition:background .15s;"
+                onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">
+                ✕ Rehberi Kaldır
+            </button>
+        </div>`;
+    document.body.appendChild(_ddEl);
+
+    function renderDdList(query) {
+        const q = (query || '').toLowerCase();
+        const filtered = q ? _rehberListesi.filter(r => r.ad_soyad.toLowerCase().includes(q)) : _rehberListesi;
+        const list = document.getElementById('rehberDdList');
+        if (!filtered.length) {
+            list.innerHTML = `<div style="padding:10px;font-size:12px;color:#475569;text-align:center;">
+                ${_rehberListesi.length === 0 ? 'Henüz rehber yok — önce Misafir Deneyimi → Rehberler sekmesinden ekleyin' : 'Eşleşme bulunamadı'}
+            </div>`;
+            return;
+        }
+        list.innerHTML = filtered.map(r => {
+            const mevcut = _activeHucre && _activeHucre.dataset.rehber === r.ad_soyad;
+            return `<div onclick="rehberSec('${r.ad_soyad.replace(/'/g,"\\'")}', ${r.id})"
+                style="padding:7px 10px;border-radius:6px;font-size:12px;color:${mevcut?'#60A5FA':'#cbd5e1'};cursor:pointer;
+                       background:${mevcut?'rgba(59,130,246,0.12)':'transparent'};transition:background .1s;display:flex;align-items:center;gap:8px;"
+                onmouseover="this.style.background='rgba(255,255,255,0.06)'" onmouseout="this.style.background='${mevcut?'rgba(59,130,246,0.12)':'transparent'}'">
+                <span style="width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,#1d4ed8,#6366f1);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:white;flex-shrink:0;">
+                    ${r.ad_soyad.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase()}
+                </span>
+                ${r.ad_soyad}
+            </div>`;
+        }).join('');
+    }
+
+    function openRehberDd(hucre, metin) {
+        _activeHucre = hucre;
+        const rect = metin.getBoundingClientRect();
+        _ddEl.style.top  = (rect.bottom + window.scrollY + 4) + 'px';
+        _ddEl.style.left = Math.min(rect.left + window.scrollX, window.innerWidth - 300) + 'px';
+        document.getElementById('rehberDdSearch').value = '';
+        renderDdList('');
+        _ddEl.classList.remove('hidden');
+        setTimeout(() => document.getElementById('rehberDdSearch').focus(), 50);
+    }
+
+    function closeRehberDd() {
+        _ddEl.classList.add('hidden');
+        _activeHucre = null;
+    }
+
+    function rehberSec(adSoyad, rid) {
+        if (!_activeHucre) return;
+        rehberKaydetApi(_activeHucre, adSoyad, rid);
+        closeRehberDd();
+    }
+
+    document.getElementById('rehberDdKaldir').addEventListener('click', () => {
+        if (!_activeHucre) return;
+        rehberKaydetApi(_activeHucre, '', null);
+        closeRehberDd();
+    });
+
+    document.getElementById('rehberDdSearch').addEventListener('input', e => {
+        renderDdList(e.target.value);
+    });
+
+    // Dışarı tıklanınca kapat
+    document.addEventListener('click', e => {
+        if (!_ddEl.classList.contains('hidden') && !_ddEl.contains(e.target) && !e.target.closest('.rehber-metin')) {
+            closeRehberDd();
+        }
+    });
+
     document.getElementById('turGovde').addEventListener('click', e => {
         const metin = e.target.closest('.rehber-metin');
         if (!metin) return;
         const hucre = metin.closest('.rehber-hucre');
-        const input = hucre.querySelector('.rehber-input');
-        metin.classList.add('hidden');
-        input.classList.remove('hidden');
-        input.focus(); input.select();
+        if (_activeHucre === hucre && !_ddEl.classList.contains('hidden')) {
+            closeRehberDd();
+        } else {
+            openRehberDd(hucre, metin);
+        }
     });
-    document.getElementById('turGovde').addEventListener('focusout', e => {
-        const input = e.target.closest('.rehber-input');
-        if (input) rehberKaydet(input);
-    });
-    document.getElementById('turGovde').addEventListener('keydown', e => {
-        const input = e.target.closest('.rehber-input');
-        if (!input) return;
-        if (e.key === 'Enter') rehberKaydet(input);
-        if (e.key === 'Escape') rehberIptal(input);
-    });
-    function rehberKaydet(input) {
-        const hucre = input.closest('.rehber-hucre');
+
+    function rehberKaydetApi(hucre, deger, rid) {
         const metin = hucre.querySelector('.rehber-metin');
         const jt    = hucre.dataset.jt;
-        const deger = input.value.trim();
         fetch('/api/tur/' + encodeURIComponent(jt) + '/rehber', {
-            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ rehber: deger })
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rehber: deger, rehber_id: rid })
         }).then(r => r.json()).then(() => {
-            if (deger) { metin.textContent = deger; metin.classList.remove('text-slate-600','italic'); }
-            else { metin.textContent = 'Ekle...'; metin.classList.add('text-slate-600','italic'); }
-            input.classList.add('hidden'); metin.classList.remove('hidden');
-        });
-    }
-    function rehberIptal(input) {
-        const hucre = input.closest('.rehber-hucre');
-        const metin = hucre.querySelector('.rehber-metin');
-        input.value = metin.textContent === 'Ekle...' ? '' : metin.textContent;
-        input.classList.add('hidden'); metin.classList.remove('hidden');
+            hucre.dataset.rehber = deger;
+            if (deger) {
+                metin.textContent = deger;
+                metin.classList.remove('text-slate-600','italic');
+                metin.classList.add('text-slate-300');
+            } else {
+                metin.textContent = 'Ekle...';
+                metin.classList.add('text-slate-600','italic');
+                metin.classList.remove('text-slate-300');
+            }
+        }).catch(() => alert('Kayıt başarısız'));
     }
 
     function satisHavayoluFiltrele(hy) {
