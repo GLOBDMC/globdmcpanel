@@ -2597,8 +2597,8 @@ def porsline_sync_survey(survey_id: str, request: Request):
         return JSONResponse({"ok": False, "hata": detail.get("hata")}, status_code=500)
 
     survey       = detail["survey"]
-    title        = survey.get("title") or survey.get("name") or ""
-    created_date = survey.get("created_date") or survey.get("created_at") or ""
+    title        = str(survey.get("title") or survey.get("name") or "")
+    created_date = str(survey.get("created_date") or survey.get("created_at") or "")
     questions    = survey.get("questions") or []
     parsed       = parse_survey_title(title, created_date)
 

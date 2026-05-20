@@ -65,10 +65,12 @@ _DEST_KEYWORDS: dict[str, list[str]] = {
 }
 
 
-def normalize(text: str) -> str:
+def normalize(text) -> str:
     """Metni karşılaştırma için normalleştirir."""
     if not text:
         return ""
+    if not isinstance(text, str):
+        text = str(text)
     t = text.lower().strip()
     t = _remove_accents(t)
     t = re.sub(r"[^\w\s]", " ", t)   # noktalama → boşluk
