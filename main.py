@@ -534,39 +534,31 @@ def tablo_olustur():
     except Exception as e:
         logger.error("Snapshot tablosu olusturulamadi: %s", e)
 
-    # Rehberler tablosu — ayrı bağlantıda, izole
-    try:
-        with db_engine.connect() as conn:
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS rehberler (
-                    id          SERIAL PRIMARY KEY,
-                    ad_soyad    VARCHAR(300) NOT NULL,
-                    e_posta     VARCHAR(200) DEFAULT '',
-                    telefon     VARCHAR(50)  DEFAULT '',
-                    aktif       BOOLEAN      DEFAULT TRUE,
-                    notlar      TEXT         DEFAULT '',
-                    created_at  TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
-                    updated_at  TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
-                )
-            """))
-            conn.execute(text(
-                "CREATE INDEX IF NOT EXISTS idx_rehberler_ad ON rehberler(ad_soyad)"
-            ))
-            conn.execute(text(
-                "ALTER TABLE historical_surveys ADD COLUMN IF NOT EXISTS "
-                "rehber_id INTEGER REFERENCES rehberler(id) ON DELETE SET NULL"
-            ))
-            conn.execute(text(
-                "CREATE INDEX IF NOT EXISTS idx_hs_rehber_id ON historical_surveys(rehber_id)"
-            ))
-            conn.execute(text(
-                "ALTER TABLE turlar ADD COLUMN IF NOT EXISTS "
-                "rehber_id INTEGER REFERENCES rehberler(id) ON DELETE SET NULL"
-            ))
-            conn.commit()
-        logger.info("Rehberler tablosu hazir")
-    except Exception as e:
-        logger.error("Rehberler tablosu olusturulamadi: %s", e)
+    # Rehberler tablosu — her DDL adımı ayrı transaction'da
+    _rehber_ddl_steps = [
+        """CREATE TABLE IF NOT EXISTS rehberler (
+            id          SERIAL PRIMARY KEY,
+            ad_soyad    VARCHAR(300) NOT NULL,
+            e_posta     VARCHAR(200) DEFAULT '',
+            telefon     VARCHAR(50)  DEFAULT '',
+            aktif       BOOLEAN      DEFAULT TRUE,
+            notlar      TEXT         DEFAULT '',
+            created_at  TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+            updated_at  TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_rehberler_ad ON rehberler(ad_soyad)",
+        "ALTER TABLE historical_surveys ADD COLUMN IF NOT EXISTS rehber_id INTEGER REFERENCES rehberler(id) ON DELETE SET NULL",
+        "CREATE INDEX IF NOT EXISTS idx_hs_rehber_id ON historical_surveys(rehber_id)",
+        "ALTER TABLE turlar ADD COLUMN IF NOT EXISTS rehber_id INTEGER REFERENCES rehberler(id) ON DELETE SET NULL",
+    ]
+    for _i, _ddl in enumerate(_rehber_ddl_steps):
+        try:
+            with db_engine.connect() as conn:
+                conn.execute(text(_ddl))
+                conn.commit()
+        except Exception as e:
+            logger.warning("Rehberler migration step %d: %s", _i, e)
+    logger.info("Rehberler tablosu hazir")
 
     logger.info("Tablolar hazir")
 
@@ -2098,34 +2090,35 @@ def survey_search_tours(request: Request, q: str = ""):
 # ── Rehber API route'ları ────────────────────────────────────────────────────
 
 def _ensure_rehberler_table():
-    """rehberler tablosu yoksa oluşturur — her API çağrısında güvenli kontrol."""
-    try:
-        with db_engine.connect() as conn:
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS rehberler (
-                    id          SERIAL PRIMARY KEY,
-                    ad_soyad    VARCHAR(300) NOT NULL,
-                    e_posta     VARCHAR(200) DEFAULT '',
-                    telefon     VARCHAR(50)  DEFAULT '',
-                    aktif       BOOLEAN      DEFAULT TRUE,
-                    notlar      TEXT         DEFAULT '',
-                    created_at  TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
-                    updated_at  TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
-                )
-            """))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_rehberler_ad ON rehberler(ad_soyad)"))
-            conn.execute(text(
-                "ALTER TABLE historical_surveys ADD COLUMN IF NOT EXISTS "
-                "rehber_id INTEGER REFERENCES rehberler(id) ON DELETE SET NULL"
-            ))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_hs_rehber_id ON historical_surveys(rehber_id)"))
-            conn.execute(text(
-                "ALTER TABLE turlar ADD COLUMN IF NOT EXISTS "
-                "rehber_id INTEGER REFERENCES rehberler(id) ON DELETE SET NULL"
-            ))
-            conn.commit()
-    except Exception as e:
-        logger.warning("_ensure_rehberler_table: %s", e)
+    """rehberler tablosu yoksa oluşturur — her DDL ayrı transaction'da çalışır."""
+    ddl_steps = [
+        # 1. Ana tablo
+        """CREATE TABLE IF NOT EXISTS rehberler (
+            id          SERIAL PRIMARY KEY,
+            ad_soyad    VARCHAR(300) NOT NULL,
+            e_posta     VARCHAR(200) DEFAULT '',
+            telefon     VARCHAR(50)  DEFAULT '',
+            aktif       BOOLEAN      DEFAULT TRUE,
+            notlar      TEXT         DEFAULT '',
+            created_at  TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+            updated_at  TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+        )""",
+        # 2. Index
+        "CREATE INDEX IF NOT EXISTS idx_rehberler_ad ON rehberler(ad_soyad)",
+        # 3. historical_surveys FK kolonu
+        "ALTER TABLE historical_surveys ADD COLUMN IF NOT EXISTS rehber_id INTEGER REFERENCES rehberler(id) ON DELETE SET NULL",
+        # 4. historical_surveys index
+        "CREATE INDEX IF NOT EXISTS idx_hs_rehber_id ON historical_surveys(rehber_id)",
+        # 5. turlar FK kolonu
+        "ALTER TABLE turlar ADD COLUMN IF NOT EXISTS rehber_id INTEGER REFERENCES rehberler(id) ON DELETE SET NULL",
+    ]
+    for i, ddl in enumerate(ddl_steps):
+        try:
+            with db_engine.connect() as conn:
+                conn.execute(text(ddl))
+                conn.commit()
+        except Exception as e:
+            logger.warning("_ensure_rehberler_table step %d: %s", i, e)
 
 
 @app.get("/api/rehberler")
