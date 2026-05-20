@@ -2763,6 +2763,7 @@ def porsline_sync_survey(survey_id: str, request: Request):
     # Her yanıtı işle
     eklenen = 0
     atlanan = 0
+    insert_hata_ornek = ""
 
     insert_sql = """
         INSERT INTO historical_surveys (
@@ -2844,8 +2845,12 @@ def porsline_sync_survey(survey_id: str, request: Request):
                 else:
                     atlanan += 1
             except Exception as ex:
-                logger.warning("Porsline yanıt insert hatası: %s", ex)
+                hata_str = str(ex)
+                logger.error("Porsline yanıt insert hatası [%s] row=%d: %s", survey_id, i, hata_str)
+                if not insert_hata_ornek:
+                    insert_hata_ornek = hata_str[:300]
                 atlanan += 1
+                conn.rollback()  # bu satırı atla, devam et
 
         conn.commit()
 
@@ -2865,6 +2870,7 @@ def porsline_sync_survey(survey_id: str, request: Request):
         "eklenen":       eklenen,
         "atlanan":       atlanan,
         "zaten_var":     zaten_var_count,
+        "insert_hata":   insert_hata_ornek or None,
     })
 
 
