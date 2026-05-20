@@ -560,7 +560,42 @@ def tablo_olustur():
             logger.warning("Rehberler migration step %d: %s", _i, e)
     logger.info("Rehberler tablosu hazir")
 
+    # ── tur_detaylar tablosu (Gordios tur kartı verileri) ────────────────────
+    _tur_detay_ddl = [
+        """CREATE TABLE IF NOT EXISTS tur_detaylar (
+            id              SERIAL PRIMARY KEY,
+            jt_kodu         VARCHAR(50) UNIQUE NOT NULL,
+            plan_id         INTEGER,
+            pdf_url         TEXT,
+            ucus_json       TEXT DEFAULT '[]',
+            program_json    TEXT DEFAULT '[]',
+            program_baslik  TEXT DEFAULT '',
+            sync_status     VARCHAR(20) DEFAULT 'pending',
+            hata_mesaj      TEXT,
+            gordios_sync_at TIMESTAMP,
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_tur_detaylar_jt ON tur_detaylar(jt_kodu)",
+    ]
+    for _i, _ddl in enumerate(_tur_detay_ddl):
+        try:
+            with db_engine.connect() as conn:
+                conn.execute(text(_ddl))
+                conn.commit()
+        except Exception as e:
+            logger.warning("tur_detaylar migration step %d: %s", _i, e)
+    logger.info("tur_detaylar tablosu hazir")
+
     logger.info("Tablolar hazir")
+
+    # Tur Kartı route'larını kaydet
+    try:
+        from tur_kart_routes import register_tur_kart_routes
+        register_tur_kart_routes(app, db_engine, templates)
+        logger.info("Tur Karti route'lari kayit edildi")
+    except Exception as _e:
+        logger.warning("Tur Karti route kayit hatasi: %s", _e)
 
 
 def bitis_tarihi_hesapla(bitis_raw: str, tur_adi: str, kalkis: str) -> str:
