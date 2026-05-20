@@ -872,33 +872,38 @@ def satis_aleri_getir():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # ── Sadece DB tabloları oluştur (hızlı) ─────────────────────────────────
     try:
         tablo_olustur()
     except Exception as e:
         logger.error(f"Tablo olusturma hatasi: {e}")
-    try:
-        sheets_den_postgresql_kopyala()
-        logger.info("Baslangic Sheets sync tamamlandi")
-    except Exception as e:
-        logger.error(f"Baslangic Sheets sync hatasi: {e}")
-    try:
-        jolly_sonuc_kopyala()
-        logger.info("Baslangic Jolly sync tamamlandi")
-    except Exception as e:
-        logger.error(f"Baslangic Jolly sync hatasi: {e}")
+
+    # ── Scheduler başlat (hemen yield'e geç, health check cevap verebilsin) ─
     scheduler = None
     try:
         scheduler = BackgroundScheduler()
-        scheduler.add_job(sheets_den_postgresql_kopyala, 'interval', hours=1)
-        scheduler.add_job(jolly_sonuc_kopyala, 'interval', hours=1)
+        # İlk sync'i 10 saniye gecikmeyle yap — uygulama ayağa kalksın
+        from datetime import datetime, timedelta
+        ilk_sync = datetime.now() + timedelta(seconds=10)
+        scheduler.add_job(sheets_den_postgresql_kopyala, 'date', run_date=ilk_sync,
+                          id='ilk_sheets_sync')
+        scheduler.add_job(jolly_sonuc_kopyala, 'date', run_date=ilk_sync,
+                          id='ilk_jolly_sync')
+        # Saatlik periyodik job'lar
+        scheduler.add_job(sheets_den_postgresql_kopyala, 'interval', hours=1,
+                          id='sheets_interval')
+        scheduler.add_job(jolly_sonuc_kopyala, 'interval', hours=1,
+                          id='jolly_interval')
         # Günlük snapshot job (02:00 TRT = 23:00 UTC)
         from snapshot_scheduler import setup_snapshot_scheduler
         setup_snapshot_scheduler(scheduler, db_engine)
         scheduler.start()
-        logger.info("Otomatik senkronizasyon aktif: 1 saatte bir")
+        logger.info("Scheduler baslatildi — ilk sync 10s sonra")
     except Exception as e:
         logger.error(f"Scheduler baslatılamadi: {e}")
-    yield
+
+    yield  # ← uygulama artık isteklere açık, health check geçer
+
     if scheduler:
         try:
             scheduler.shutdown()
