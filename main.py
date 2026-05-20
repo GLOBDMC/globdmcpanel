@@ -364,7 +364,6 @@ def tablo_olustur():
         conn.execute(text(sql_turlar))
         conn.execute(text(sql_kullanicilar))
         conn.execute(text("ALTER TABLE turlar ADD COLUMN IF NOT EXISTS rehber VARCHAR(200) DEFAULT ''"))
-        conn.execute(text("ALTER TABLE turlar ADD COLUMN IF NOT EXISTS rehber_id INTEGER REFERENCES rehberler(id) ON DELETE SET NULL"))
         conn.execute(text("ALTER TABLE turlar ADD COLUMN IF NOT EXISTS bitis_tarihi VARCHAR(50) DEFAULT ''"))
         conn.execute(text("ALTER TABLE kullanicilar ADD COLUMN IF NOT EXISTS sifre_hash VARCHAR(200)"))
         conn.execute(text("ALTER TABLE kullanicilar ADD COLUMN IF NOT EXISTS sifre_degistir BOOLEAN DEFAULT FALSE"))
@@ -481,6 +480,11 @@ def tablo_olustur():
         ))
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS idx_rehberler_ad ON rehberler(ad_soyad)"
+        ))
+        # turlar.rehber_id → rehberler tablosu oluştuktan SONRA ekle
+        conn.execute(text(
+            "ALTER TABLE turlar ADD COLUMN IF NOT EXISTS "
+            "rehber_id INTEGER REFERENCES rehberler(id) ON DELETE SET NULL"
         ))
         # unique: aynı yanıt iki kez girilmez
         conn.execute(text("""
