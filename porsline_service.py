@@ -544,6 +544,104 @@ def parse_response_row(header: list[str], row: list) -> dict:
     }
 
 
+# ── Otel adı çıkarma ─────────────────────────────────────────────────────────
+
+# Soru metni → temiz şehir/otel adı eşleştirmesi
+_OTEL_SEHIR_MAP: list[tuple[str, str]] = [
+    # İspanya
+    ("barcelona", "Barcelona"), ("barselona", "Barcelona"),
+    ("valencia", "Valencia"), ("granada", "Granada"),
+    ("sevilla", "Sevilla"), ("madrid", "Madrid"),
+    ("endulus", "Endülüs"), ("endülüs", "Endülüs"),
+    # İtalya
+    ("roma", "Roma"), ("floransa", "Floransa"),
+    ("venedik", "Venedik"), ("napoli", "Napoli"),
+    ("milano", "Milano"), ("sicilya", "Sicilya"),
+    # Fransa
+    ("paris", "Paris"), ("nice", "Nice"), ("lyon", "Lyon"),
+    # Benelux
+    ("amsterdam", "Amsterdam"), ("bruksel", "Brüksel"),
+    # Almanya
+    ("berlin", "Berlin"), ("frankfurt", "Frankfurt"),
+    ("munih", "Münih"), ("münchen", "Münih"), ("hamburg", "Hamburg"),
+    # İsviçre
+    ("zurich", "Zürih"), ("zürih", "Zürih"), ("cenevre", "Cenevre"),
+    ("interlaken", "Interlaken"), ("luzern", "Luzern"),
+    # Avusturya
+    ("viyana", "Viyana"), ("salzburg", "Salzburg"),
+    # Doğu Avrupa
+    ("prag", "Prag"), ("budapes", "Budapeşte"),
+    ("varso", "Varşova"), ("varşo", "Varşova"),
+    ("bratislava", "Bratislava"), ("krakow", "Krakow"),
+    # Portekiz
+    ("lizbon", "Lizbon"), ("porto", "Porto"),
+    # İngiltere
+    ("londra", "Londra"), ("edinburgh", "Edinburgh"),
+    # Balkanlar
+    ("belgrad", "Belgrad"), ("dubrovnik", "Dubrovnik"),
+    ("zagreb", "Zagreb"), ("budva", "Budva"),
+    ("tiran", "Tiran"), ("skopye", "Üsküp"),
+    # Yunanistan
+    ("atina", "Atina"), ("selanik", "Selanik"),
+    ("santorini", "Santorini"), ("rodos", "Rodos"),
+    # Kafkasya
+    ("tiflis", "Tiflis"), ("baku", "Bakü"), ("bakü", "Bakü"),
+    ("erivan", "Erivan"),
+    # Uzak Doğu
+    ("tokyo", "Tokyo"), ("osaka", "Osaka"), ("kyoto", "Kyoto"),
+    ("bangkok", "Bangkok"), ("bali", "Bali"),
+    ("singapur", "Singapur"), ("vietnam", "Vietnam"),
+    # Orta Doğu / Afrika
+    ("dubai", "Dubai"), ("abu dabi", "Abu Dabi"),
+    ("kahire", "Kahire"), ("luksor", "Luksor"),
+    ("marakes", "Marakeş"), ("marakeş", "Marakeş"),
+    # Amerika
+    ("new york", "New York"), ("los angeles", "Los Angeles"),
+    ("miami", "Miami"), ("toronto", "Toronto"),
+    # Türkiye
+    ("istanbul", "İstanbul"), ("ankara", "Ankara"),
+    ("bodrum", "Bodrum"), ("antalya", "Antalya"),
+    ("kapadokya", "Kapadokya"), ("pamukkale", "Pamukkale"),
+    # Fas
+    ("kazablanka", "Kazablanka"), ("fes", "Fes"), ("rabat", "Rabat"),
+    # İskandinav
+    ("oslo", "Oslo"), ("stockholm", "Stockholm"),
+    ("kopenhag", "Kopenhag"), ("helsinki", "Helsinki"),
+]
+
+
+def extract_otel_adi(puan_detay: dict) -> str:
+    """
+    puan_detay['oteller'] dict'inden temiz şehir/otel isim listesi çıkarır.
+
+    Örn:  {"Barselona otelinizden memnun kaldınız mı": 4.0, "Madrid Oteli": 3.5}
+          → "Barcelona, Madrid"
+
+    Dönen string DB'ye `otel_adi` kolonuna yazılır;  ILIKE ile aranır.
+    """
+    oteller: dict = puan_detay.get("oteller") or {}
+    if not oteller:
+        return ""
+
+    found: list[str] = []
+    for key in oteller.keys():
+        key_low = key.lower()
+        matched = False
+        for kw, city in _OTEL_SEHIR_MAP:
+            if kw in key_low:
+                if city not in found:
+                    found.append(city)
+                matched = True
+                break
+        if not matched:
+            # Şehir bulunamadı — ilk 3 kelimeyi al (temiz görünüm)
+            words = key.split()[:3]
+            short = " ".join(words).strip("?").strip()[:30]
+            if short and short not in found:
+                found.append(short)
+    return ", ".join(found)
+
+
 # ── Bölge tespiti ─────────────────────────────────────────────────────────────
 
 _BOLGELER: dict[str, list[str]] = {

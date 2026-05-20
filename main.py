@@ -459,6 +459,25 @@ def tablo_olustur():
             "ALTER TABLE historical_surveys ADD COLUMN IF NOT EXISTS "
             "puan_detay JSONB"
         ))
+        # Otel adı: puan_detay.oteller'den çıkarılan temiz şehir/otel isimleri
+        conn.execute(text(
+            "ALTER TABLE historical_surveys ADD COLUMN IF NOT EXISTS "
+            "otel_adi TEXT DEFAULT ''"
+        ))
+        # Mevcut satırlar için backfill (otel_adi boş, puan_detay dolu olanlar)
+        conn.execute(text("""
+            UPDATE historical_surveys
+            SET otel_adi = (
+                SELECT string_agg(key, ' | ')
+                FROM jsonb_object_keys(
+                    COALESCE(puan_detay->'oteller', '{}'::jsonb)
+                ) AS key
+            )
+            WHERE otel_adi = ''
+              AND puan_detay IS NOT NULL
+              AND puan_detay->'oteller' IS NOT NULL
+              AND puan_detay->'oteller' != '{}'::jsonb
+        """))
         # unique: aynı yanıt iki kez girilmez
         # NOT: DEFERRABLE constraint ON CONFLICT ile çalışmaz — non-deferrable olmalı
         conn.execute(text("""
@@ -1977,6 +1996,7 @@ def survey_results(
     min_puan:  float = None,
     siralama:  str = "yeni",   # yeni | puan_asc | puan_desc
     bolge:     str = "",
+    otel:      str = "",
     status:    str = "",       # matched | review | pending
 ):
     """Tüm import edilmiş anket yanıtlarını döndürür (sayfalı, filtrelenebilir)."""
@@ -2005,6 +2025,9 @@ def survey_results(
     if bolge:
         filters.append("hs.bolge = :bolge")
         params["bolge"] = bolge
+    if otel:
+        filters.append("LOWER(hs.otel_adi) LIKE LOWER(:otel)")
+        params["otel"] = f"%{otel}%"
 
     where = "WHERE " + " AND ".join(filters) if filters else ""
 
@@ -2038,6 +2061,8 @@ def survey_results(
                 hs.matched_jt_kodu,
                 hs.import_batch,
                 hs.created_at::text,
+                hs.bolge,
+                hs.otel_adi,
                 t.tur_adi   AS eslesen_tur
             FROM historical_surveys hs
             LEFT JOIN turlar t ON t.id = hs.matched_tur_id
@@ -2110,9 +2135,37 @@ def survey_bolgeler(request: Request):
             ORDER BY adet DESC
         """)).fetchall()
 
+    bolge_data = [dict(r._mapping) for r in rows]
+    return JSONResponse({
+        "ok":        True,
+        "bolge_list": bolge_data,
+        # Geriye dönük uyumluluk: sadece isim listesi
+        "bolgeler":  [r["bolge"] for r in bolge_data if r["bolge"] != "Diğer"],
+    })
+
+
+@app.get("/api/survey/oteller")
+def survey_oteller(request: Request):
+    """DB'deki distinct otel/şehir isimleri listesi (otel_adi colonundan)."""
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    with db_engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT DISTINCT trim(otel) AS otel, COUNT(*) AS adet
+            FROM historical_surveys,
+                 unnest(string_to_array(otel_adi, ', ')) AS otel
+            WHERE otel_adi != ''
+              AND trim(otel) != ''
+            GROUP BY trim(otel)
+            ORDER BY adet DESC
+            LIMIT 100
+        """)).fetchall()
+
     return JSONResponse({
         "ok":     True,
-        "bolge_list": [dict(r._mapping) for r in rows],
+        "oteller": [r[0] for r in rows],
     })
 
 
@@ -2800,20 +2853,20 @@ def porsline_sync_survey(survey_id: str, request: Request):
             tur_adi_ham, matched_tur_id, matched_jt_kodu,
             match_confidence, match_method, match_status,
             import_batch, porsline_response_id, porsline_survey_id,
-            bolge
+            bolge, otel_adi
         ) VALUES (
             :survey_date, :musteri, :rehber, :acente,
             :kalkis, :genel_puan, :rehber_puani, :puan_detay,
             :tur_adi, :tur_id, :jt,
             :conf, :method, :status,
             :batch, :resp_id, :survey_id,
-            :bolge
+            :bolge, :otel_adi
         )
         ON CONFLICT (porsline_response_id) DO NOTHING
     """
 
     # Rehber adını header veya questions'dan çıkar
-    from porsline_service import _extract_guide_name
+    from porsline_service import _extract_guide_name, extract_otel_adi
     rehber_adi_header = _extract_guide_name(header) if header else (parsed.get("rehber_adi") or "")
 
     # DB'de bu survey için mevcut kayıt sayısını önceden al
@@ -2848,6 +2901,7 @@ def porsline_sync_survey(survey_id: str, request: Request):
             rehber_adi = rehber_adi_header or parsed_row.get("rehber_adi") or parsed.get("rehber_adi") or ""
 
             try:
+                _puan_detay_dict = parsed_row.get("puan_detay") or {}
                 result = conn.execute(text(insert_sql), {
                     "survey_date": "",
                     "musteri":     parsed_row.get("musteri_adi") or "",
@@ -2856,7 +2910,7 @@ def porsline_sync_survey(survey_id: str, request: Request):
                     "kalkis":      parsed.get("kalkis_str") or "",
                     "genel_puan":  parsed_row.get("genel_puan"),
                     "rehber_puani":parsed_row.get("rehber_puani"),
-                    "puan_detay":  json.dumps(parsed_row.get("puan_detay") or {}, ensure_ascii=False),
+                    "puan_detay":  json.dumps(_puan_detay_dict, ensure_ascii=False),
                     "tur_adi":     parsed["tur_adi"],
                     "tur_id":      matched_tur_id,
                     "jt":          matched_jt_kodu,
@@ -2867,6 +2921,7 @@ def porsline_sync_survey(survey_id: str, request: Request):
                     "resp_id":     resp_id,
                     "survey_id":   survey_id,
                     "bolge":       bolge,
+                    "otel_adi":    extract_otel_adi(_puan_detay_dict),
                 })
                 if result.rowcount > 0:
                     eklenen += 1
