@@ -1102,10 +1102,9 @@ def health():
     except Exception as exc:
         logger.error("Health check DB hatasi: %s", exc)
 
-    status_code = 200 if db_ok else 503
     return JSONResponse(
         {"status": "ok" if db_ok else "degraded", "db": "ok" if db_ok else "error"},
-        status_code=status_code,
+        status_code=200,
     )
 
 
