@@ -956,7 +956,13 @@ async def custom_http_exception_handler(request: Request, exc: StarletteHTTPExce
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logger.error("Unhandled exception | path=%s | %s: %s",
-                 request.url.path, type(exc).__name__, exc)
+                 request.url.path, type(exc).__name__, exc, exc_info=True)
+    # API route'larında JSON döndür — frontend fetch().json() parse edebilsin
+    if request.url.path.startswith("/api/"):
+        return JSONResponse(
+            {"ok": False, "hata": f"{type(exc).__name__}: {exc}"},
+            status_code=500,
+        )
     kullanici = oturum_kullanicisi(request)
     return templates.TemplateResponse(
         request=request,
