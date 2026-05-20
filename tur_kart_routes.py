@@ -2,12 +2,12 @@
 tur_kart_routes.py
 ------------------
 Tur Kartı sayfası ve Gordios API endpoint'leri.
-main.py'de `from tur_kart_routes import register_tur_kart_routes` ile eklenir.
+APIRouter kullanır — main.py'de modül seviyesinde include_router ile eklenir.
 """
 import json as _json
 import logging
 import concurrent.futures as _futures
-from fastapi import Request
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import text
 
@@ -16,14 +16,19 @@ logger = logging.getLogger("globdmc.turkart")
 _gordios_executor = _futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="gordios")
 
 
-def register_tur_kart_routes(app, db_engine, templates):
+def create_tur_kart_router(db_engine, templates) -> APIRouter:
+    """
+    FastAPI APIRouter döndürür.
+    main.py'de: app.include_router(create_tur_kart_router(db_engine, templates))
+    """
+    router = APIRouter()
 
-    # ── DB Migration ──────────────────────────────────────────────────────────
+    # DB tablosunu garantile
     _ensure_tur_detaylar_table(db_engine)
 
     # ── Tur Kartı HTML Sayfası ────────────────────────────────────────────────
 
-    @app.get("/turlar/{jt_kodu}")
+    @router.get("/turlar/{jt_kodu}")
     def tur_karti_sayfasi(request: Request, jt_kodu: str):
         from main import oturum_kullanicisi
         kullanici = oturum_kullanicisi(request)
@@ -49,7 +54,7 @@ def register_tur_kart_routes(app, db_engine, templates):
 
     # ── API: Tur Detay JSON ───────────────────────────────────────────────────
 
-    @app.get("/api/tur/{jt_kodu}")
+    @router.get("/api/tur/{jt_kodu}")
     def api_tur_detay(request: Request, jt_kodu: str):
         from main import oturum_kullanicisi
         kullanici = oturum_kullanicisi(request)
@@ -65,7 +70,7 @@ def register_tur_kart_routes(app, db_engine, templates):
 
     # ── API: Gordios Sync ─────────────────────────────────────────────────────
 
-    @app.post("/api/tur/{jt_kodu}/sync")
+    @router.post("/api/tur/{jt_kodu}/sync")
     async def api_tur_sync(request: Request, jt_kodu: str):
         from main import oturum_kullanicisi
         kullanici = oturum_kullanicisi(request)
@@ -94,7 +99,7 @@ def register_tur_kart_routes(app, db_engine, templates):
 
     # ── API: Snapshot Geçmişi ─────────────────────────────────────────────────
 
-    @app.get("/api/tur/{jt_kodu}/snapshots")
+    @router.get("/api/tur/{jt_kodu}/snapshots")
     def api_tur_snapshots(request: Request, jt_kodu: str, limit: int = 60):
         from main import oturum_kullanicisi
         kullanici = oturum_kullanicisi(request)
@@ -111,6 +116,8 @@ def register_tur_kart_routes(app, db_engine, templates):
         except Exception as e:
             logger.error("api_tur_snapshots [%s]: %s", jt_kodu, e)
             return JSONResponse({"hata": str(e)}, status_code=500)
+
+    return router
 
 
 # ── İç yardımcılar ────────────────────────────────────────────────────────────
