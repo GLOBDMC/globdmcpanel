@@ -872,6 +872,21 @@ def satis_aleri_getir():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Playwright Chromium — Python subprocess ile kur (shell/CRLF bağımsız)
+    try:
+        import subprocess, sys
+        logger.info("Playwright Chromium kuruluyor...")
+        r = subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            capture_output=True, text=True, timeout=180
+        )
+        if r.returncode == 0:
+            logger.info("Playwright Chromium hazir")
+        else:
+            logger.warning("Playwright install stderr: %s", r.stderr[:300])
+    except Exception as _pw_err:
+        logger.warning("Playwright install atlanamadi: %s", _pw_err)
+
     try:
         tablo_olustur()
     except Exception as e:
