@@ -13,6 +13,7 @@ from fastapi import FastAPI, Request, Form, File, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, PlainTextResponse, Response
 from fastapi.exception_handlers import http_exception_handler
 from pydantic import BaseModel
+from typing import Optional
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import create_engine, text
@@ -363,6 +364,7 @@ def tablo_olustur():
         conn.execute(text(sql_turlar))
         conn.execute(text(sql_kullanicilar))
         conn.execute(text("ALTER TABLE turlar ADD COLUMN IF NOT EXISTS rehber VARCHAR(200) DEFAULT ''"))
+        conn.execute(text("ALTER TABLE turlar ADD COLUMN IF NOT EXISTS rehber_id INTEGER REFERENCES rehberler(id) ON DELETE SET NULL"))
         conn.execute(text("ALTER TABLE turlar ADD COLUMN IF NOT EXISTS bitis_tarihi VARCHAR(50) DEFAULT ''"))
         conn.execute(text("ALTER TABLE kullanicilar ADD COLUMN IF NOT EXISTS sifre_hash VARCHAR(200)"))
         conn.execute(text("ALTER TABLE kullanicilar ADD COLUMN IF NOT EXISTS sifre_degistir BOOLEAN DEFAULT FALSE"))
@@ -925,6 +927,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 class RehberGuncelle(BaseModel):
     rehber: str
+    rehber_id: Optional[int] = None
 
 
 @app.get("/login")
@@ -2856,21 +2859,23 @@ def manuel_sync(request: Request):
 
 
 @app.patch("/api/tur/{jt_kodu}/rehber")
-def rehber_guncelle(jt_kodu: str, body: RehberGuncelle, request: Request):
+def tur_rehber_guncelle(jt_kodu: str, body: RehberGuncelle, request: Request):
     kullanici = oturum_kullanicisi(request)
     if not kullanici:
         return JSONResponse({"hata": "Yetkisiz"}, status_code=401)
+    ad = body.rehber.strip()
+    rid = body.rehber_id
     with db_engine.connect() as conn:
         conn.execute(
-            text("UPDATE turlar SET rehber = :rehber WHERE jt_kodu = :jt"),
-            {"rehber": body.rehber.strip(), "jt": jt_kodu}
+            text("UPDATE turlar SET rehber = :rehber, rehber_id = :rid WHERE jt_kodu = :jt"),
+            {"rehber": ad, "rid": rid, "jt": jt_kodu}
         )
         conn.commit()
     audit_logger.info(
-        "REHBER_UPDATE | user=%s | jt_kodu=%s | rehber=%.50s",
-        kullanici["kullanici_adi"], jt_kodu, body.rehber.strip(),
+        "REHBER_UPDATE | user=%s | jt_kodu=%s | rehber=%.50s | rehber_id=%s",
+        kullanici["kullanici_adi"], jt_kodu, ad, rid,
     )
-    return JSONResponse({"ok": True, "rehber": body.rehber.strip()})
+    return JSONResponse({"ok": True, "rehber": ad})
 
 
 @app.get("/sifre-degistir")
