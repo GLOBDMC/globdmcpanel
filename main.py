@@ -1,5 +1,6 @@
 import os
 import io
+import re
 import csv
 import json
 import time
