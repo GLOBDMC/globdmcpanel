@@ -84,33 +84,27 @@ def scrape_tour_detail(jt_kodu: str) -> dict:
             # Submit — input[type="submit"] (button yok, value="Giriş Yap")
             page.click('input[type="submit"]')
             logger.info("[gordios] submit tıklandı")
+            page.wait_for_load_state("networkidle", timeout=15_000)
+            logger.info("[gordios] submit sonrası URL: %s", page.url)
 
-            # Backoffice'e yönlendirmeyi bekle
-            try:
-                page.wait_for_url(f"{GORDIOS_BO_BASE}/**", timeout=20_000)
-            except Exception:
-                page.wait_for_load_state("networkidle", timeout=15_000)
-
-            if GORDIOS_BO_BASE not in page.url:
-                # Screenshot kaydet — debug için
-                try:
-                    import os, base64
-                    ss = page.screenshot()
-                    ss_b64 = base64.b64encode(ss).decode()
-                    logger.error("[gordios] login başarısız screenshot (base64 ilk 200): %s...",
-                                 ss_b64[:200])
-                except Exception:
-                    pass
-                # Sayfadaki tüm input/button bilgisini logla
-                page_html_snippet = page.content()[:2000]
-                logger.error("[gordios] login sonrası sayfa: URL=%s HTML=%s",
-                             page.url, page_html_snippet)
-                result["hata"] = f"Login sonrası beklenmedik URL: {page.url}"
-                return result
-            logger.info("[gordios] login OK → %s", page.url)
-
+            # Identity server kendi portalında kalıyor — session set oldu.
+            # Direkt backoffice'e git, SSO session cookie ile kabul edilecek.
             # ── 2. ARAMA SAYFASI ─────────────────────────────────────────────
             page.goto(GORDIOS_TOUR_LIST, wait_until="networkidle", timeout=30_000)
+            logger.info("[gordios] tour list URL: %s", page.url)
+
+            # Backoffice'e ulaşamazsak login gerçekte başarısız demektir
+            if GORDIOS_BO_BASE not in page.url:
+                page_text = ""
+                try:
+                    page_text = page.inner_text("body")[:500]
+                except Exception:
+                    pass
+                logger.error("[gordios] backoffice'e ulaşılamadı: URL=%s text=%s",
+                             page.url, page_text)
+                result["hata"] = f"Backoffice'e erişilemedi: {page.url}"
+                return result
+            logger.info("[gordios] login + backoffice OK → %s", page.url)
 
             # "Periyot Kodu" alanına JT kodunu yaz
             # Önce name/id/placeholder'da "periyot" veya "period" geçen input'u ara
