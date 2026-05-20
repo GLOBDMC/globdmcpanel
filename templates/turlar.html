@@ -204,7 +204,9 @@
                 <tbody id="turGovde">
                     {% for tur in turlar %}
                     <tr class="tur-satir" data-havayolu="{{ tur[3] }}" data-kalan="{{ tur[6] if tur[6] is not none else 0 }}" data-tarih="{{ tur[2] }}">
-                        <td class="font-medium text-white">{{ tur[0] }}</td>
+                        <td class="font-medium">
+                          <a href="/turlar/{{ tur[0] }}" class="text-accent-blue hover:underline font-mono text-xs">{{ tur[0] }}</a>
+                        </td>
                         <td class="text-slate-300" style="max-width:200px; overflow:hidden; text-overflow:ellipsis;">{{ tur[1] }}</td>
                         <td>{{ tur[2] }}</td>
                         <td class="text-slate-400">{{ tur[9] or '—' }}</td>

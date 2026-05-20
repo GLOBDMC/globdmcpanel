@@ -1,0 +1,407 @@
+{% extends "base.html" %}
+{% block title %}{{ tur.jt_kodu }} — Tur Kartı{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-surface p-4 md:p-6">
+
+  <!-- ── Geri + Başlık ─────────────────────────────────────────────────── -->
+  <div class="flex items-center gap-3 mb-6">
+    <a href="/turlar" class="text-gray-400 hover:text-white transition flex items-center gap-1 text-sm">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+      </svg>
+      Turlar
+    </a>
+    <span class="text-gray-600">/</span>
+    <span class="text-xs font-mono text-accent-blue">{{ tur.jt_kodu }}</span>
+  </div>
+
+  <!-- ── Tur Başlık Kartı ────────────────────────────────────────────────── -->
+  <div class="bg-surface-2 border border-white/10 rounded-2xl p-5 mb-5">
+    <div class="flex flex-wrap items-start justify-between gap-4">
+      <div class="flex-1 min-w-0">
+        <h1 class="text-xl font-semibold text-white leading-snug mb-1 truncate" title="{{ tur.tur_adi }}">
+          {{ tur.tur_adi or tur.jt_kodu }}
+        </h1>
+        <div class="flex flex-wrap gap-3 text-sm text-gray-400 mt-2">
+          {% if tur.kalkis_tarihi %}
+          <span class="flex items-center gap-1">
+            <svg class="w-3.5 h-3.5 text-accent-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+            </svg>
+            {{ tur.kalkis_tarihi }}
+            {% if tur.bitis_tarihi %} → {{ tur.bitis_tarihi }}{% endif %}
+          </span>
+          {% endif %}
+          {% if tur.havayolu %}
+          <span class="flex items-center gap-1">
+            <svg class="w-3.5 h-3.5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+            </svg>
+            {{ tur.havayolu }}
+          </span>
+          {% endif %}
+          {% if tur.rehber %}
+          <span class="flex items-center gap-1">
+            <svg class="w-3.5 h-3.5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+            </svg>
+            {{ tur.rehber }}
+          </span>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Kontenjan özeti -->
+      <div class="flex gap-3 flex-shrink-0">
+        <div class="text-center bg-surface-3 rounded-xl px-4 py-2 min-w-[64px]">
+          <div class="text-xs text-gray-500 mb-0.5">Kontenjan</div>
+          <div class="text-lg font-bold text-white">{{ tur.pax or '—' }}</div>
+        </div>
+        <div class="text-center bg-surface-3 rounded-xl px-4 py-2 min-w-[64px]">
+          <div class="text-xs text-gray-500 mb-0.5">Satılan</div>
+          <div class="text-lg font-bold text-accent-blue">{{ tur.satilan or '0' }}</div>
+        </div>
+        <div class="text-center bg-surface-3 rounded-xl px-4 py-2 min-w-[64px]">
+          <div class="text-xs text-gray-500 mb-0.5">Kalan</div>
+          {% set kalan = tur.kalan | int if tur.kalan else 0 %}
+          <div class="text-lg font-bold {% if kalan <= 3 %}text-red-400{% elif kalan <= 8 %}text-yellow-400{% else %}text-green-400{% endif %}">
+            {{ tur.kalan or '—' }}
+          </div>
+        </div>
+        {% if tur.guncel_fiyat %}
+        <div class="text-center bg-surface-3 rounded-xl px-4 py-2 min-w-[64px]">
+          <div class="text-xs text-gray-500 mb-0.5">Fiyat</div>
+          <div class="text-lg font-bold text-white">{{ tur.guncel_fiyat }}</div>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Gordios Sync Durumu ────────────────────────────────────────────── -->
+  <div id="syncBar" class="mb-5">
+    {% if not detay %}
+    <div class="flex items-center justify-between bg-surface-2 border border-white/10 rounded-xl px-4 py-3">
+      <div class="flex items-center gap-2 text-sm text-gray-400">
+        <svg class="w-4 h-4 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        Gordios verisi henüz çekilmedi.
+      </div>
+      <button onclick="startSync()" id="syncBtn"
+        class="text-xs bg-accent-blue hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg transition font-medium">
+        Gordios'tan Çek
+      </button>
+    </div>
+    {% elif detay.sync_status == 'syncing' %}
+    <div class="flex items-center gap-2 bg-surface-2 border border-yellow-500/30 rounded-xl px-4 py-3 text-sm text-yellow-300">
+      <div class="w-3 h-3 border-2 border-yellow-300 border-t-transparent rounded-full animate-spin"></div>
+      Gordios'tan veri çekiliyor…
+    </div>
+    {% elif detay.sync_status == 'error' %}
+    <div class="flex items-center justify-between bg-surface-2 border border-red-500/30 rounded-xl px-4 py-3">
+      <div class="text-sm text-red-400">
+        Gordios hatası: {{ detay.hata_mesaj or 'bilinmiyor' }}
+      </div>
+      <button onclick="startSync()" class="text-xs bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-lg transition">
+        Tekrar Dene
+      </button>
+    </div>
+    {% else %}
+    <div class="flex items-center justify-between bg-surface-2 border border-green-500/20 rounded-xl px-4 py-3">
+      <div class="text-xs text-gray-500">
+        Son Gordios sync: {{ detay.gordios_sync_at or '—' }}
+        {% if detay.plan_id %} · Plan ID: {{ detay.plan_id }}{% endif %}
+      </div>
+      <div class="flex items-center gap-2">
+        {% if detay.pdf_url %}
+        <a href="{{ detay.pdf_url }}" target="_blank"
+           class="text-xs text-accent-blue hover:underline flex items-center gap-1">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>
+          </svg>
+          Tur Planı PDF
+        </a>
+        {% endif %}
+        <button onclick="startSync()" id="syncBtn"
+          class="text-xs text-gray-400 hover:text-white border border-white/10 px-3 py-1.5 rounded-lg transition">
+          Yenile
+        </button>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- ── Ana İçerik Grid ────────────────────────────────────────────────── -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
+
+    <!-- Uçuş Bilgileri -->
+    <div class="bg-surface-2 border border-white/10 rounded-2xl p-5">
+      <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-4 flex items-center gap-2">
+        <svg class="w-4 h-4 text-accent-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+        </svg>
+        Uçuş Bilgileri
+      </h2>
+
+      {% if detay and detay.ucus_listesi %}
+        <div class="space-y-3">
+        {% for ucus in detay.ucus_listesi %}
+          <div class="bg-surface-3 rounded-xl p-4 border border-white/5">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-xs font-semibold px-2 py-0.5 rounded-full
+                {% if 'Gidiş' in ucus.yon or 'gidis' in ucus.yon|lower %}
+                  bg-blue-500/20 text-blue-300
+                {% else %}
+                  bg-purple-500/20 text-purple-300
+                {% endif %}">
+                {{ ucus.yon }}
+              </span>
+              <span class="text-xs font-mono text-gray-300 font-bold">{{ ucus.ucus_no }}</span>
+              <span class="text-xs text-gray-400">{{ ucus.havayolu }}</span>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <div class="text-xs text-gray-500 mb-0.5">Kalkış</div>
+                <div class="text-sm text-white font-medium">{{ ucus.kalkis_saat }}</div>
+                <div class="text-xs text-gray-400 mt-0.5 leading-tight">{{ ucus.kalkis_yeri }}</div>
+              </div>
+              <div>
+                <div class="text-xs text-gray-500 mb-0.5">Varış</div>
+                <div class="text-sm text-white font-medium">{{ ucus.varis_saat }}</div>
+                <div class="text-xs text-gray-400 mt-0.5 leading-tight">{{ ucus.varis_yeri }}</div>
+              </div>
+            </div>
+            {% if ucus.pnr %}
+            <div class="mt-2 text-xs text-gray-500">PNR: <span class="text-gray-300 font-mono">{{ ucus.pnr }}</span></div>
+            {% endif %}
+          </div>
+        {% endfor %}
+        </div>
+      {% else %}
+        <div class="text-center py-10 text-gray-500 text-sm" id="ucusEmpty">
+          <svg class="w-8 h-8 mx-auto mb-2 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+              d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+          </svg>
+          Gordios'tan henüz çekilmedi
+        </div>
+      {% endif %}
+    </div>
+
+    <!-- Günlük Program -->
+    <div class="bg-surface-2 border border-white/10 rounded-2xl p-5">
+      <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-4 flex items-center gap-2">
+        <svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+        </svg>
+        Günlük Program
+        {% if detay and detay.pdf_url %}
+        <a href="{{ detay.pdf_url }}" target="_blank"
+           class="ml-auto text-xs text-accent-blue hover:underline">PDF</a>
+        {% endif %}
+      </h2>
+
+      {% if detay and detay.program_gunler %}
+        <div class="space-y-2" id="programAccordion">
+        {% for gun in detay.program_gunler %}
+          <div class="border border-white/5 rounded-xl overflow-hidden">
+            <button onclick="toggleGun({{ loop.index0 }})"
+              class="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/5 transition">
+              <div class="flex items-center gap-2">
+                <span class="w-6 h-6 flex items-center justify-center rounded-full bg-accent-blue/20 text-accent-blue text-xs font-bold flex-shrink-0">
+                  {{ gun.gun_no }}
+                </span>
+                <span class="text-sm text-white font-medium">{{ gun.baslik }}</span>
+              </div>
+              <svg id="chevron-{{ loop.index0 }}" class="w-4 h-4 text-gray-400 transition-transform"
+                fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+              </svg>
+            </button>
+            <div id="gunDetay-{{ loop.index0 }}" class="hidden px-4 pb-4">
+              <p class="text-sm text-gray-400 whitespace-pre-line leading-relaxed">{{ gun.detay }}</p>
+            </div>
+          </div>
+        {% endfor %}
+        </div>
+      {% else %}
+        <div class="text-center py-10 text-gray-500 text-sm">
+          <svg class="w-8 h-8 mx-auto mb-2 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+              d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+          </svg>
+          {% if detay and detay.pdf_url %}
+            PDF indirilen programdan çıkarılacak —
+            <a href="{{ detay.pdf_url }}" target="_blank" class="text-accent-blue hover:underline">PDF'i görüntüle</a>
+          {% else %}
+            Gordios'tan henüz çekilmedi
+          {% endif %}
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- ── Satış & Doluluk Grafiği ─────────────────────────────────────────── -->
+  <div class="bg-surface-2 border border-white/10 rounded-2xl p-5">
+    <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-4 flex items-center gap-2">
+      <svg class="w-4 h-4 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+      </svg>
+      Satış & Doluluk Geçmişi
+      <span class="ml-auto text-xs text-gray-500" id="snapshotInfo"></span>
+    </h2>
+    <div id="chartContainer" style="height:200px; position:relative;">
+      <canvas id="salesChart"></canvas>
+    </div>
+    <div id="chartEmpty" class="hidden text-center py-8 text-gray-500 text-sm">
+      Henüz snapshot verisi yok
+    </div>
+  </div>
+
+</div>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+<script>
+const JT_KODU = "{{ tur.jt_kodu }}";
+
+/* ── Accordion ─────────────────────────────────────────────────────── */
+function toggleGun(i) {
+    const el = document.getElementById(`gunDetay-${i}`);
+    const ch = document.getElementById(`chevron-${i}`);
+    if (!el) return;
+    el.classList.toggle('hidden');
+    ch && ch.classList.toggle('rotate-180');
+}
+
+/* ── Gordios Sync ──────────────────────────────────────────────────── */
+async function startSync() {
+    const btn = document.getElementById('syncBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Çekiliyor…'; }
+    try {
+        const res = await fetch(`/api/tur/${JT_KODU}/sync`, { method: 'POST' });
+        const d   = await res.json();
+        if (d.ok) {
+            // Poll 3 sn sonra sayfayı yenile
+            setTimeout(() => location.reload(), 3000);
+        } else {
+            alert(d.hata || 'Sync başlatılamadı');
+            if (btn) { btn.disabled = false; btn.textContent = 'Gordios\'tan Çek'; }
+        }
+    } catch(e) {
+        alert('Bağlantı hatası: ' + e.message);
+        if (btn) { btn.disabled = false; btn.textContent = 'Tekrar Dene'; }
+    }
+}
+
+/* ── Snapshot Chart ────────────────────────────────────────────────── */
+async function loadChart() {
+    try {
+        const res  = await fetch(`/api/tur/${JT_KODU}/snapshots?limit=60`);
+        const data = await res.json();
+        if (!data.ok || !data.snapshots || data.snapshots.length === 0) {
+            document.getElementById('chartContainer').classList.add('hidden');
+            document.getElementById('chartEmpty').classList.remove('hidden');
+            return;
+        }
+
+        const snaps = [...data.snapshots].reverse(); // eskiden yeniye
+        const labels = snaps.map(s => s.snapshot_date ? s.snapshot_date.slice(0,10) : '');
+        const satilan = snaps.map(s => s.current_sales ?? null);
+        const kalan   = snaps.map(s => s.current_remaining ?? null);
+        const doluluk = snaps.map(s => s.occupancy_rate ?? null);
+
+        document.getElementById('snapshotInfo').textContent =
+            `Son ${snaps.length} gün · ${labels[0]} – ${labels[labels.length-1]}`;
+
+        const ctx = document.getElementById('salesChart').getContext('2d');
+        new Chart(ctx, {
+            data: {
+                labels,
+                datasets: [
+                    {
+                        type: 'line',
+                        label: 'Satılan',
+                        data: satilan,
+                        borderColor: '#3b82f6',
+                        backgroundColor: 'rgba(59,130,246,0.1)',
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 2,
+                        yAxisID: 'y',
+                    },
+                    {
+                        type: 'line',
+                        label: 'Kalan',
+                        data: kalan,
+                        borderColor: '#10b981',
+                        backgroundColor: 'transparent',
+                        tension: 0.3,
+                        pointRadius: 2,
+                        yAxisID: 'y',
+                    },
+                    {
+                        type: 'line',
+                        label: 'Doluluk %',
+                        data: doluluk,
+                        borderColor: '#f59e0b',
+                        backgroundColor: 'transparent',
+                        tension: 0.3,
+                        pointRadius: 2,
+                        borderDash: [4,2],
+                        yAxisID: 'y2',
+                    },
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { labels: { color: '#9ca3af', font: { size: 11 } } },
+                    tooltip: { backgroundColor: '#1a2035' },
+                },
+                scales: {
+                    x: {
+                        ticks: { color: '#6b7280', maxTicksLimit: 10, font: { size: 10 } },
+                        grid:  { color: 'rgba(255,255,255,0.04)' },
+                    },
+                    y: {
+                        position: 'left',
+                        ticks: { color: '#6b7280', font: { size: 10 } },
+                        grid:  { color: 'rgba(255,255,255,0.04)' },
+                        title: { display: true, text: 'Kişi', color: '#6b7280', font: { size: 10 } },
+                    },
+                    y2: {
+                        position: 'right',
+                        ticks: { color: '#f59e0b', font: { size: 10 }, callback: v => v + '%' },
+                        grid:  { drawOnChartArea: false },
+                        max:   100,
+                        title: { display: true, text: 'Doluluk %', color: '#f59e0b', font: { size: 10 } },
+                    },
+                },
+            }
+        });
+    } catch(e) {
+        console.warn('Chart yüklenemedi:', e);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', loadChart);
+
+/* Sync durumu syncing ise 5 sn sonra yenile */
+{% if detay and detay.sync_status == 'syncing' %}
+setTimeout(() => location.reload(), 5000);
+{% endif %}
+</script>
+{% endblock %}
