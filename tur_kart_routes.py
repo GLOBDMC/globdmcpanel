@@ -97,6 +97,149 @@ def create_tur_kart_router(db_engine, templates) -> APIRouter:
         asyncio.create_task(_do_sync())
         return JSONResponse({"ok": True, "mesaj": f"{jt_kodu} sync başlatıldı"})
 
+    # ── API: Toplu Gordios Sync ───────────────────────────────────────────────
+
+    @router.post("/api/gordios/sync-all")
+    async def api_gordios_sync_all(request: Request):
+        """Tüm turları arka planda Gordios'tan senkronize eder (admin)."""
+        from main import oturum_kullanicisi
+        kullanici = oturum_kullanicisi(request)
+        if not kullanici or kullanici["rol"] != "admin":
+            return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+        try:
+            with db_engine.connect() as conn:
+                rows = conn.execute(text("""
+                    SELECT t.jt_kodu FROM turlar t
+                    WHERE t.jt_kodu IS NOT NULL AND t.jt_kodu != ''
+                    ORDER BY t.kalkis_tarihi
+                """)).fetchall()
+            jt_kodlari = [r[0] for r in rows]
+        except Exception as e:
+            return JSONResponse({"hata": str(e)}, status_code=500)
+
+        if not jt_kodlari:
+            return JSONResponse({"ok": True, "mesaj": "Sync edilecek tur yok", "toplam": 0})
+
+        import asyncio
+
+        async def _do_sync_all():
+            loop = asyncio.get_event_loop()
+            basarili = hata = 0
+            for jt_kodu in jt_kodlari:
+                try:
+                    _upsert_tur_detay(db_engine, jt_kodu, {}, "syncing")
+                    data = await loop.run_in_executor(
+                        _gordios_executor, _run_gordios_sync, jt_kodu
+                    )
+                    status = "error" if data.get("hata") else "ok"
+                    _upsert_tur_detay(db_engine, jt_kodu, data, status)
+                    if status == "ok":
+                        basarili += 1
+                        logger.info("[gordios-all] OK: %s", jt_kodu)
+                    else:
+                        hata += 1
+                        logger.warning("[gordios-all] hata: %s -> %s", jt_kodu, data.get("hata"))
+                except Exception as e:
+                    hata += 1
+                    logger.error("[gordios-all] exception [%s]: %s", jt_kodu, e)
+                    _upsert_tur_detay(db_engine, jt_kodu, {"hata": str(e)}, "error")
+            logger.info("[gordios-all] tamamlandi: %d basarili, %d hata", basarili, hata)
+
+        asyncio.create_task(_do_sync_all())
+        return JSONResponse({
+            "ok": True,
+            "mesaj": f"{len(jt_kodlari)} tur için sync başlatıldı",
+            "toplam": len(jt_kodlari),
+        })
+
+    # ── Gordios Login Debug ───────────────────────────────────────────────────
+
+    @router.get("/api/gordios/debug-login")
+    def gordios_debug_login(request: Request):
+        """Login'i dener, sonucu ve hata mesajını döndürür."""
+        from main import oturum_kullanicisi
+        kullanici = oturum_kullanicisi(request)
+        if not kullanici or kullanici["rol"] != "admin":
+            return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            return JSONResponse({"hata": "playwright kurulu değil"})
+        try:
+            from gordios_scraper import (GORDIOS_LOGIN_URL, GORDIOS_INSTITUTION,
+                                         GORDIOS_USERNAME, GORDIOS_PASSWORD,
+                                         GORDIOS_BO_BASE)
+            import base64
+            with sync_playwright() as pw:
+                browser = pw.chromium.launch(headless=True,
+                    args=["--no-sandbox", "--disable-dev-shm-usage"])
+                page = browser.new_page()
+                page.goto(GORDIOS_LOGIN_URL, wait_until="networkidle", timeout=30_000)
+                url_before = page.url
+
+                # Doldur
+                page.fill('input[name="ScopeCode"]', GORDIOS_INSTITUTION)
+                page.fill('input[name="Username"]', GORDIOS_USERNAME)
+                page.fill('input[name="Password"]', GORDIOS_PASSWORD)
+
+                # Submit + navigation bekle
+                page.click('input[type="submit"]')
+                try:
+                    page.wait_for_url(f"{GORDIOS_BO_BASE}/**", timeout=20_000)
+                except Exception:
+                    page.wait_for_load_state("networkidle", timeout=15_000)
+
+                url_after = page.url
+
+                # Backoffice'e git
+                from gordios_scraper import GORDIOS_TOUR_LIST
+                page.goto(GORDIOS_TOUR_LIST, wait_until="networkidle", timeout=30_000)
+                url_bo = page.url
+
+                # Tüm input ve button'ları topla
+                inputs_bo, buttons_bo = [], []
+                for inp in page.query_selector_all("input"):
+                    inputs_bo.append({
+                        "type": inp.get_attribute("type"),
+                        "name": inp.get_attribute("name"),
+                        "id":   inp.get_attribute("id"),
+                        "value": inp.get_attribute("value"),
+                        "visible": inp.is_visible(),
+                    })
+                for btn in page.query_selector_all("button, input[type=submit], input[type=button]"):
+                    try:
+                        buttons_bo.append({
+                            "tag":  btn.evaluate("el => el.tagName"),
+                            "type": btn.get_attribute("type"),
+                            "text": (btn.inner_text() or btn.get_attribute("value") or "")[:60],
+                            "visible": btn.is_visible(),
+                        })
+                    except Exception:
+                        pass
+                page_text = ""
+                try:
+                    page_text = page.inner_text("body")[:300]
+                except Exception:
+                    pass
+                browser.close()
+
+            return JSONResponse({
+                "login_url_after": url_after,
+                "login_ok": GORDIOS_BO_BASE in url_after or GORDIOS_BO_BASE in url_bo,
+                "backoffice_url": url_bo,
+                "backoffice_inputs":  inputs_bo,
+                "backoffice_buttons": buttons_bo,
+                "page_text": page_text,
+                "env": {
+                    "institution": GORDIOS_INSTITUTION,
+                    "username":    GORDIOS_USERNAME,
+                    "password_len": len(GORDIOS_PASSWORD),
+                }
+            })
+        except Exception as e:
+            return JSONResponse({"hata": str(e)}, status_code=500)
+
     # ── API: Snapshot Geçmişi ─────────────────────────────────────────────────
 
     @router.get("/api/tur/{jt_kodu}/snapshots")
@@ -219,17 +362,48 @@ def _upsert_tur_detay(db_engine, jt_kodu: str, data: dict, status: str):
         logger.error("_upsert_tur_detay [%s]: %s", jt_kodu, e)
 
 
+def gordios_sync_all_tours(db_engine):
+    """
+    Tüm aktif turları Gordios'tan senkronize eder.
+    Scheduler tarafından günlük çalıştırılır.
+    Son 24 saatte sync edilmişleri atlar.
+    """
+    try:
+        with db_engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT t.jt_kodu FROM turlar t
+                LEFT JOIN tur_detaylar d ON t.jt_kodu = d.jt_kodu
+                WHERE t.jt_kodu IS NOT NULL AND t.jt_kodu != ''
+                  AND (d.gordios_sync_at IS NULL
+                       OR d.gordios_sync_at < NOW() - INTERVAL '23 hours')
+                ORDER BY t.kalkis_tarihi
+                LIMIT 50
+            """)).fetchall()
+        jt_kodlari = [r[0] for r in rows]
+        logger.info("[gordios-auto] %d tur sync edilecek", len(jt_kodlari))
+        for jt_kodu in jt_kodlari:
+            try:
+                data = _run_gordios_sync(jt_kodu)
+                status = "error" if data.get("hata") else "ok"
+                _upsert_tur_detay(db_engine, jt_kodu, data, status)
+                logger.info("[gordios-auto] %s → %s", jt_kodu, status)
+            except Exception as e:
+                logger.error("[gordios-auto] %s hata: %s", jt_kodu, e)
+    except Exception as e:
+        logger.error("[gordios-auto] genel hata: %s", e)
+
+
 def _run_gordios_sync(jt_kodu: str) -> dict:
     """Playwright scraper'ı thread'de çalıştırır.
-    Gordios AbroadTourPlan → Periyot Kodu alanına JT kodu → Listele → tura tıkla.
+    Gordios AbroadTourPlan → Periyot Kodu alanına JT kodu → Listele → tura tıkla → PDF parse.
     """
     from gordios_scraper import scrape_tour_detail
     raw = scrape_tour_detail(jt_kodu)
     return {
-        "plan_id":       raw.get("plan_id"),
-        "pdf_url":       raw.get("pdf_url"),
-        "ucus_json":     _json.dumps(raw.get("ucus_listesi", []), ensure_ascii=False),
-        "program_json":  "[]",
-        "program_baslik": "",
-        "hata":          raw.get("hata"),
+        "plan_id":        raw.get("plan_id"),
+        "pdf_url":        raw.get("pdf_url"),
+        "ucus_json":      _json.dumps(raw.get("ucus_listesi", []), ensure_ascii=False),
+        "program_json":   _json.dumps(raw.get("program_gunler", []), ensure_ascii=False),
+        "program_baslik": raw.get("program_baslik", ""),
+        "hata":           raw.get("hata"),
     }

@@ -1,5 +1,6 @@
 import os
 import io
+import re
 import csv
 import json
 import time
@@ -872,33 +873,50 @@ def satis_aleri_getir():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # ── Sadece DB tabloları oluştur (hızlı) ─────────────────────────────────
     try:
         tablo_olustur()
     except Exception as e:
         logger.error(f"Tablo olusturma hatasi: {e}")
-    try:
-        sheets_den_postgresql_kopyala()
-        logger.info("Baslangic Sheets sync tamamlandi")
-    except Exception as e:
-        logger.error(f"Baslangic Sheets sync hatasi: {e}")
-    try:
-        jolly_sonuc_kopyala()
-        logger.info("Baslangic Jolly sync tamamlandi")
-    except Exception as e:
-        logger.error(f"Baslangic Jolly sync hatasi: {e}")
+
+    # ── Scheduler başlat (hemen yield'e geç, health check cevap verebilsin) ─
     scheduler = None
     try:
         scheduler = BackgroundScheduler()
-        scheduler.add_job(sheets_den_postgresql_kopyala, 'interval', hours=1)
-        scheduler.add_job(jolly_sonuc_kopyala, 'interval', hours=1)
+        # İlk sync'i 10 saniye gecikmeyle yap — uygulama ayağa kalksın
+        from datetime import datetime, timedelta
+        ilk_sync = datetime.now() + timedelta(seconds=10)
+        scheduler.add_job(sheets_den_postgresql_kopyala, 'date', run_date=ilk_sync,
+                          id='ilk_sheets_sync')
+        scheduler.add_job(jolly_sonuc_kopyala, 'date', run_date=ilk_sync,
+                          id='ilk_jolly_sync')
+        # Saatlik periyodik job'lar
+        scheduler.add_job(sheets_den_postgresql_kopyala, 'interval', hours=1,
+                          id='sheets_interval')
+        scheduler.add_job(jolly_sonuc_kopyala, 'interval', hours=1,
+                          id='jolly_interval')
         # Günlük snapshot job (02:00 TRT = 23:00 UTC)
         from snapshot_scheduler import setup_snapshot_scheduler
         setup_snapshot_scheduler(scheduler, db_engine)
+        # Günlük Gordios sync (03:00 TRT = 00:00 UTC)
+        try:
+            from tur_kart_routes import gordios_sync_all_tours
+            scheduler.add_job(
+                gordios_sync_all_tours, 'cron',
+                hour=0, minute=0,
+                args=[db_engine],
+                id='gordios_daily_sync',
+            )
+            logger.info("Gordios günlük sync job eklendi (00:00 UTC)")
+        except Exception as _ge:
+            logger.warning("Gordios scheduler eklenemedi: %s", _ge)
         scheduler.start()
-        logger.info("Otomatik senkronizasyon aktif: 1 saatte bir")
+        logger.info("Scheduler baslatildi — ilk sync 10s sonra")
     except Exception as e:
         logger.error(f"Scheduler baslatılamadi: {e}")
-    yield
+
+    yield  # ← uygulama artık isteklere açık, health check geçer
+
     if scheduler:
         try:
             scheduler.shutdown()
@@ -951,7 +969,13 @@ async def custom_http_exception_handler(request: Request, exc: StarletteHTTPExce
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logger.error("Unhandled exception | path=%s | %s: %s",
-                 request.url.path, type(exc).__name__, exc)
+                 request.url.path, type(exc).__name__, exc, exc_info=True)
+    # API route'larında JSON döndür — frontend fetch().json() parse edebilsin
+    if request.url.path.startswith("/api/"):
+        return JSONResponse(
+            {"ok": False, "hata": f"{type(exc).__name__}: {exc}"},
+            status_code=500,
+        )
     kullanici = oturum_kullanicisi(request)
     return templates.TemplateResponse(
         request=request,
@@ -1097,10 +1121,9 @@ def health():
     except Exception as exc:
         logger.error("Health check DB hatasi: %s", exc)
 
-    status_code = 200 if db_ok else 503
     return JSONResponse(
         {"status": "ok" if db_ok else "degraded", "db": "ok" if db_ok else "error"},
-        status_code=status_code,
+        status_code=200,
     )
 
 
@@ -2586,8 +2609,8 @@ def porsline_sync_survey(survey_id: str, request: Request):
         return JSONResponse({"ok": False, "hata": detail.get("hata")}, status_code=500)
 
     survey       = detail["survey"]
-    title        = survey.get("title") or survey.get("name") or ""
-    created_date = survey.get("created_date") or survey.get("created_at") or ""
+    title        = str(survey.get("title") or survey.get("name") or "")
+    created_date = str(survey.get("created_date") or survey.get("created_at") or "")
     questions    = survey.get("questions") or []
     parsed       = parse_survey_title(title, created_date)
 

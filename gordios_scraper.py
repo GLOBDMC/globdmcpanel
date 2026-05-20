@@ -2,8 +2,14 @@
 gordios_scraper.py
 ------------------
 Gordios backoffice'ten tur detaylarını çeken Playwright scraper.
-Her scrape çağrısı: login → ara → detail → uçuş tablosunu parse → PDF URL döndür.
+Akış: login → ara → tura tıkla → plan_id al → PDF indir → pdfplumber ile parse et.
+
+PDF yapısı (Gordios ExportTourPlanPdf):
+  Sayfa 1-2  : kapak / genel bilgiler
+  Sayfa 3+   : günlük program
+  Sayfa 5    : uçuş bilgileri (tablo)
 """
+import io
 import os
 import re
 import logging
@@ -26,29 +32,33 @@ GORDIOS_PASSWORD    = os.getenv("GORDIOS_PASSWORD", "")
 
 def scrape_tour_detail(jt_kodu: str) -> dict:
     """
-    JT kodu için Gordios'tan uçuş bilgileri ve PDF URL döndürür.
+    JT kodu için Gordios'tan uçuş + program bilgileri ve PDF URL döndürür.
 
     Returns:
         {
-          "jt_kodu":      str,
-          "plan_id":      int | None,
-          "pdf_url":      str | None,
-          "ucus_listesi": list[dict],   # Gidiş + Dönüş satırları
-          "hata":         str | None,
+          "jt_kodu":        str,
+          "plan_id":        int | None,
+          "pdf_url":        str | None,
+          "ucus_listesi":   list[dict],   # PDF sayfa 5'ten
+          "program_gunler": list[dict],   # PDF sayfa 3+'dan
+          "program_baslik": str,
+          "hata":           str | None,
         }
     """
     result: dict = {
-        "jt_kodu":      jt_kodu,
-        "plan_id":      None,
-        "pdf_url":      None,
-        "ucus_listesi": [],
-        "hata":         None,
+        "jt_kodu":        jt_kodu,
+        "plan_id":        None,
+        "pdf_url":        None,
+        "ucus_listesi":   [],
+        "program_gunler": [],
+        "program_baslik": "",
+        "hata":           None,
     }
 
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
-        result["hata"] = "playwright kurulu değil — pip install playwright && playwright install chromium"
+        result["hata"] = "Gordios senkronizasyonu bu ortamda devre dışı (playwright kurulu değil)"
         return result
 
     with sync_playwright() as pw:
@@ -56,7 +66,7 @@ def scrape_tour_detail(jt_kodu: str) -> dict:
             headless=True,
             args=["--no-sandbox", "--disable-dev-shm-usage"],
         )
-        ctx  = browser.new_context(
+        ctx = browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -71,86 +81,30 @@ def scrape_tour_detail(jt_kodu: str) -> dict:
             page.goto(GORDIOS_LOGIN_URL, wait_until="domcontentloaded", timeout=30_000)
             page.wait_for_load_state("networkidle", timeout=15_000)
 
-            # Tüm input'ları logla — field adlarını debug için
-            all_inputs = page.query_selector_all("input")
-            input_info = []
-            for inp in all_inputs:
-                input_info.append({
-                    "type": inp.get_attribute("type"),
-                    "name": inp.get_attribute("name"),
-                    "id":   inp.get_attribute("id"),
-                    "placeholder": inp.get_attribute("placeholder"),
-                })
-            logger.info("[gordios] login form inputs: %s", input_info)
+            page.fill('input[name="ScopeCode"]', GORDIOS_INSTITUTION)
+            page.fill('input[name="Username"]', GORDIOS_USERNAME)
+            page.fill('input[name="Password"]', GORDIOS_PASSWORD)
+            page.click('input[type="submit"]')
+            page.wait_for_load_state("networkidle", timeout=15_000)
+            logger.info("[gordios] submit sonrası URL: %s", page.url)
 
-            # Form'daki text input'larını sırayla al (password hariç)
-            text_inputs = [
-                i for i in all_inputs
-                if (i.get_attribute("type") or "text").lower()
-                   not in ("password", "hidden", "submit", "button", "checkbox", "radio")
-                and i.is_visible()
-            ]
-            logger.info("[gordios] görünür text input sayısı: %d", len(text_inputs))
-
-            # Sıra: 1→Kurum kodu, 2→Kullanıcı adı (sayfadaki sırayla)
-            if len(text_inputs) >= 1:
-                text_inputs[0].fill(GORDIOS_INSTITUTION)
-                logger.info("[gordios] kurum kodu girildi (input[0]): name=%s",
-                            text_inputs[0].get_attribute("name"))
-            if len(text_inputs) >= 2:
-                text_inputs[1].fill(GORDIOS_USERNAME)
-                logger.info("[gordios] kullanıcı adı girildi (input[1])")
-
-            # Şifre
-            page.fill('input[type="password"]', GORDIOS_PASSWORD)
-
-            # Submit — tüm submit türlerini dene
-            submitted = False
-            for sel in ['button[type="submit"]', 'input[type="submit"]',
-                        'button:has-text("Giriş")', 'button:has-text("Login")',
-                        'button:has-text("Oturum")', 'button.btn-primary']:
-                try:
-                    if page.is_visible(sel, timeout=500):
-                        page.click(sel)
-                        submitted = True
-                        logger.info("[gordios] submit tıklandı: %s", sel)
-                        break
-                except Exception:
-                    pass
-            if not submitted:
-                # Son çare: form submit
-                page.evaluate("document.querySelector('form').submit()")
-                logger.warning("[gordios] form.submit() ile gönderildi")
-
-            # Backoffice'e yönlendirmeyi bekle
-            try:
-                page.wait_for_url(f"{GORDIOS_BO_BASE}/**", timeout=20_000)
-            except Exception:
-                page.wait_for_load_state("networkidle", timeout=15_000)
+            # ── 2. BACKOFFICE'E GİT ─────────────────────────────────────────
+            page.goto(GORDIOS_TOUR_LIST, wait_until="networkidle", timeout=30_000)
+            logger.info("[gordios] tour list URL: %s", page.url)
 
             if GORDIOS_BO_BASE not in page.url:
-                # Screenshot kaydet — debug için
+                page_text = ""
                 try:
-                    import os, base64
-                    ss = page.screenshot()
-                    ss_b64 = base64.b64encode(ss).decode()
-                    logger.error("[gordios] login başarısız screenshot (base64 ilk 200): %s...",
-                                 ss_b64[:200])
+                    page_text = page.inner_text("body")[:500]
                 except Exception:
                     pass
-                # Sayfadaki tüm input/button bilgisini logla
-                page_html_snippet = page.content()[:2000]
-                logger.error("[gordios] login sonrası sayfa: URL=%s HTML=%s",
-                             page.url, page_html_snippet)
-                result["hata"] = f"Login sonrası beklenmedik URL: {page.url}"
+                logger.error("[gordios] backoffice'e ulaşılamadı: URL=%s text=%s",
+                             page.url, page_text)
+                result["hata"] = f"Backoffice'e erişilemedi: {page.url}"
                 return result
-            logger.info("[gordios] login OK → %s", page.url)
+            logger.info("[gordios] login + backoffice OK → %s", page.url)
 
-            # ── 2. ARAMA SAYFASI ─────────────────────────────────────────────
-            page.goto(GORDIOS_TOUR_LIST, wait_until="networkidle", timeout=30_000)
-
-            # "Periyot Kodu" alanına JT kodunu yaz
-            # Önce name/id/placeholder'da "periyot" veya "period" geçen input'u ara
+            # ── 3. JT KODUNU GİR ────────────────────────────────────────────
             jt_filled = False
             for inp in page.query_selector_all('input[type="text"], input:not([type])'):
                 ph   = (inp.get_attribute("placeholder") or "").lower()
@@ -164,7 +118,6 @@ def scrape_tour_detail(jt_kodu: str) -> dict:
                     break
 
             if not jt_filled:
-                # Fallback: sayfadaki label metinlerine bak
                 labels = page.query_selector_all("label")
                 for lbl in labels:
                     if "periyot" in (lbl.inner_text() or "").lower():
@@ -174,13 +127,12 @@ def scrape_tour_detail(jt_kodu: str) -> dict:
                             if inp:
                                 inp.fill(jt_kodu)
                                 jt_filled = True
-                                logger.info("[gordios] Label 'periyot' ile input bulundu: #%s", for_attr)
+                                logger.info("[gordios] Label ile input bulundu: #%s", for_attr)
                                 break
                     if jt_filled:
                         break
 
             if not jt_filled:
-                # Son çare: ikinci text input (ekran görüntüsünde JT kodu 2. inputta)
                 all_inputs = page.query_selector_all('input[type="text"]')
                 if len(all_inputs) >= 2:
                     all_inputs[1].fill(jt_kodu)
@@ -188,35 +140,71 @@ def scrape_tour_detail(jt_kodu: str) -> dict:
                 elif all_inputs:
                     all_inputs[0].fill(jt_kodu)
 
-            # Listele
-            page.click('button:has-text("Listele"), input[value="Listele"]')
+            # ── 4. LİSTELE ──────────────────────────────────────────────────
+            listele_clicked = False
+            for sel in [
+                'input[value="Listele"]', 'button:has-text("Listele")',
+                'input[value="Ara"]',     'button:has-text("Ara")',
+                'input[type="submit"]',   'button[type="submit"]',
+            ]:
+                try:
+                    if page.is_visible(sel, timeout=1_000):
+                        page.click(sel)
+                        listele_clicked = True
+                        logger.info("[gordios] listele tıklandı: %s", sel)
+                        break
+                except Exception:
+                    pass
+            if not listele_clicked:
+                page.keyboard.press("Enter")
+                logger.warning("[gordios] listele: Enter ile gönderildi")
             page.wait_for_load_state("networkidle", timeout=15_000)
 
-            # ── 3. SONUÇTAN TUR LİNKİNE TIK ─────────────────────────────────
-            link = page.query_selector(f'a:has-text("{jt_kodu}")')
-            if not link:
-                # İlk satır linkini dene
-                link = page.query_selector("table tbody tr td a")
-            if not link:
+            # ── 5. SONUÇTAN TUR LİNKİNE TIK ────────────────────────────────
+            # BlockUI overlay kaybolana kadar bekle
+            try:
+                page.wait_for_selector('.blockUI', state='hidden', timeout=15_000)
+                logger.info("[gordios] blockUI overlay kalktı")
+            except Exception:
+                logger.warning("[gordios] blockUI timeout — 2s beklenecek")
+                page.wait_for_timeout(2_000)
+
+            link_locator = page.locator(f'a:has-text("{jt_kodu}")')
+            if link_locator.count() == 0:
+                link_locator = page.locator("table tbody tr td a").first
+            if link_locator.count() == 0:
                 result["hata"] = f"Sonuç tablosunda tur linki bulunamadı: {jt_kodu}"
                 return result
 
-            link.click()
+            link_locator.click()
             page.wait_for_load_state("networkidle", timeout=15_000)
             logger.info("[gordios] detail URL: %s", page.url)
 
-            # ── 4. PLAN ID ───────────────────────────────────────────────────
+            # ── 6. PLAN ID ──────────────────────────────────────────────────
             plan_id = _extract_plan_id(page)
-            if plan_id:
-                result["plan_id"] = plan_id
-                result["pdf_url"] = f"{GORDIOS_PDF_BASE}?planId={plan_id}"
-                logger.info("[gordios] plan_id=%s", plan_id)
-            else:
+            if not plan_id:
                 logger.warning("[gordios] plan_id alınamadı, URL=%s", page.url)
+                result["hata"] = "plan_id bulunamadı — PDF indirilemez"
+                return result
 
-            # ── 5. UÇUŞ TABLOSU ─────────────────────────────────────────────
-            result["ucus_listesi"] = _parse_flight_table(page)
-            logger.info("[gordios] uçuş satır sayısı: %d", len(result["ucus_listesi"]))
+            result["plan_id"] = plan_id
+            result["pdf_url"] = f"{GORDIOS_PDF_BASE}?planId={plan_id}"
+            logger.info("[gordios] plan_id=%s", plan_id)
+
+            # ── 7. PDF İNDİR VE PARSE ET ────────────────────────────────────
+            cookies = ctx.cookies()
+            pdf_bytes = _download_pdf_bytes(plan_id, cookies)
+
+            if pdf_bytes:
+                logger.info("[gordios] PDF indirildi: %d bytes, parse ediliyor…", len(pdf_bytes))
+                parsed = _parse_pdf(pdf_bytes)
+                result["ucus_listesi"]   = parsed["ucus_listesi"]
+                result["program_gunler"] = parsed["program_gunler"]
+                result["program_baslik"] = parsed["program_baslik"]
+                logger.info("[gordios] uçuş: %d satır, program: %d gün",
+                            len(result["ucus_listesi"]), len(result["program_gunler"]))
+            else:
+                result["hata"] = "PDF indirilemedi"
 
         except Exception as exc:
             logger.error("[gordios] scrape hatası [%s]: %s", jt_kodu, exc, exc_info=True)
@@ -227,49 +215,282 @@ def scrape_tour_detail(jt_kodu: str) -> dict:
     return result
 
 
-def download_pdf(plan_id: int, cookies: list) -> Optional[bytes]:
-    """
-    Playwright context cookie'leriyle PDF indir.
-    cookies: Playwright ctx.cookies() listesi
-    """
+# ── PDF indirme ──────────────────────────────────────────────────────────────
+
+def _download_pdf_bytes(plan_id: int, cookies: list) -> Optional[bytes]:
+    """Playwright session cookie'leriyle PDF'i httpx ile indir."""
     try:
         import httpx
         jar = {c["name"]: c["value"] for c in cookies}
         url = f"{GORDIOS_PDF_BASE}?planId={plan_id}"
-        r = httpx.get(url, cookies=jar, follow_redirects=True, timeout=30)
+        r = httpx.get(url, cookies=jar, follow_redirects=True, timeout=60)
         if r.status_code == 200:
             ct = r.headers.get("content-type", "")
             if "pdf" in ct or r.content[:4] == b"%PDF":
                 logger.info("[gordios] PDF indirildi: %d bytes", len(r.content))
                 return r.content
-        logger.warning("[gordios] PDF indirilemedi: status=%s", r.status_code)
+        logger.warning("[gordios] PDF indirilemedi: status=%s ct=%s",
+                       r.status_code, r.headers.get("content-type"))
     except Exception as e:
         logger.error("[gordios] PDF indirme hatası: %s", e)
     return None
 
 
-# ── Yardımcılar ──────────────────────────────────────────────────────────────
+# Dışarıdan erişilebilir alias (tur_kart_routes.py kullanıyor)
+def download_pdf(plan_id: int, cookies: list) -> Optional[bytes]:
+    return _download_pdf_bytes(plan_id, cookies)
 
-def _fill_first_visible(page, selectors: list, value: str) -> bool:
-    for sel in selectors:
-        try:
-            if page.is_visible(sel, timeout=1_000):
-                page.fill(sel, value)
-                return True
-        except Exception:
-            pass
-    return False
 
+# ── PDF Parse ────────────────────────────────────────────────────────────────
+
+def _parse_pdf(pdf_bytes: bytes) -> dict:
+    """
+    pdfplumber ile PDF'i parse eder.
+
+    PDF yapısı (Gordios ExportTourPlanPdf):
+      Sayfa 1    : Glob DMC başlık + dahil/hariç hizmetler
+      Sayfa 2    : Katılım koşulları / notlar
+      Sayfa 3-N  : Günlük program  (her gün "X . GÜN\\n<lokasyon>\\n<açıklama>")
+      Sayfa N+1  : Uçak Bilgileri tablosu  ("Yön / Uçuş Num." başlıklı tablo)
+      Sayfa N+2  : Konaklama Bilgileri
+      Sayfa N+3+ : Yolcu listesi
+
+    Returns:
+        {
+          "ucus_listesi":   list[dict],
+          "program_gunler": list[dict],  # [{"gun": int, "baslik": str, "icerik": str}, …]
+          "program_baslik": str,
+        }
+    """
+    out = {"ucus_listesi": [], "program_gunler": [], "program_baslik": ""}
+
+    try:
+        import pdfplumber
+    except ImportError:
+        logger.error("[gordios] pdfplumber kurulu değil")
+        return out
+
+    try:
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            total = len(pdf.pages)
+            logger.info("[gordios] PDF toplam sayfa: %d", total)
+
+            # ── Tur başlığı: sayfa 1'den al ─────────────────────────────────
+            if total >= 1:
+                out["program_baslik"] = _extract_tour_title(
+                    pdf.pages[0].extract_text() or ""
+                )
+
+            # ── Sayfaları tara: program / uçuş bölümlerini ayırt et ─────────
+            program_text = ""
+            ucus_page    = None
+
+            UCUS_KEYWORDS  = ["uçak bilgi", "ucak bilgi", "yön\t", "yön ", "kalkış saati",
+                               "kalkis saati", "uçuş num", "ucus num"]
+            STOP_KEYWORDS  = ["konaklama bilgi", "yolcu liste", "konaklama\n"]
+
+            for i in range(2, total):          # sayfa 3 = index 2
+                page = pdf.pages[i]
+                raw  = page.extract_text() or ""
+                preview = raw[:400].lower()
+
+                if any(k in preview for k in UCUS_KEYWORDS):
+                    ucus_page = page
+                    logger.info("[gordios] uçuş sayfası: %d", i + 1)
+                    break
+
+                if any(k in preview for k in STOP_KEYWORDS):
+                    logger.info("[gordios] program sonu sayfada: %d", i + 1)
+                    break
+
+                program_text += raw + "\n"
+
+            # Fallback: uçuş sayfası bulunamadıysa sayfa 5'i dene
+            if not ucus_page:
+                for idx in [4, 3, 5]:          # 5. sayfa = index 4
+                    if total > idx:
+                        candidate = pdf.pages[idx]
+                        if _extract_flights_from_page(candidate):
+                            ucus_page = candidate
+                            logger.info("[gordios] uçuş fallback sayfa %d", idx + 1)
+                            break
+
+            # ── Uçuş tablosunu parse et ──────────────────────────────────────
+            if ucus_page:
+                out["ucus_listesi"] = _extract_flights_from_page(ucus_page)
+                logger.info("[gordios] uçuş satır sayısı: %d", len(out["ucus_listesi"]))
+
+            # ── Günlük programı parse et ─────────────────────────────────────
+            if program_text.strip():
+                parsed = _extract_program_from_text(program_text)
+                out["program_gunler"] = parsed["gunler"]
+                if not out["program_baslik"] and parsed["baslik"]:
+                    out["program_baslik"] = parsed["baslik"]
+                logger.info("[gordios] günlük program: %d gün", len(out["program_gunler"]))
+
+    except Exception as e:
+        logger.error("[gordios] PDF parse hatası: %s", e, exc_info=True)
+
+    return out
+
+
+def _extract_flights_from_page(page) -> list:
+    """
+    pdfplumber page nesnesinden uçuş tablosunu çıkar.
+    Önce extract_tables, sonra metin parse fallback.
+    """
+    ucuslar = []
+
+    # ── Tablo yöntemi ────────────────────────────────────────────────────────
+    try:
+        tables = page.extract_tables()
+        for tbl in tables:
+            if not tbl or len(tbl) < 2:
+                continue
+            header = [str(c or "").lower() for c in tbl[0]]
+            # Uçuş tablosunu tanı: "yön", "uçuş", "kalkış", "varış" gibi sütunlar
+            if not any(k in " ".join(header) for k in
+                       ["uçuş", "ucus", "yön", "yon", "kalkış", "kalkis", "varış", "varis"]):
+                continue
+            for row in tbl[1:]:
+                if not row or not any(row):
+                    continue
+                vals = [str(c or "").strip() for c in row]
+                if not vals[0]:
+                    continue
+                ucuslar.append({
+                    "yon":         vals[0]  if len(vals) > 0 else "",
+                    "ucus_no":     vals[1]  if len(vals) > 1 else "",
+                    "pnr":         vals[2]  if len(vals) > 2 else "",
+                    "havayolu":    vals[3]  if len(vals) > 3 else "",
+                    "kalkis_saat": vals[4]  if len(vals) > 4 else "",
+                    "kalkis_yeri": vals[5]  if len(vals) > 5 else "",
+                    "varis_yeri":  vals[6]  if len(vals) > 6 else "",
+                    "varis_saat":  vals[7]  if len(vals) > 7 else "",
+                    "aktarimli":   vals[8]  if len(vals) > 8 else "",
+                    "ertesi_gun":  vals[9]  if len(vals) > 9 else "",
+                })
+            if ucuslar:
+                return ucuslar
+    except Exception as e:
+        logger.warning("[gordios] tablo parse hatası: %s", e)
+
+    # ── Metin yöntemi (fallback) ─────────────────────────────────────────────
+    try:
+        text = page.extract_text() or ""
+        lines = [l.strip() for l in text.splitlines() if l.strip()]
+        # "GİDİŞ" veya "DÖNÜŞ" ile başlayan satırları bul
+        for line in lines:
+            parts = re.split(r'\s{2,}|\t', line)
+            if not parts:
+                continue
+            yon = parts[0].strip()
+            if yon.upper() in ("GİDİŞ", "GİDİS", "DÖNÜŞ", "DONUS", "GİDİŞ/DÖNÜŞ"):
+                ucuslar.append({
+                    "yon":         yon,
+                    "ucus_no":     parts[1]  if len(parts) > 1 else "",
+                    "pnr":         parts[2]  if len(parts) > 2 else "",
+                    "havayolu":    parts[3]  if len(parts) > 3 else "",
+                    "kalkis_saat": parts[4]  if len(parts) > 4 else "",
+                    "kalkis_yeri": parts[5]  if len(parts) > 5 else "",
+                    "varis_yeri":  parts[6]  if len(parts) > 6 else "",
+                    "varis_saat":  parts[7]  if len(parts) > 7 else "",
+                    "aktarimli":   "",
+                    "ertesi_gun":  "",
+                })
+    except Exception as e:
+        logger.warning("[gordios] metin uçuş parse hatası: %s", e)
+
+    return ucuslar
+
+
+def _extract_tour_title(page1_text: str) -> str:
+    """
+    Sayfa 1 metninden tur başlığını çıkar.
+    Glob DMC kapak sayfasında başlık, web sitesi satırından sonra gelir.
+    """
+    lines = [ln.strip() for ln in page1_text.splitlines() if ln.strip()]
+    # Web sitesi / telefon satırından sonraki ilk uzun satırı al
+    for i, line in enumerate(lines):
+        low = line.lower()
+        if "globdmc.com" in low or ("www." in low and "glob" in low):
+            if i + 1 < len(lines):
+                return lines[i + 1]
+    # Fallback: adres/telefon olmayan, 20+ karakter olan ilk satır
+    skip = {"mah.", "sk.", "no:", "telefon", "www.", "@", "glob dmc"}
+    for line in lines[2:10]:
+        if len(line) > 20 and not any(k in line.lower() for k in skip):
+            return line
+    return ""
+
+
+def _extract_program_from_text(text: str) -> dict:
+    """
+    PDF metin bloğundan günlük programı parse eder.
+
+    Gordios PDF gün başlığı formatı (tam satır olarak):
+        "1 . GÜN"   veya   "1. GÜN"   (GÜN yerine GüN de gelebilir — encoding)
+    Bir sonraki satır: lokasyon/başlık  (ör. "ANKARA – MİLANO – COMO GÖLÜ")
+    Ardından: açıklama metni
+
+    Returns:
+        {"baslik": str, "gunler": [{"gun": int, "baslik": str, "icerik": str}, …]}
+    """
+    out = {"baslik": "", "gunler": []}
+
+    # Gün başlığı: satırın tamamı "1 . GÜN" veya "1. GÜN" şeklinde
+    # GÜN harfi bazen GüN olarak çıkabiliyor (pdfplumber encoding farklılığı)
+    GUN_PATTERN = re.compile(
+        r'^(\d{1,2})\s*\.\s*G[ÜüUu]N\s*$',
+        re.IGNORECASE | re.MULTILINE,
+    )
+
+    matches = list(GUN_PATTERN.finditer(text))
+
+    if not matches:
+        # Hiç gün bulunamadıysa tüm metni tek blok olarak döndür
+        icerik = text.strip()
+        # "Tur Programı" gibi başlık satırını çıkar
+        lines = icerik.splitlines()
+        for ln in lines:
+            if ln.strip():
+                out["baslik"] = ln.strip()
+                break
+        if icerik:
+            out["gunler"].append({"gun": 0, "baslik": "", "icerik": icerik})
+        return out
+
+    for i, m in enumerate(matches):
+        gun_no = int(m.group(1))
+
+        # Bu eşleşmenin bitişinden sonraki metin bloğu
+        start = m.end()
+        end   = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        block = text[start:end].strip()
+
+        # Blokun ilk satırı = lokasyon başlığı, geri kalanı = açıklama
+        block_lines = [ln for ln in block.splitlines() if ln.strip()]
+        gun_baslik  = block_lines[0].strip() if block_lines else ""
+        icerik      = "\n".join(block_lines[1:]).strip() if len(block_lines) > 1 else ""
+
+        out["gunler"].append({
+            "gun":    gun_no,
+            "baslik": gun_baslik,
+            "icerik": icerik,
+        })
+
+    return out
+
+
+# ── Diğer yardımcılar ────────────────────────────────────────────────────────
 
 def _extract_plan_id(page) -> Optional[int]:
     """URL veya PDF linkinden plan ID'sini çıkar."""
-    # 1. Mevcut URL'den
     url = page.url
     for pattern in [r'/Detail/(\d+)', r'[?&]planId=(\d+)', r'[?&]id=(\d+)']:
         m = re.search(pattern, url, re.I)
         if m:
             return int(m.group(1))
-    # 2. PDF linkinden
     pdf_el = page.query_selector('a[href*="ExportTourPlanPdf"], a:has-text("Tur Planı PDF")')
     if pdf_el:
         href = pdf_el.get_attribute("href") or ""
@@ -277,76 +498,3 @@ def _extract_plan_id(page) -> Optional[int]:
         if m:
             return int(m.group(1))
     return None
-
-
-def _cell_text(cell) -> str:
-    """
-    TD hücresinden metin çıkar.
-    Önce time input, sonra select seçili option, sonra inner_text.
-    """
-    # time veya text input
-    inp = cell.query_selector('input')
-    if inp:
-        v = inp.get_attribute("value") or ""
-        if v.strip():
-            return v.strip()
-        return inp.inner_text().strip()
-
-    # select dropdown
-    select = cell.query_selector("select")
-    if select:
-        try:
-            return select.evaluate(
-                "el => el.options[el.selectedIndex] ? el.options[el.selectedIndex].text : ''"
-            ).strip()
-        except Exception:
-            pass
-
-    return cell.inner_text().strip()
-
-
-def _parse_flight_table(page) -> list:
-    """
-    Detail sayfasındaki uçuş tablosunu parse eder.
-    Döndürür: [{"yon", "ucus_no", "pnr", "havayolu",
-                 "kalkis_saat", "kalkis_yeri", "varis_yeri", "varis_saat",
-                 "aktarimli", "ertesi_gun"}, ...]
-    """
-    ucuslar = []
-    # İlk tablo uçuş tablosu (birden fazla tablo varsa "Uçuş" başlığının yakınındakini bul)
-    tables = page.query_selector_all("table")
-    target = None
-    for tbl in tables:
-        header_text = tbl.inner_text()[:200].lower()
-        if any(k in header_text for k in ["uçuş", "ucus", "yön", "yon", "havayolu"]):
-            target = tbl
-            break
-    if not target and tables:
-        target = tables[0]
-    if not target:
-        return ucuslar
-
-    rows = target.query_selector_all("tbody tr")
-    for row in rows:
-        cells = row.query_selector_all("td")
-        if len(cells) < 4:
-            continue
-        vals = [_cell_text(c) for c in cells]
-        yon = vals[0] if len(vals) > 0 else ""
-        if not yon:
-            continue
-        ucus = {
-            "yon":         yon,
-            "ucus_no":     vals[1] if len(vals) > 1 else "",
-            "pnr":         vals[2] if len(vals) > 2 else "",
-            "havayolu":    vals[3] if len(vals) > 3 else "",
-            "kalkis_saat": vals[4] if len(vals) > 4 else "",
-            "kalkis_yeri": vals[5] if len(vals) > 5 else "",
-            "varis_yeri":  vals[6] if len(vals) > 6 else "",
-            "varis_saat":  vals[7] if len(vals) > 7 else "",
-            "aktarimli":   vals[8] if len(vals) > 8 else "",
-            "ertesi_gun":  vals[9] if len(vals) > 9 else "",
-        }
-        ucuslar.append(ucus)
-
-    return ucuslar

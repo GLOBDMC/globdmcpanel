@@ -217,7 +217,7 @@
               class="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/5 transition">
               <div class="flex items-center gap-2">
                 <span class="w-6 h-6 flex items-center justify-center rounded-full bg-accent-blue/20 text-accent-blue text-xs font-bold flex-shrink-0">
-                  {{ gun.gun_no }}
+                  {{ gun.gun }}
                 </span>
                 <span class="text-sm text-white font-medium">{{ gun.baslik }}</span>
               </div>
@@ -227,7 +227,7 @@
               </svg>
             </button>
             <div id="gunDetay-{{ loop.index0 }}" class="hidden px-4 pb-4">
-              <p class="text-sm text-gray-400 whitespace-pre-line leading-relaxed">{{ gun.detay }}</p>
+              <p class="text-sm text-gray-400 whitespace-pre-line leading-relaxed">{{ gun.icerik }}</p>
             </div>
           </div>
         {% endfor %}
