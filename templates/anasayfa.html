@@ -106,7 +106,7 @@
                 <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                     <div class="sm:col-span-2 md:col-span-3">
                         <label class="block text-xs font-medium text-gray-600 mb-1">Arama</label>
-                        <input type="text" id="aramaInput" placeholder="Tur adi, JT kodu, havayolu..." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-glob-dark"/>
+                        <input autocomplete="new-password" type="text" id="aramaInput" placeholder="Tur adi, JT kodu, havayolu..." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-glob-dark"/>
                     </div>
                     <div>
                         <label class="block text-xs font-medium text-gray-600 mb-1">Havayolu</label>
@@ -182,7 +182,7 @@
                                     <span class="rehber-metin cursor-pointer hover:text-glob-dark {% if not tur[8] %}text-gray-300 italic{% endif %}">
                                         {{ tur[8] or 'Ekle...' }}
                                     </span>
-                                    <input type="text" class="rehber-input hidden border border-glob-dark rounded px-2 py-0.5 text-sm w-40 focus:outline-none focus:ring-1 focus:ring-glob-dark" value="{{ tur[8] or '' }}" placeholder="Rehber adı..."/>
+                                    <input autocomplete="new-password" type="text" class="rehber-input hidden border border-glob-dark rounded px-2 py-0.5 text-sm w-40 focus:outline-none focus:ring-1 focus:ring-glob-dark" value="{{ tur[8] or '' }}" placeholder="Rehber adı..."/>
                                 </td>
                             </tr>
                             {% endfor %}
@@ -234,7 +234,7 @@
                             <span class="rehber-metin text-xs cursor-pointer hover:text-glob-dark {% if not tur[8] %}text-gray-400 italic{% endif %}">
                                 Rehber: {{ tur[8] or 'Ekle...' }}
                             </span>
-                            <input type="text" class="rehber-input hidden border border-glob-dark rounded px-2 py-1 text-sm w-full focus:outline-none focus:ring-1 focus:ring-glob-dark" value="{{ tur[8] or '' }}" placeholder="Rehber adı..."/>
+                            <input autocomplete="new-password" type="text" class="rehber-input hidden border border-glob-dark rounded px-2 py-1 text-sm w-full focus:outline-none focus:ring-1 focus:ring-glob-dark" value="{{ tur[8] or '' }}" placeholder="Rehber adı..."/>
                         </div>
                     </div>
                     {% endfor %}
@@ -372,10 +372,10 @@
             <div class="border-t border-gray-200 px-6 py-4 bg-gray-50 rounded-b-xl">
                 <p class="text-xs font-semibold text-gray-600 uppercase mb-3">Yeni Kullanıcı Ekle</p>
                 <div class="grid grid-cols-2 gap-3">
-                    <input id="yeniAd" type="text" placeholder="Ad Soyad" class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-glob-dark"/>
-                    <input id="yeniKullanici" type="text" placeholder="Kullanıcı Adı" class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-glob-dark"/>
-                    <input id="yeniUnvan" type="text" placeholder="Ünvan" class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-glob-dark"/>
-                    <input id="yeniEmail" type="email" placeholder="E-posta" class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-glob-dark"/>
+                    <input autocomplete="new-password" id="yeniAd" type="text" placeholder="Ad Soyad" class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-glob-dark"/>
+                    <input autocomplete="new-password" id="yeniKullanici" type="text" placeholder="Kullanıcı Adı" class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-glob-dark"/>
+                    <input autocomplete="new-password" id="yeniUnvan" type="text" placeholder="Ünvan" class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-glob-dark"/>
+                    <input autocomplete="new-password" id="yeniEmail" type="email" placeholder="E-posta" class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-glob-dark"/>
                     <input id="yeniSifre" type="password" placeholder="Şifre" class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-glob-dark"/>
                     <select id="yeniRol" class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-glob-dark">
                         <option value="kullanici">Kullanıcı</option>

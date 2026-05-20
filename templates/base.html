@@ -585,5 +585,25 @@
 </script>
 
 {% block scripts %}{% endblock %}
+
+<script>
+/* Tarayıcı autofill engelleyici — tüm sayfalarda çalışır */
+(function() {
+    // Login ve şifre formlarını dışarıda bırak
+    const EXCLUDE_IDS = new Set(['kullanici_adi', 'sifre', 'yeniSifre', 'eskiSifre', 'yeniSifre2',
+                                  'yeniAd', 'yeniKullanici', 'yeniUnvan', 'yeniEmail']);
+    function clearAutofill() {
+        document.querySelectorAll('input[type="text"], input[type="search"], input[type="email"]').forEach(el => {
+            if (EXCLUDE_IDS.has(el.id) || el.closest('form.auth-form')) return;
+            el.setAttribute('autocomplete', 'new-password');
+            if (el.value && !el.dataset.keepValue) el.value = '';
+        });
+    }
+    document.addEventListener('DOMContentLoaded', clearAutofill);
+    // Bazı tarayıcılar autofill'i DOMContentLoaded'dan sonra uygular
+    setTimeout(clearAutofill, 150);
+    setTimeout(clearAutofill, 500);
+})();
+</script>
 </body>
 </html>
