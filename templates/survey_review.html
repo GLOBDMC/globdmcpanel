@@ -1625,13 +1625,18 @@ async function saveRehber() {
     if (!body.ad_soyad) { alert('Ad soyad zorunlu'); return; }
     const method = _editingRehberId ? 'PUT' : 'POST';
     const url    = _editingRehberId ? `/api/rehberler/${_editingRehberId}` : '/api/rehberler';
-    const res = await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
-    const data = await res.json();
-    if (data.ok) {
-        closeRehberModal();
-        loadRehberler();
-    } else {
-        alert(data.hata || 'Kayıt başarısız');
+    try {
+        const res = await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+        let data;
+        try { data = await res.json(); } catch(je) { data = {}; }
+        if (data.ok) {
+            closeRehberModal();
+            loadRehberler();
+        } else {
+            alert(data.hata || `Kayıt başarısız (HTTP ${res.status})`);
+        }
+    } catch(e) {
+        alert('Bağlantı hatası: ' + e.message);
     }
 }
 
