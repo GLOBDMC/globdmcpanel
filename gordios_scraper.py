@@ -167,15 +167,24 @@ def scrape_tour_detail(jt_kodu: str) -> dict:
             page.wait_for_load_state("networkidle", timeout=15_000)
 
             # ── 3. SONUÇTAN TUR LİNKİNE TIK ─────────────────────────────────
-            link = page.query_selector(f'a:has-text("{jt_kodu}")')
-            if not link:
+            # BlockUI overlay kaybolana kadar bekle (arama sonrası yükleme spinner'ı)
+            try:
+                page.wait_for_selector('.blockUI', state='hidden', timeout=15_000)
+                logger.info("[gordios] blockUI overlay kalktı")
+            except Exception:
+                logger.warning("[gordios] blockUI timeout — 2s beklenecek")
+                page.wait_for_timeout(2_000)
+
+            # Stale ElementHandle yerine Locator kullan
+            link_locator = page.locator(f'a:has-text("{jt_kodu}")')
+            if link_locator.count() == 0:
                 # İlk satır linkini dene
-                link = page.query_selector("table tbody tr td a")
-            if not link:
+                link_locator = page.locator("table tbody tr td a").first
+            if link_locator.count() == 0:
                 result["hata"] = f"Sonuç tablosunda tur linki bulunamadı: {jt_kodu}"
                 return result
 
-            link.click()
+            link_locator.click()
             page.wait_for_load_state("networkidle", timeout=15_000)
             logger.info("[gordios] detail URL: %s", page.url)
 
