@@ -97,6 +97,57 @@ def create_tur_kart_router(db_engine, templates) -> APIRouter:
         asyncio.create_task(_do_sync())
         return JSONResponse({"ok": True, "mesaj": f"{jt_kodu} sync başlatıldı"})
 
+    # ── Gordios Login Debug ───────────────────────────────────────────────────
+
+    @router.get("/api/gordios/debug-login")
+    def gordios_debug_login(request: Request):
+        """Login sayfasındaki input'ları gösterir — credentials girilmez."""
+        from main import oturum_kullanicisi
+        kullanici = oturum_kullanicisi(request)
+        if not kullanici or kullanici["rol"] != "admin":
+            return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            return JSONResponse({"hata": "playwright kurulu değil"})
+        try:
+            from gordios_scraper import GORDIOS_LOGIN_URL, GORDIOS_INSTITUTION, GORDIOS_USERNAME
+            with sync_playwright() as pw:
+                browser = pw.chromium.launch(headless=True,
+                    args=["--no-sandbox", "--disable-dev-shm-usage"])
+                page = browser.new_page()
+                page.goto(GORDIOS_LOGIN_URL, wait_until="networkidle", timeout=30_000)
+                inputs = []
+                for inp in page.query_selector_all("input"):
+                    inputs.append({
+                        "type":        inp.get_attribute("type"),
+                        "name":        inp.get_attribute("name"),
+                        "id":          inp.get_attribute("id"),
+                        "placeholder": inp.get_attribute("placeholder"),
+                        "visible":     inp.is_visible(),
+                        "value":       inp.get_attribute("value"),
+                    })
+                buttons = []
+                for btn in page.query_selector_all("button"):
+                    buttons.append({
+                        "type": btn.get_attribute("type"),
+                        "text": btn.inner_text()[:50],
+                        "visible": btn.is_visible(),
+                    })
+                url = page.url
+                browser.close()
+            return JSONResponse({
+                "url": url,
+                "inputs": inputs,
+                "buttons": buttons,
+                "env": {
+                    "institution": GORDIOS_INSTITUTION,
+                    "username_set": bool(GORDIOS_USERNAME),
+                }
+            })
+        except Exception as e:
+            return JSONResponse({"hata": str(e)}, status_code=500)
+
     # ── API: Snapshot Geçmişi ─────────────────────────────────────────────────
 
     @router.get("/api/tur/{jt_kodu}/snapshots")
