@@ -97,6 +97,62 @@ def create_tur_kart_router(db_engine, templates) -> APIRouter:
         asyncio.create_task(_do_sync())
         return JSONResponse({"ok": True, "mesaj": f"{jt_kodu} sync başlatıldı"})
 
+    # ── API: Toplu Gordios Sync ───────────────────────────────────────────────
+
+    @router.post("/api/gordios/sync-all")
+    async def api_gordios_sync_all(request: Request):
+        """Tüm turları arka planda Gordios'tan senkronize eder (admin)."""
+        from main import oturum_kullanicisi
+        kullanici = oturum_kullanicisi(request)
+        if not kullanici or kullanici["rol"] != "admin":
+            return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+        try:
+            with db_engine.connect() as conn:
+                rows = conn.execute(text("""
+                    SELECT t.jt_kodu FROM turlar t
+                    WHERE t.jt_kodu IS NOT NULL AND t.jt_kodu != ''
+                    ORDER BY t.kalkis_tarihi
+                """)).fetchall()
+            jt_kodlari = [r[0] for r in rows]
+        except Exception as e:
+            return JSONResponse({"hata": str(e)}, status_code=500)
+
+        if not jt_kodlari:
+            return JSONResponse({"ok": True, "mesaj": "Sync edilecek tur yok", "toplam": 0})
+
+        import asyncio
+
+        async def _do_sync_all():
+            loop = asyncio.get_event_loop()
+            basarili = hata = 0
+            for jt_kodu in jt_kodlari:
+                try:
+                    _upsert_tur_detay(db_engine, jt_kodu, {}, "syncing")
+                    data = await loop.run_in_executor(
+                        _gordios_executor, _run_gordios_sync, jt_kodu
+                    )
+                    status = "error" if data.get("hata") else "ok"
+                    _upsert_tur_detay(db_engine, jt_kodu, data, status)
+                    if status == "ok":
+                        basarili += 1
+                        logger.info("[gordios-all] OK: %s", jt_kodu)
+                    else:
+                        hata += 1
+                        logger.warning("[gordios-all] hata: %s -> %s", jt_kodu, data.get("hata"))
+                except Exception as e:
+                    hata += 1
+                    logger.error("[gordios-all] exception [%s]: %s", jt_kodu, e)
+                    _upsert_tur_detay(db_engine, jt_kodu, {"hata": str(e)}, "error")
+            logger.info("[gordios-all] tamamlandi: %d basarili, %d hata", basarili, hata)
+
+        asyncio.create_task(_do_sync_all())
+        return JSONResponse({
+            "ok": True,
+            "mesaj": f"{len(jt_kodlari)} tur için sync başlatıldı",
+            "toplam": len(jt_kodlari),
+        })
+
     # ── Gordios Login Debug ───────────────────────────────────────────────────
 
     @router.get("/api/gordios/debug-login")
