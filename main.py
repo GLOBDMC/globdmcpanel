@@ -2778,6 +2778,13 @@ def porsline_sync_survey(survey_id: str, request: Request):
     from porsline_service import _extract_guide_name
     rehber_adi_header = _extract_guide_name(header) if header else (parsed.get("rehber_adi") or "")
 
+    # DB'de bu survey için mevcut kayıt sayısını önceden al
+    with db_engine.connect() as conn_pre:
+        zaten_var_count = conn_pre.execute(
+            text("SELECT COUNT(*) FROM historical_surveys WHERE porsline_survey_id = :sid"),
+            {"sid": survey_id}
+        ).scalar() or 0
+
     with db_engine.connect() as conn:
         for i, row in enumerate(rows):
             # Parse stratejisi: results-table formatı mı, /responses/ formatı mı?
@@ -2786,7 +2793,18 @@ def porsline_sync_survey(survey_id: str, request: Request):
             else:
                 parsed_row = parse_response_row(header, row)
 
-            resp_id = f"porsline_{survey_id}_{i}"
+            # resp_id: Porsline'ın kendi response ID'sini kullan (varsa)
+            # results-table formatında row list[str], /responses/ formatında row dict
+            if isinstance(row, dict):
+                native_id = row.get("id") or row.get("response_id") or row.get("uuid")
+                resp_id = f"porsline_{survey_id}_{native_id}" if native_id else f"porsline_{survey_id}_{i}"
+            else:
+                # results-table: satırın hash'ini kullan (içerik değişmediği sürece aynı kalır)
+                import hashlib
+                row_hash = hashlib.md5(
+                    f"{survey_id}|{'|'.join(str(v) for v in row)}".encode()
+                ).hexdigest()[:16]
+                resp_id = f"porsline_{survey_id}_{row_hash}"
 
             # Rehber adı: header'dan → yanıttan → başlıktan
             rehber_adi = rehber_adi_header or parsed_row.get("rehber_adi") or parsed.get("rehber_adi") or ""
@@ -2823,8 +2841,8 @@ def porsline_sync_survey(survey_id: str, request: Request):
         conn.commit()
 
     audit_logger.info(
-        "PORSLINE_SYNC | user=%s | survey=%s | eklenen=%d | atlanan=%d | match=%s(%d%%)",
-        kullanici["kullanici_adi"], survey_id, eklenen, atlanan, match_status, confidence,
+        "PORSLINE_SYNC | user=%s | survey=%s | eklenen=%d | atlanan=%d | zaten_var=%d | match=%s(%d%%)",
+        kullanici["kullanici_adi"], survey_id, eklenen, atlanan, zaten_var_count, match_status, confidence,
     )
 
     return JSONResponse({
@@ -2837,6 +2855,7 @@ def porsline_sync_survey(survey_id: str, request: Request):
         "yanit_sayisi":  len(rows),
         "eklenen":       eklenen,
         "atlanan":       atlanan,
+        "zaten_var":     zaten_var_count,
     })
 
 
