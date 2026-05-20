@@ -1683,37 +1683,41 @@ def survey_review_list(request: Request, batch: str = "", sayfa: int = 0, limit:
     offset = sayfa * limit
     batch_filter = "AND import_batch = :batch" if batch else ""
 
-    with db_engine.connect() as conn:
-        rows = conn.execute(text(f"""
-            SELECT
-                hs.id, hs.tur_adi_ham, hs.kalkis_tarihi, hs.rehber_adi,
-                hs.destinasyon, hs.acente_adi, hs.genel_puan, hs.rehber_puani,
-                hs.yorum, hs.match_confidence, hs.match_method, hs.match_status,
-                hs.matched_jt_kodu, hs.import_batch, hs.kaynak_satir,
-                hs.musteri_adi, hs.survey_date,
-                t.tur_adi AS eslesen_tur_adi,
-                t.kalkis_tarihi AS eslesen_kalkis,
-                t.rehber AS eslesen_rehber
-            FROM historical_surveys hs
-            LEFT JOIN turlar t ON t.id = hs.matched_tur_id
-            WHERE hs.match_status IN ('review', 'pending')
-            {batch_filter}
-            ORDER BY hs.match_confidence DESC, hs.id
-            LIMIT :limit OFFSET :offset
-        """), {"batch": batch, "limit": limit, "offset": offset}).fetchall()
+    try:
+        with db_engine.connect() as conn:
+            rows = conn.execute(text(f"""
+                SELECT
+                    hs.id, hs.tur_adi_ham, hs.kalkis_tarihi, hs.rehber_adi,
+                    hs.destinasyon, hs.acente_adi, hs.genel_puan, hs.rehber_puani,
+                    hs.yorum, hs.match_confidence, hs.match_method, hs.match_status,
+                    hs.matched_jt_kodu, hs.import_batch, hs.kaynak_satir,
+                    hs.musteri_adi, hs.survey_date,
+                    t.tur_adi AS eslesen_tur_adi,
+                    t.kalkis_tarihi AS eslesen_kalkis,
+                    t.rehber AS eslesen_rehber
+                FROM historical_surveys hs
+                LEFT JOIN turlar t ON t.id = hs.matched_tur_id
+                WHERE hs.match_status IN ('review', 'pending')
+                {batch_filter}
+                ORDER BY hs.match_confidence DESC, hs.id
+                LIMIT :limit OFFSET :offset
+            """), {"batch": batch, "limit": limit, "offset": offset}).fetchall()
 
-        total = conn.execute(text(f"""
-            SELECT COUNT(*) FROM historical_surveys
-            WHERE match_status IN ('review', 'pending')
-            {batch_filter}
-        """), {"batch": batch}).scalar()
+            total = conn.execute(text(f"""
+                SELECT COUNT(*) FROM historical_surveys
+                WHERE match_status IN ('review', 'pending')
+                {batch_filter}
+            """), {"batch": batch}).scalar()
 
-    return JSONResponse({
-        "ok":    True,
-        "items": [dict(r._mapping) for r in rows],
-        "total": total,
-        "sayfa": sayfa,
-    })
+        return JSONResponse({
+            "ok":    True,
+            "items": [dict(r._mapping) for r in rows],
+            "total": total,
+            "sayfa": sayfa,
+        })
+    except Exception as exc:
+        logger.warning("survey_review_list hata: %s", exc)
+        return JSONResponse({"ok": True, "items": [], "total": 0, "sayfa": sayfa})
 
 
 @app.get("/api/survey/stats")
@@ -1723,53 +1727,65 @@ def survey_stats(request: Request):
     if not kullanici or kullanici["rol"] != "admin":
         return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
 
-    with db_engine.connect() as conn:
-        row = conn.execute(text("""
-            SELECT
-                COUNT(*) AS toplam,
-                SUM(CASE WHEN match_status='matched'  THEN 1 ELSE 0 END) AS eslendi,
-                SUM(CASE WHEN match_status='review'   THEN 1 ELSE 0 END) AS inceleme,
-                SUM(CASE WHEN match_status='rejected' THEN 1 ELSE 0 END) AS reddedildi,
-                SUM(CASE WHEN match_status='pending'  THEN 1 ELSE 0 END) AS bekliyor,
-                ROUND(AVG(CASE WHEN genel_puan IS NOT NULL THEN genel_puan END)::numeric, 2) AS ort_puan,
-                ROUND(AVG(CASE WHEN rehber_puani IS NOT NULL THEN rehber_puani END)::numeric, 2) AS ort_rehber_puan,
-                ROUND(AVG(match_confidence)::numeric, 1) AS ort_confidence
-            FROM historical_surveys
-        """)).fetchone()
+    try:
+        with db_engine.connect() as conn:
+            row = conn.execute(text("""
+                SELECT
+                    COUNT(*) AS toplam,
+                    SUM(CASE WHEN match_status='matched'  THEN 1 ELSE 0 END) AS eslendi,
+                    SUM(CASE WHEN match_status='review'   THEN 1 ELSE 0 END) AS inceleme,
+                    SUM(CASE WHEN match_status='rejected' THEN 1 ELSE 0 END) AS reddedildi,
+                    SUM(CASE WHEN match_status='pending'  THEN 1 ELSE 0 END) AS bekliyor,
+                    ROUND(AVG(CASE WHEN genel_puan IS NOT NULL
+                              THEN CAST(genel_puan AS NUMERIC) END), 2)       AS ort_puan,
+                    ROUND(AVG(CASE WHEN rehber_puani IS NOT NULL
+                              THEN CAST(rehber_puani AS NUMERIC) END), 2)     AS ort_rehber_puan,
+                    ROUND(AVG(CAST(match_confidence AS NUMERIC)), 1)           AS ort_confidence
+                FROM historical_surveys
+            """)).fetchone()
 
-        top_guides = conn.execute(text("""
-            SELECT rehber_adi,
-                   COUNT(*) AS anket_sayisi,
-                   ROUND(AVG(genel_puan)::numeric, 2) AS ort_puan
-            FROM historical_surveys
-            WHERE rehber_adi <> '' AND match_status = 'matched'
-            GROUP BY rehber_adi
-            ORDER BY anket_sayisi DESC
-            LIMIT 10
-        """)).fetchall()
+            top_guides = conn.execute(text("""
+                SELECT rehber_adi,
+                       COUNT(*) AS anket_sayisi,
+                       ROUND(AVG(CAST(genel_puan AS NUMERIC)), 2) AS ort_puan
+                FROM historical_surveys
+                WHERE rehber_adi <> '' AND match_status = 'matched'
+                GROUP BY rehber_adi
+                ORDER BY anket_sayisi DESC
+                LIMIT 10
+            """)).fetchall()
 
-        top_dest = conn.execute(text("""
-            SELECT destinasyon,
-                   COUNT(*) AS anket_sayisi,
-                   ROUND(AVG(genel_puan)::numeric, 2) AS ort_puan
-            FROM historical_surveys
-            WHERE destinasyon <> '' AND match_status = 'matched'
-            GROUP BY destinasyon
-            ORDER BY anket_sayisi DESC
-            LIMIT 10
-        """)).fetchall()
+            top_dest = conn.execute(text("""
+                SELECT destinasyon,
+                       COUNT(*) AS anket_sayisi,
+                       ROUND(AVG(CAST(genel_puan AS NUMERIC)), 2) AS ort_puan
+                FROM historical_surveys
+                WHERE destinasyon <> '' AND match_status = 'matched'
+                GROUP BY destinasyon
+                ORDER BY anket_sayisi DESC
+                LIMIT 10
+            """)).fetchall()
 
-    stats = {}
-    if row:
-        for k, v in dict(row._mapping).items():
-            stats[k] = float(v) if v is not None else 0
+        stats = {}
+        if row:
+            for k, v in dict(row._mapping).items():
+                stats[k] = float(v) if v is not None else 0
 
-    return JSONResponse({
-        "ok":        True,
-        "stats":     stats,
-        "rehberler": [dict(r._mapping) for r in top_guides],
-        "destinasyonlar": [dict(r._mapping) for r in top_dest],
-    })
+        return JSONResponse({
+            "ok":        True,
+            "stats":     stats,
+            "rehberler": [dict(r._mapping) for r in top_guides],
+            "destinasyonlar": [dict(r._mapping) for r in top_dest],
+        })
+    except Exception as exc:
+        logger.warning("survey_stats hata: %s", exc)
+        return JSONResponse({
+            "ok": True,
+            "stats": {"toplam": 0, "eslendi": 0, "inceleme": 0, "reddedildi": 0, "bekliyor": 0,
+                      "ort_puan": 0, "ort_rehber_puan": 0, "ort_confidence": 0},
+            "rehberler": [],
+            "destinasyonlar": [],
+        })
 
 
 @app.post("/api/survey/match/{survey_id}")
