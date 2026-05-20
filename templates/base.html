@@ -589,20 +589,38 @@
 <script>
 /* Tarayıcı autofill engelleyici — tüm sayfalarda çalışır */
 (function() {
-    // Login ve şifre formlarını dışarıda bırak
-    const EXCLUDE_IDS = new Set(['kullanici_adi', 'sifre', 'yeniSifre', 'eskiSifre', 'yeniSifre2',
-                                  'yeniAd', 'yeniKullanici', 'yeniUnvan', 'yeniEmail']);
-    function clearAutofill() {
-        document.querySelectorAll('input[type="text"], input[type="search"], input[type="email"]').forEach(el => {
-            if (EXCLUDE_IDS.has(el.id) || el.closest('form.auth-form')) return;
-            el.setAttribute('autocomplete', 'new-password');
-            if (el.value && !el.dataset.keepValue) el.value = '';
-        });
+    const EXCLUDE_IDS = new Set([
+        'kullanici_adi','sifre','yeniSifre','eskiSifre','yeniSifre2',
+        'yeniAd','yeniKullanici','yeniUnvan','yeniEmail'
+    ]);
+
+    function applyReadonlyTrick(el) {
+        if (EXCLUDE_IDS.has(el.id) || el.closest('.auth-form') || el.dataset.autofillFixed) return;
+        el.dataset.autofillFixed = '1';
+        el.setAttribute('autocomplete', 'new-password');
+        el.setAttribute('readonly', '');
+        el.addEventListener('focus', function() { this.removeAttribute('readonly'); }, { once: false });
+        el.addEventListener('blur',  function() { this.setAttribute('readonly', ''); }, { once: false });
+        // Dolu gelirse temizle
+        if (el.value && !el.dataset.keepValue) el.value = '';
     }
-    document.addEventListener('DOMContentLoaded', clearAutofill);
-    // Bazı tarayıcılar autofill'i DOMContentLoaded'dan sonra uygular
-    setTimeout(clearAutofill, 150);
-    setTimeout(clearAutofill, 500);
+
+    function fixAll() {
+        document.querySelectorAll(
+            'input[type="text"]:not([data-autofill-fixed]),' +
+            'input[type="search"]:not([data-autofill-fixed]),' +
+            'input[type="email"]:not([data-autofill-fixed])'
+        ).forEach(applyReadonlyTrick);
+    }
+
+    document.addEventListener('DOMContentLoaded', fixAll);
+    setTimeout(fixAll, 100);
+    setTimeout(fixAll, 500);
+    // Dinamik olarak eklenen inputlar için (modal açılışı vb.)
+    const obs = new MutationObserver(() => fixAll());
+    document.addEventListener('DOMContentLoaded', () => {
+        obs.observe(document.body, { childList: true, subtree: true });
+    });
 })();
 </script>
 </body>
