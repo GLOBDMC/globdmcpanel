@@ -589,15 +589,6 @@ def tablo_olustur():
 
     logger.info("Tablolar hazir")
 
-    # Tur Kartı route'larını kaydet
-    try:
-        from tur_kart_routes import register_tur_kart_routes
-        register_tur_kart_routes(app, db_engine, templates)
-        logger.info("Tur Karti route'lari kayit edildi")
-    except Exception as _e:
-        logger.warning("Tur Karti route kayit hatasi: %s", _e)
-
-
 def bitis_tarihi_hesapla(bitis_raw: str, tur_adi: str, kalkis: str) -> str:
     """Sheet'ten gelen bitiş tarihini döndürür.
     Boşsa tur adındaki gece sayısından hesaplar."""
@@ -935,6 +926,13 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.mount("/static", CachedStaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
+# ── Tur Kartı router (modül seviyesinde include — lifespan'a bağımlı değil) ──
+try:
+    from tur_kart_routes import create_tur_kart_router
+    app.include_router(create_tur_kart_router(db_engine, templates))
+    logger.info("Tur Karti router dahil edildi")
+except Exception as _e:
+    logger.warning("Tur Karti router hatasi: %s", _e)
 
 # ── Exception handlers ───────────────────────────────────────────────────────
 @app.exception_handler(StarletteHTTPException)
