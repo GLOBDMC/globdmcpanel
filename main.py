@@ -878,7 +878,7 @@ async def lifespan(app: FastAPI):
         logger.info("Playwright Chromium kuruluyor...")
         r = subprocess.run(
             [sys.executable, "-m", "playwright", "install", "chromium"],
-            capture_output=True, text=True, timeout=180
+            capture_output=True, text=True, timeout=300
         )
         if r.returncode == 0:
             logger.info("Playwright Chromium hazir")
