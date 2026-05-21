@@ -866,48 +866,74 @@ async function _runBackendSyncAll(force = false) {
     barEl.style.width = '10%';
 
     try {
-        const url = '/api/porsline/sync-all' + (force ? '?force=true' : '');
-        const d   = await fetch(url, { method: 'POST' })
-            .then(r => r.json())
-            .catch(e => ({ ok: false, hata: e.message }));
+        // 1) Sync'i başlat — hemen task_id döner (background)
+        const url  = '/api/porsline/sync-all' + (force ? '?force=true' : '');
+        const init = await fetch(url, { method: 'POST' }).then(r => r.json())
+                         .catch(e => ({ ok: false, hata: e.message }));
 
-        barEl.style.width = '100%';
-
-        if (d.ok) {
-            const eklenen  = d.toplam_eklenen || 0;
-            const islenen  = d.islenen  || 0;
-            const atlandi  = d.atlandi  || 0;
-            const toplam   = d.anket_sayisi || 0;
-            const hataliSay = (d.detay || []).filter(r => !r.ok && !r.atlandı).length;
-
-            resultEl.classList.remove('hidden');
-            resultEl.innerHTML = `
-                <div class="rounded-lg p-3 text-xs ${hataliSay === 0
-                    ? 'bg-green-900/20 border border-green-700/30 text-green-300'
-                    : 'bg-yellow-900/20 border border-yellow-700/30 text-yellow-300'}">
-                    ✓ Sync tamamlandı ·
-                    ${toplam} anket ·
-                    ${islenen} işlendi · ${atlandi} atlandı ·
-                    <strong>+${eklenen}</strong> yeni yanıt
-                    ${hataliSay > 0 ? ` · <span class="text-red-400">${hataliSay} hata</span>` : ''}
-                </div>`;
-            msgEl.textContent = `✓ Tamamlandı`;
-            loadStats();
-            yukleAnketler();
-            if (eklenen > 0) {
-                setTimeout(() => document.getElementById('anketListeSection')
-                    ?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 400);
-            }
-        } else {
-            msgEl.textContent = `⚠ Hata: ${d.hata || 'bilinmiyor'}`;
+        if (!init.ok) {
+            msgEl.textContent = `⚠ Başlatılamadı: ${init.hata || 'hata'}`;
             barEl.style.background = '#f87171';
+            if (btn)      { btn.disabled = false; btn.textContent = 'Tümünü Sync Et'; }
+            if (btnForce) btnForce.disabled = false;
+            return;
         }
+
+        const taskId = init.task_id;
+
+        // 2) Durumu 2 saniyede bir poll et
+        await new Promise(resolve => {
+            const poll = setInterval(async () => {
+                try {
+                    const s = await fetch(`/api/porsline/sync-status/${taskId}`)
+                                  .then(r => r.json()).catch(() => null);
+                    if (!s) return;
+
+                    const prog = s.progress || {};
+                    msgEl.textContent = prog.current || '⏳ Çalışıyor…';
+                    const done  = prog.done  || 0;
+                    const total = prog.total || 0;
+                    if (total > 0) {
+                        const pct = Math.min(95, Math.round(done / total * 100));
+                        barEl.style.width = pct + '%';
+                        pctEl.textContent = pct + '%';
+                    }
+
+                    if (s.status === 'done' || s.status === 'error') {
+                        clearInterval(poll);
+                        barEl.style.width = '100%';
+
+                        if (s.status === 'done' && s.result) {
+                            const r = s.result;
+                            resultEl.classList.remove('hidden');
+                            resultEl.innerHTML = `
+                                <div class="rounded-lg p-3 text-xs bg-green-900/20 border border-green-700/30 text-green-300">
+                                    ✓ Tamamlandı · ${r.anket_sayisi || 0} anket ·
+                                    ${r.islenen || 0} işlendi · ${r.atlandi || 0} atlandı ·
+                                    <strong>+${r.toplam_eklenen || 0}</strong> yeni yanıt
+                                </div>`;
+                            msgEl.textContent = '✓ Tamamlandı';
+                            loadStats();
+                            yukleAnketler();
+                            if ((r.toplam_eklenen || 0) > 0)
+                                setTimeout(() => document.getElementById('anketListeSection')
+                                    ?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 400);
+                        } else {
+                            msgEl.textContent = `⚠ Hata: ${s.progress?.current || 'bilinmiyor'}`;
+                            barEl.style.background = '#f87171';
+                        }
+                        resolve();
+                    }
+                } catch(e) { /* poll hatası — devam et */ }
+            }, 2000);
+        });
+
     } catch(e) {
         msgEl.textContent = `⚠ ${e.message}`;
         barEl.style.background = '#f87171';
     }
 
-    if (btn)      { btn.disabled = false;      btn.textContent = 'Tümünü Sync Et'; btn.onclick = () => syncAllPorsline(); }
+    if (btn)      { btn.disabled = false; btn.textContent = 'Tümünü Sync Et'; btn.onclick = () => syncAllPorsline(); }
     if (btnForce) { btnForce.disabled = false; }
     setTimeout(() => { progress.classList.add('hidden'); }, 4000);
 }
