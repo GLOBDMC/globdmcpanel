@@ -87,12 +87,15 @@ def _get(path: str, params: dict = None) -> dict:
         return {"error": str(e)}
 
 
-def _get_with_retry(path: str, params: dict = None, max_retries: int = 2) -> dict:
+def _get_with_retry(path: str, params: dict = None, max_retries: int = 2,
+                    max_wait: float = 15.0) -> dict:
     """
     _get'i çağırır; sadece 429 (rate-limit) gelirse Retry-After kadar bekler ve tekrar dener.
     Timeout veya diğer hatalar → hemen döner (retry yok).
+    max_wait: 429 beklemesi için tavan (saniye). Bulk sync'te kısa tutulur.
     """
     import time as _t
+    import logging as _log
     last = {}
     for attempt in range(max_retries):
         last = _get(path, params)
@@ -100,14 +103,13 @@ def _get_with_retry(path: str, params: dict = None, max_retries: int = 2) -> dic
             return last
         err = last["error"]
         if err == 429:
-            wait = 60.0
+            wait = max_wait
             ra = last.get("retry_after")
             if ra:
                 try:
-                    wait = min(float(ra), 180)  # en fazla 3 dk
+                    wait = min(float(ra), max_wait)
                 except (ValueError, TypeError):
                     pass
-            import logging as _log
             _log.getLogger(__name__).warning(
                 "Porsline 429 — %.0f sn bekleniyor (deneme %d/%d)", wait, attempt+1, max_retries
             )
@@ -200,8 +202,13 @@ def get_survey_detail(survey_id: str) -> dict:
     return {"ok": False, "hata": result.get("error", "survey bulunamadı")}
 
 
-def get_responses(survey_id: str, page: int = 1, page_size: int = 100) -> dict:
-    """Bir anketin yanıtlarını getirir. results-table → yoksa responses/ dener."""
+def get_responses(survey_id: str, page: int = 1, page_size: int = 100,
+                  fast: bool = False) -> dict:
+    """
+    Bir anketin yanıtlarını getirir. results-table → yoksa responses/ dener.
+    fast=True: bulk sync modunda — 429'da max 15 sn bekler, tek deneme.
+    fast=False (default): bireysel sync — biraz daha sabırlı.
+    """
     params = {"page": page, "page_size": page_size}
 
     endpoints = [
@@ -210,10 +217,13 @@ def get_responses(survey_id: str, page: int = 1, page_size: int = 100) -> dict:
         f"/api/v2/surveys/{survey_id}/responses/",
     ]
 
+    _retries  = 1 if fast else 2
+    _max_wait = 15.0 if fast else 30.0
+
     last_error = None
     retry_after = None
     for ep in endpoints:
-        result = _get_with_retry(ep, params)
+        result = _get_with_retry(ep, params, max_retries=_retries, max_wait=_max_wait)
         if "error" in result:
             last_error = result["error"]
             retry_after = result.get("retry_after")
@@ -237,14 +247,15 @@ def get_responses(survey_id: str, page: int = 1, page_size: int = 100) -> dict:
             "retry_after": retry_after}
 
 
-def get_all_responses(survey_id: str) -> dict:
-    """Bir anketin TÜM yanıtlarını sayfalı olarak çeker."""
+def get_all_responses(survey_id: str, fast: bool = False) -> dict:
+    """Bir anketin TÜM yanıtlarını sayfalı olarak çeker.
+    fast=True: bulk sync modunda — 429'da kısa bekler, tek deneme."""
     all_rows = []
     header   = []
     page     = 1
 
     while True:
-        chunk = get_responses(survey_id, page=page, page_size=100)
+        chunk = get_responses(survey_id, page=page, page_size=100, fast=fast)
         if not chunk["ok"]:
             return chunk
         # Henüz yanıt yok (tüm endpoint'ler 404) → boş başarı

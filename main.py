@@ -3798,6 +3798,7 @@ def _porsline_sync_worker(task_id: str, force: bool, username: str):
                         continue
 
             try:
+                _upd(f"[{idx+1}/{len(all_surveys)}] detay alınıyor…", done=idx)
                 detail = get_survey_detail(sid)
                 if not detail["ok"]:
                     results.append({"survey_id": sid, "ok": False, "hata": detail.get("hata")})
@@ -3809,11 +3810,25 @@ def _porsline_sync_worker(task_id: str, force: bool, username: str):
                                    s.get("created_date") or "")
                 parsed = parse_survey_title(title, created_date)
 
-                resp = get_all_responses(sid)
+                _upd(f"[{idx+1}/{len(all_surveys)}] yanıtlar çekiliyor: {title[:40]}", done=idx)
+                resp = get_all_responses(sid, fast=True)
                 if not resp["ok"]:
                     results.append({"survey_id": sid, "ok": False, "hata": resp.get("hata")})
                     continue
                 if resp.get("_no_responses") or (resp.get("count", 0) == 0 and not resp.get("header")):
+                    # Yanıt yok: porsline_surveys'e kaydet ki sonraki sync 8 saat atlasın
+                    try:
+                        with db_engine.connect() as conn:
+                            conn.execute(text("""
+                                INSERT INTO porsline_surveys
+                                    (porsline_survey_id, survey_title, response_count, last_synced_at)
+                                VALUES (:sid, :title, 0, NOW())
+                                ON CONFLICT (porsline_survey_id) DO UPDATE SET
+                                    last_synced_at = NOW(), response_count = 0
+                            """), {"sid": sid, "title": title[:200]})
+                            conn.commit()
+                    except Exception:
+                        pass
                     atlandı += 1
                     results.append({"survey_id": sid, "ok": True, "atlandı": True, "neden": "yanıt yok"})
                     continue
@@ -3883,6 +3898,9 @@ def _porsline_sync_worker(task_id: str, force: bool, username: str):
             except Exception as ex:
                 logger.error("sync_worker hata | %s | %s", sid, ex)
                 results.append({"survey_id": sid, "ok": False, "hata": str(ex)})
+
+            # Anketler arası kısa bekleme — rate-limit tetiklememeye yardımcı
+            time.sleep(0.2)
 
         toplam_eklenen = sum(r.get("eklenen", 0) for r in results if r.get("ok"))
         islenen = sum(1 for r in results if r.get("ok") and not r.get("atlandı"))
