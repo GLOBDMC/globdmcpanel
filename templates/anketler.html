@@ -296,6 +296,12 @@
                 <option value="puan_asc">Puan ↑</option>
                 <option value="kalkis">Kalkış Tarihi</option>
             </select>
+            <button id="btnGrupToggle" onclick="toggleGrup()"
+                    class="text-xs px-2.5 py-1 rounded-lg border transition-colors"
+                    style="background:rgba(59,130,246,.1);border-color:rgba(59,130,246,.3);color:#60a5fa;"
+                    title="Anket bazında grupla / tek tek göster">
+                📋 Gruplu
+            </button>
         </div>
     </div>
 
@@ -392,6 +398,7 @@ let _anketTotalSayfa = 0;
 let _anketBolge   = '';
 let _anketOtel    = '';
 let _anketDebounce = null;
+let _anketGrup    = true;   // true=gruplu, false=bireysel yanıtlar
 let _porslineAnketler = [];
 let _syncResumeIndex = 0;
 
@@ -1044,6 +1051,24 @@ async function yukleOtelChips() {
     if (d.oteller.length) wrap.classList.remove('hidden');
 }
 
+function toggleGrup() {
+    _anketGrup = !_anketGrup;
+    _anketSayfa = 0;
+    const btn = document.getElementById('btnGrupToggle');
+    if (_anketGrup) {
+        btn.textContent = '📋 Gruplu';
+        btn.style.background = 'rgba(59,130,246,.1)';
+        btn.style.borderColor = 'rgba(59,130,246,.3)';
+        btn.style.color = '#60a5fa';
+    } else {
+        btn.textContent = '📄 Bireysel';
+        btn.style.background = 'rgba(100,116,139,.1)';
+        btn.style.borderColor = 'rgba(100,116,139,.2)';
+        btn.style.color = '#94a3b8';
+    }
+    yukleAnketler();
+}
+
 async function yukleAnketler() {
     const liste = document.getElementById('anketListe');
     const pag   = document.getElementById('anketPagination');
@@ -1051,7 +1076,6 @@ async function yukleAnketler() {
     pag.classList.add('hidden');
 
     const otelInput = document.getElementById('fOtel').value.trim();
-    // Input değişirse chip seçimini sıfırla
     if (otelInput !== _anketOtel && otelInput !== '') {
         _anketOtel = otelInput;
         document.querySelectorAll('#otelChips .bolge-chip').forEach(c =>
@@ -1065,6 +1089,7 @@ async function yukleAnketler() {
         bolge:    _anketBolge,
         otel:     _anketOtel || otelInput,
         siralama: document.getElementById('fSiralama').value,
+        grup:     _anketGrup ? 'true' : 'false',
     });
     const durum = document.getElementById('fDurum').value;
     if (durum) params.set('status', durum);
@@ -1084,54 +1109,75 @@ async function yukleAnketler() {
 
     _anketToplam     = d.total || 0;
     _anketTotalSayfa = Math.ceil(_anketToplam / 30);
-    document.getElementById('anketSayac').textContent = `${_anketToplam.toLocaleString('tr')} yanıt`;
+    const birim = _anketGrup ? 'anket' : 'yanıt';
+    document.getElementById('anketSayac').textContent = `${_anketToplam.toLocaleString('tr')} ${birim}`;
 
     if (!d.items.length) {
         liste.innerHTML = '<div class="text-center py-12 text-slate-600 text-sm">Sonuç bulunamadı</div>';
         return;
     }
 
-    // Kaç kayıtta puan var?
+    // Puan uyarısı
     const puanliCount = d.items.filter(x => x.genel_puan != null).length;
-    const porslineCount = d.items.filter(x => x.import_batch && x.import_batch.startsWith('porsline_')).length;
+    // Mevcut uyarıyı temizle
+    liste.previousElementSibling?.classList.contains('text-amber-400') && liste.previousElementSibling.remove();
     if (puanliCount === 0 && d.items.length > 0) {
         const uyari = document.createElement('div');
-        uyari.className = 'rounded-lg px-4 py-3 mb-3 text-xs';
-        uyari.style.cssText = 'background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2);color:#fbbf24;';
-        uyari.innerHTML = porslineCount === 0
-            ? `⚠ Bu sayfadaki <strong>${d.items.length}</strong> kayıtta puan verisi yok. Bu kayıtlar eski import'tan geliyor. Porsline Sync yaparak güncel anket puanlarını çekin.`
-            : `⚠ Bu sayfadaki <strong>${d.items.length}</strong> kayıtta puan verisi hesaplanmamış. "Porsline Sync" ile yeniden çekmeyi deneyin.`;
+        uyari.className = 'rounded-lg px-4 py-3 mb-3 text-xs text-amber-400';
+        uyari.style.cssText = 'background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2);';
+        uyari.innerHTML = `⚠ Bu sayfadaki <strong>${d.items.length}</strong> kayıtta puan verisi hesaplanmamış. "Porsline Sync" ile yeniden çekmeyi deneyin.`;
         liste.insertAdjacentElement('beforebegin', uyari);
     }
 
     liste.innerHTML = d.items.map(item => {
-        const p   = item.genel_puan   != null ? parseFloat(item.genel_puan)   : null;
-        const rp  = item.rehber_puani != null ? parseFloat(item.rehber_puani) : null;
-        const pd  = item.puan_detay   || {};
-        const op  = item.otel_ort_puani != null ? parseFloat(item.otel_ort_puani) : null;
+        const p  = item.genel_puan   != null ? parseFloat(item.genel_puan)   : null;
+        const rp = item.rehber_puani != null ? parseFloat(item.rehber_puani) : null;
+        const yanit = item.yanit_sayisi || 1;
 
         const durumBadge = item.match_status === 'matched' && item.matched_jt_kodu
             ? `<span style="font-size:10px;padding:2px 8px;border-radius:999px;background:rgba(16,185,129,.12);color:#34D399;border:1px solid rgba(16,185,129,.2);">✓ ${esc(item.matched_jt_kodu)}</span>`
             : `<span style="font-size:10px;padding:2px 8px;border-radius:999px;background:rgba(100,116,139,.1);color:#64748B;border:1px solid rgba(100,116,139,.15);">Arşiv</span>`;
 
-        // Sub-score mini badge'leri — sadece değer olan kategoriler görünür
-        const subScores = [
-            { icon: '🏨', label: 'Otel',      val: op },
-            { icon: '🚌', label: 'Otobüs',    val: pd.otobus    != null ? parseFloat(pd.otobus)    : null },
-            { icon: '🗺', label: 'Program',   val: pd.program   != null ? parseFloat(pd.program)   : null },
-            { icon: '⚙️', label: 'Operasyon', val: pd.operasyon != null ? parseFloat(pd.operasyon) : null },
-            { icon: '🚐', label: 'Transfer',  val: pd.transfer  != null ? parseFloat(pd.transfer)  : null },
-            { icon: '✨', label: 'Ekstra',    val: pd.ekstra_tur!= null ? parseFloat(pd.ekstra_tur): null },
-        ].filter(s => s.val != null);
+        // Alt kategori puanları — gruplu: ort_* alanları; bireysel: puan_detay içinden
+        let subScores = [];
+        if (_anketGrup) {
+            subScores = [
+                { icon: '🚌', label: 'Otobüs',    val: item.ort_otobus    != null ? parseFloat(item.ort_otobus)    : null },
+                { icon: '🧑‍✈️', label: 'Şoför',     val: item.ort_sofor     != null ? parseFloat(item.ort_sofor)     : null },
+                { icon: '🗺', label: 'Program',   val: item.ort_program   != null ? parseFloat(item.ort_program)   : null },
+                { icon: '⚙️', label: 'Operasyon', val: item.ort_operasyon != null ? parseFloat(item.ort_operasyon) : null },
+                { icon: '🚐', label: 'Transfer',  val: item.ort_transfer  != null ? parseFloat(item.ort_transfer)  : null },
+                { icon: '✨', label: 'Ekstra',    val: item.ort_ekstra_tur!= null ? parseFloat(item.ort_ekstra_tur): null },
+            ].filter(s => s.val != null);
+        } else {
+            const pd = item.puan_detay || {};
+            const op = item.otel_ort_puani != null ? parseFloat(item.otel_ort_puani) : null;
+            subScores = [
+                { icon: '🏨', label: 'Otel',      val: op },
+                { icon: '🚌', label: 'Otobüs',    val: pd.otobus    != null ? parseFloat(pd.otobus)    : null },
+                { icon: '🗺', label: 'Program',   val: pd.program   != null ? parseFloat(pd.program)   : null },
+                { icon: '⚙️', label: 'Operasyon', val: pd.operasyon != null ? parseFloat(pd.operasyon) : null },
+                { icon: '🚐', label: 'Transfer',  val: pd.transfer  != null ? parseFloat(pd.transfer)  : null },
+                { icon: '✨', label: 'Ekstra',    val: pd.ekstra_tur!= null ? parseFloat(pd.ekstra_tur): null },
+            ].filter(s => s.val != null);
+        }
 
         const subLine = subScores.length
-            ? `<div class="flex items-center gap-2 mt-1.5 flex-wrap">
+            ? `<div class="flex items-center gap-3 mt-1.5 flex-wrap">
                 ${subScores.map(s => `
                     <span style="font-size:10px;color:#64748b;" title="${s.label}">
                         ${s.icon} <span style="color:#94a3b8;font-weight:600;">${s.val.toFixed(1)}</span>
                     </span>`).join('')}
                </div>`
             : '';
+
+        // Yanıt sayısı badge (gruplu modda)
+        const yanitBadge = _anketGrup && yanit > 1
+            ? `<span style="font-size:10px;padding:2px 7px;border-radius:999px;background:rgba(99,102,241,.12);color:#818cf8;border:1px solid rgba(99,102,241,.2);flex-shrink:0;">${yanit} yanıt</span>`
+            : '';
+
+        // Müşteri adı (bireysel modda)
+        const musteriStr = !_anketGrup && item.musteri_adi ? `<span>👤 ${esc(item.musteri_adi)}</span>` : '';
 
         return `
         <div class="result-card flex items-center gap-3">
@@ -1140,12 +1186,14 @@ async function yukleAnketler() {
                 <div class="flex items-center gap-2 flex-wrap">
                     <span class="text-sm font-medium text-slate-200 truncate">${esc(item.tur_adi_ham || '—')}</span>
                     ${durumBadge}
+                    ${yanitBadge}
                 </div>
                 <div class="flex items-center gap-3 mt-0.5 text-xs text-slate-500 flex-wrap">
                     ${item.kalkis_tarihi ? `<span>${item.kalkis_tarihi}</span>` : ''}
-                    ${item.rehber_adi   ? `<span>👤 ${esc(item.rehber_adi)}</span>` : ''}
+                    ${item.rehber_adi   ? `<span>🧑‍✈️ ${esc(item.rehber_adi)}</span>` : ''}
                     ${item.bolge        ? `<span>📍 ${esc(item.bolge)}</span>` : ''}
                     ${item.otel_adi     ? `<span>🏨 ${esc(item.otel_adi)}</span>` : ''}
+                    ${musteriStr}
                 </div>
                 ${subLine}
             </div>

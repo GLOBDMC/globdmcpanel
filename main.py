@@ -2044,33 +2044,38 @@ def survey_results(
     tur:       str = "",
     batch:     str = "",
     min_puan:  float = None,
-    siralama:  str = "yeni",   # yeni | puan_asc | puan_desc
+    siralama:  str = "yeni",   # yeni | puan_asc | puan_desc | kalkis
     bolge:     str = "",
     otel:      str = "",
     status:    str = "",       # matched | review | pending
+    grup:      bool = True,    # True → her anket bir kart; False → her yanıt bir satır
 ):
-    """Tüm import edilmiş anket yanıtlarını döndürür (sayfalı, filtrelenebilir)."""
+    """
+    Anket sonuçlarını döndürür.
+    grup=True (varsayılan): survey bazında gruplandırılmış — her Porsline anketi tek kart.
+    grup=False: eski davranış — her yanıt ayrı satır.
+    """
     kullanici = oturum_kullanicisi(request)
     if not kullanici or kullanici["rol"] != "admin":
         return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
 
-    filters  = ["match_status != 'rejected'"]
+    filters  = ["hs.match_status != 'rejected'"]
     params: dict = {"limit": limit, "offset": sayfa * limit}
 
     if status:
-        filters.append("match_status = :status")
+        filters.append("hs.match_status = :status")
         params["status"] = status
     if rehber:
-        filters.append("LOWER(rehber_adi) LIKE LOWER(:rehber)")
+        filters.append("LOWER(hs.rehber_adi) LIKE LOWER(:rehber)")
         params["rehber"] = f"%{rehber}%"
     if tur:
-        filters.append("(LOWER(tur_adi_ham) LIKE LOWER(:tur) OR LOWER(matched_jt_kodu) LIKE LOWER(:tur))")
+        filters.append("(LOWER(hs.tur_adi_ham) LIKE LOWER(:tur) OR LOWER(hs.matched_jt_kodu) LIKE LOWER(:tur))")
         params["tur"] = f"%{tur}%"
     if batch:
-        filters.append("import_batch = :batch")
+        filters.append("hs.import_batch = :batch")
         params["batch"] = batch
     if min_puan is not None:
-        filters.append("genel_puan >= :min_puan")
+        filters.append("hs.genel_puan >= :min_puan")
         params["min_puan"] = min_puan
     if bolge:
         filters.append("hs.bolge = :bolge")
@@ -2078,16 +2083,6 @@ def survey_results(
     if otel:
         filters.append("LOWER(hs.otel_adi) LIKE LOWER(:otel)")
         params["otel"] = f"%{otel}%"
-
-    where = "WHERE " + " AND ".join(filters) if filters else ""
-
-    order_map = {
-        "yeni":      "hs.created_at DESC",
-        "puan_asc":  "hs.genel_puan ASC NULLS LAST",
-        "puan_desc": "hs.genel_puan DESC NULLS LAST",
-        "kalkis":    "hs.kalkis_tarihi DESC",
-    }
-    order = order_map.get(siralama, "hs.created_at DESC")
 
     # Mevcut kolonları kontrol et (DB migration henüz tamamlanmamış olabilir)
     def _col_exists(conn, col: str) -> bool:
@@ -2103,55 +2098,131 @@ def survey_results(
             has_otel_adi = _col_exists(conn, "otel_adi")
             has_puan_det = _col_exists(conn, "puan_detay")
 
-            # bolge/otel_adi filtrelerini kolon yoksa kaldır
+            # Kolon yoksa ilgili filtreyi kaldır
             safe_filters = []
             safe_params  = dict(params)
             for f in filters:
                 if "hs.bolge" in f and not has_bolge:
-                    safe_params.pop("bolge", None)
-                    continue
+                    safe_params.pop("bolge", None); continue
                 if "hs.otel_adi" in f and not has_otel_adi:
-                    safe_params.pop("otel", None)
-                    continue
+                    safe_params.pop("otel", None); continue
                 safe_filters.append(f)
             safe_where = "WHERE " + " AND ".join(safe_filters) if safe_filters else ""
 
-            total = conn.execute(text(
-                f"SELECT COUNT(*) FROM historical_surveys hs {safe_where}"
-            ), safe_params).scalar()
+            bolge_expr    = "hs.bolge"    if has_bolge    else "''"
+            otel_adi_expr = "hs.otel_adi" if has_otel_adi else "''"
+            puan_det_expr = "hs.puan_detay" if has_puan_det else "NULL::jsonb"
 
-            bolge_col    = "hs.bolge"    if has_bolge    else "'' AS bolge"
-            otel_adi_col = "hs.otel_adi" if has_otel_adi else "'' AS otel_adi"
-            puan_det_col = "hs.puan_detay" if has_puan_det else "NULL::jsonb AS puan_detay"
-
-            rows = conn.execute(text(f"""
-                SELECT
-                    hs.id,
+            if grup:
+                # ── Gruplandırılmış mod ─────────────────────────────────────
+                # Her (porsline_survey_id, tur_adi_ham, kalkis_tarihi, rehber_adi)
+                # kombinasyonu tek kart olarak gösterilir.
+                group_key = """
+                    COALESCE(NULLIF(hs.porsline_survey_id,''), 'manual_' || hs.tur_adi_ham || '_' || COALESCE(hs.kalkis_tarihi,'')),
                     hs.tur_adi_ham,
                     hs.kalkis_tarihi,
-                    hs.musteri_adi,
-                    hs.rehber_adi,
-                    hs.acente_adi,
-                    hs.genel_puan,
-                    hs.rehber_puani,
-                    {puan_det_col},
-                    hs.yorum,
-                    hs.match_status,
-                    hs.match_confidence,
-                    hs.matched_jt_kodu,
-                    hs.import_batch,
-                    hs.created_at::text,
-                    {bolge_col},
-                    {otel_adi_col},
-                    t.tur_adi   AS eslesen_tur
-                FROM historical_surveys hs
-                LEFT JOIN turlar t ON t.id = hs.matched_tur_id
-                {safe_where}
-                ORDER BY {order}
-                LIMIT :limit OFFSET :offset
-            """), safe_params).fetchall()
+                    hs.rehber_adi
+                """
 
-            # Rehber özeti (filtreye göre)
+                order_map = {
+                    "yeni":      "MAX(hs.created_at) DESC",
+                    "puan_asc":  "AVG(hs.genel_puan) ASC NULLS LAST",
+                    "puan_desc": "AVG(hs.genel_puan) DESC NULLS LAST",
+                    "kalkis":    "MAX(hs.kalkis_tarihi) DESC NULLS LAST",
+                }
+                order = order_map.get(siralama, "MAX(hs.created_at) DESC")
+
+                # Toplam grup sayısı
+                total = conn.execute(text(f"""
+                    SELECT COUNT(*) FROM (
+                        SELECT 1 FROM historical_surveys hs
+                        {safe_where}
+                        GROUP BY {group_key}
+                    ) _cnt
+                """), safe_params).scalar() or 0
+
+                # Otel ortalama — JSONB aggregate
+                if has_puan_det:
+                    otel_avg_expr = """
+                        ROUND(AVG(NULLIF(puan_detay->>'otel_ort','')::numeric)::numeric, 2) AS ort_otel,
+                        ROUND(AVG(NULLIF(puan_detay->>'otobus','')::numeric)::numeric, 2) AS ort_otobus,
+                        ROUND(AVG(NULLIF(puan_detay->>'sofor','')::numeric)::numeric, 2) AS ort_sofor,
+                        ROUND(AVG(NULLIF(puan_detay->>'program','')::numeric)::numeric, 2) AS ort_program,
+                        ROUND(AVG(NULLIF(puan_detay->>'operasyon','')::numeric)::numeric, 2) AS ort_operasyon,
+                        ROUND(AVG(NULLIF(puan_detay->>'transfer','')::numeric)::numeric, 2) AS ort_transfer,
+                        ROUND(AVG(NULLIF(puan_detay->>'ekstra_tur','')::numeric)::numeric, 2) AS ort_ekstra_tur,
+                    """
+                else:
+                    otel_avg_expr = "NULL AS ort_otel, NULL AS ort_otobus, NULL AS ort_sofor, NULL AS ort_program, NULL AS ort_operasyon, NULL AS ort_transfer, NULL AS ort_ekstra_tur,"
+
+                rows = conn.execute(text(f"""
+                    SELECT
+                        COALESCE(NULLIF(hs.porsline_survey_id,''), '') AS porsline_survey_id,
+                        hs.tur_adi_ham,
+                        hs.kalkis_tarihi,
+                        hs.rehber_adi,
+                        COUNT(*)                                                AS yanit_sayisi,
+                        ROUND(AVG(hs.genel_puan)::numeric,   2)                AS genel_puan,
+                        ROUND(AVG(hs.rehber_puani)::numeric, 2)                AS rehber_puani,
+                        {otel_avg_expr}
+                        MAX(hs.matched_jt_kodu)
+                            FILTER (WHERE hs.matched_jt_kodu IS NOT NULL
+                                      AND hs.matched_jt_kodu != '')            AS matched_jt_kodu,
+                        MAX(hs.match_status)                                   AS match_status,
+                        MAX({bolge_expr})
+                            FILTER (WHERE {bolge_expr} != '')                  AS bolge,
+                        STRING_AGG(DISTINCT NULLIF({otel_adi_expr},''), ', ')  AS otel_adi,
+                        MAX(hs.created_at)::text                               AS created_at
+                    FROM historical_surveys hs
+                    {safe_where}
+                    GROUP BY {group_key}
+                    ORDER BY {order}
+                    LIMIT :limit OFFSET :offset
+                """), safe_params).fetchall()
+
+            else:
+                # ── Bireysel yanıt modu (eski davranış) ────────────────────
+                order_map = {
+                    "yeni":      "hs.created_at DESC",
+                    "puan_asc":  "hs.genel_puan ASC NULLS LAST",
+                    "puan_desc": "hs.genel_puan DESC NULLS LAST",
+                    "kalkis":    "hs.kalkis_tarihi DESC",
+                }
+                order = order_map.get(siralama, "hs.created_at DESC")
+
+                total = conn.execute(text(
+                    f"SELECT COUNT(*) FROM historical_surveys hs {safe_where}"
+                ), safe_params).scalar() or 0
+
+                rows = conn.execute(text(f"""
+                    SELECT
+                        hs.id,
+                        hs.tur_adi_ham,
+                        hs.kalkis_tarihi,
+                        hs.musteri_adi,
+                        hs.rehber_adi,
+                        hs.acente_adi,
+                        hs.genel_puan,
+                        hs.rehber_puani,
+                        {puan_det_expr} AS puan_detay,
+                        hs.yorum,
+                        hs.match_status,
+                        hs.match_confidence,
+                        hs.matched_jt_kodu,
+                        hs.import_batch,
+                        hs.created_at::text,
+                        {bolge_expr}    AS bolge,
+                        {otel_adi_expr} AS otel_adi,
+                        t.tur_adi       AS eslesen_tur,
+                        1               AS yanit_sayisi
+                    FROM historical_surveys hs
+                    LEFT JOIN turlar t ON t.id = hs.matched_tur_id
+                    {safe_where}
+                    ORDER BY {order}
+                    LIMIT :limit OFFSET :offset
+                """), safe_params).fetchall()
+
+            # Rehber özeti (filtreye göre, her zaman bireysel)
             guide_rows = conn.execute(text(f"""
                 SELECT
                     rehber_adi,
@@ -2161,7 +2232,7 @@ def survey_results(
                     MIN(kalkis_tarihi) AS ilk_kalkis,
                     MAX(kalkis_tarihi) AS son_kalkis
                 FROM historical_surveys hs
-                {safe_where.replace('match_status !=', 'hs.match_status !=')}
+                {safe_where}
                 GROUP BY rehber_adi
                 HAVING rehber_adi <> ''
                 ORDER BY adet DESC
@@ -2178,20 +2249,20 @@ def survey_results(
 
     def row_to_dict(r):
         d = dict(r._mapping)
-        pd = d.get("puan_detay")
-        if pd and isinstance(pd, str):
-            try:
-                pd = json.loads(pd)
-            except Exception:
-                pd = {}
-        elif not pd:
-            pd = {}
-        d["puan_detay"] = pd
+        # Bireysel modda puan_detay JSON parse
+        pd_raw = d.get("puan_detay")
+        if pd_raw and isinstance(pd_raw, str):
+            try: pd_raw = json.loads(pd_raw)
+            except Exception: pd_raw = {}
+        elif not pd_raw:
+            pd_raw = {}
+        d["puan_detay"] = pd_raw
 
-        # Otel ortalama puanını hesapla (otel dict → sayısal değerlerin ortalaması)
-        oteller = pd.get("oteller") or {}
-        otel_vals = [v for v in oteller.values() if isinstance(v, (int, float))]
-        d["otel_ort_puani"] = round(sum(otel_vals) / len(otel_vals), 2) if otel_vals else None
+        # Bireysel modda otel ort puanını hesapla
+        if not grup:
+            oteller = pd_raw.get("oteller") or {}
+            otel_vals = [v for v in oteller.values() if isinstance(v, (int, float))]
+            d["otel_ort_puani"] = round(sum(otel_vals)/len(otel_vals), 2) if otel_vals else None
 
         for k, v in list(d.items()):
             if hasattr(v, "isoformat"):
@@ -2199,10 +2270,11 @@ def survey_results(
         return d
 
     return JSONResponse({
-        "ok":       True,
-        "total":    total,
-        "sayfa":    sayfa,
-        "items":    [row_to_dict(r) for r in rows],
+        "ok":        True,
+        "total":     total,
+        "sayfa":     sayfa,
+        "grup":      grup,
+        "items":     [row_to_dict(r) for r in rows],
         "rehberler": [dict(r._mapping) for r in guide_rows],
     })
 
