@@ -4,6 +4,7 @@ import re
 import csv
 import json
 import time
+import decimal
 import secrets
 import logging
 import logging.handlers
@@ -2313,7 +2314,15 @@ def survey_results(
         for k, v in list(d.items()):
             if hasattr(v, "isoformat"):
                 d[k] = v.isoformat()
+            elif isinstance(v, decimal.Decimal):
+                d[k] = float(v)
         return d
+
+    def _safe(v):
+        """Decimal ve datetime → JSON-safe Python tiplerine çevir."""
+        if isinstance(v, decimal.Decimal): return float(v)
+        if hasattr(v, "isoformat"):        return v.isoformat()
+        return v
 
     return JSONResponse({
         "ok":        True,
@@ -2321,7 +2330,7 @@ def survey_results(
         "sayfa":     sayfa,
         "grup":      grup,
         "items":     [row_to_dict(r) for r in rows],
-        "rehberler": [dict(r._mapping) for r in guide_rows],
+        "rehberler": [{k: _safe(v) for k, v in r._mapping.items()} for r in guide_rows],
     })
 
 
