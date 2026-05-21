@@ -2160,26 +2160,12 @@ def survey_results(
                         ROUND(AVG(NULLIF((hs.puan_detay->>'otobus'),  '')::numeric)::numeric, 2) AS ort_otobus,
                         ROUND(AVG(NULLIF((hs.puan_detay->>'sofor'),   '')::numeric)::numeric, 2) AS ort_sofor,
                         ROUND(AVG(NULLIF((hs.puan_detay->>'program'), '')::numeric)::numeric, 2) AS ort_program,
-                        (SELECT jsonb_object_agg(k, ROUND(avg_val::numeric, 2))
-                         FROM (
-                             SELECT kv.key AS k, AVG(kv.value::numeric) AS avg_val
-                             FROM historical_surveys h2
-                             CROSS JOIN LATERAL jsonb_each_text(
-                                 COALESCE(h2.puan_detay->'oteller', '{}')
-                             ) kv
-                             WHERE kv.value ~ '^[0-9]+[.]?[0-9]*$'
-                               AND COALESCE(h2.porsline_survey_id,'') = COALESCE(hs.porsline_survey_id,'')
-                               AND COALESCE(h2.tur_adi_ham,'')        = COALESCE(hs.tur_adi_ham,'')
-                               AND COALESCE(h2.kalkis_tarihi,'')      = COALESCE(hs.kalkis_tarihi,'')
-                               AND COALESCE(h2.rehber_adi,'')         = COALESCE(hs.rehber_adi,'')
-                             GROUP BY kv.key
-                         ) _h
-                        ) AS oteller_ort,
                     """
                 else:
-                    sub_avg_expr = "NULL AS ort_otel, NULL AS ort_otobus, NULL AS ort_sofor, NULL AS ort_program, NULL AS oteller_ort,"
+                    sub_avg_expr = "NULL AS ort_otel, NULL AS ort_otobus, NULL AS ort_sofor, NULL AS ort_program,"
 
-                rows = conn.execute(text(f"""
+                # İç sorgu: gruplama + kategori ortalamaları
+                inner_sql = f"""
                     SELECT
                         COALESCE(hs.porsline_survey_id, '')  AS porsline_survey_id,
                         COALESCE(hs.tur_adi_ham, '')         AS tur_adi_ham,
@@ -2202,7 +2188,34 @@ def survey_results(
                     GROUP BY {group_key}
                     ORDER BY {order}
                     LIMIT :limit OFFSET :offset
-                """), safe_params).fetchall()
+                """
+
+                # Dış sorgu: şehir bazlı otel ortalamalarını iç sorgu kolonlarıyla correlation yap
+                # (Correlated subquery outer GROUP BY kolonuna erişemez; iç sorgudan erişir)
+                if has_puan_det:
+                    outer_sql = f"""
+                    SELECT g.*,
+                        (SELECT jsonb_object_agg(k, ROUND(avg_val::numeric, 2))
+                         FROM (
+                             SELECT kv.key AS k, AVG(kv.value::numeric) AS avg_val
+                             FROM historical_surveys h2
+                             CROSS JOIN LATERAL jsonb_each_text(
+                                 COALESCE(h2.puan_detay->'oteller', '{{}}')
+                             ) kv
+                             WHERE kv.value ~ '^[0-9]+[.]?[0-9]*$'
+                               AND COALESCE(h2.porsline_survey_id,'') = g.porsline_survey_id
+                               AND COALESCE(h2.tur_adi_ham,'')        = g.tur_adi_ham
+                               AND COALESCE(h2.kalkis_tarihi,'')      = g.kalkis_tarihi
+                               AND COALESCE(h2.rehber_adi,'')         = g.rehber_adi
+                             GROUP BY kv.key
+                         ) _h
+                        ) AS oteller_ort
+                    FROM ({inner_sql}) g
+                    """
+                else:
+                    outer_sql = f"SELECT g.*, NULL AS oteller_ort FROM ({inner_sql}) g"
+
+                rows = conn.execute(text(outer_sql), safe_params).fetchall()
 
             else:
                 # ── Bireysel yanıt modu (eski davranış) ────────────────────
