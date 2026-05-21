@@ -98,12 +98,6 @@
     border-radius: 12px;
     padding: 16px 18px;
 }
-.otel-kart-tur-row {
-    display: flex; align-items: center; gap: 10px;
-    padding: 7px 10px; border-radius: 8px; cursor: pointer;
-    transition: background .12s; text-decoration: none;
-}
-.otel-kart-tur-row:hover { background: rgba(255,255,255,.04); }
 
 /* ── Autocomplete dropdown item ─────────── */
 .ac-item {
@@ -218,7 +212,7 @@ span.tur-pill.otel-link:hover { color: #60a5fa !important; border-color: rgba(96
                 <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
                 <polyline points="22,6 12,13 2,6"/>
             </svg>
-            Porsline Sync
+            {% if kullanici and kullanici.rol == 'admin' %}Porsline Sync{% else %}Anketleri Güncelle{% endif %}
         </button>
     </div>
 </div>
@@ -233,9 +227,9 @@ span.tur-pill.otel-link:hover { color: #60a5fa !important; border-color: rgba(96
                         <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
                         <polyline points="22,6 12,13 2,6"/>
                     </svg>
-                    Porsline Senkronizasyonu
+                    {% if kullanici and kullanici.rol == 'admin' %}Porsline Senkronizasyonu{% else %}Anket Güncellemesi{% endif %}
                 </h2>
-                <p class="text-xs text-slate-600 mt-0.5">Porsline anketlerini DB'ye çek ve kaydet</p>
+                <p class="text-xs text-slate-600 mt-0.5">{% if kullanici and kullanici.rol == 'admin' %}Porsline anketlerini DB'ye çek ve kaydet{% else %}Memnuniyet anketlerini sisteme aktar ve kaydet{% endif %}</p>
             </div>
             <div class="flex items-center gap-2">
                 <button onclick="loadPorslineSurveys()" id="btnPorslineList" class="btn-sec text-xs">
@@ -246,12 +240,13 @@ span.tur-pill.otel-link:hover { color: #60a5fa !important; border-color: rgba(96
                     Listele
                 </button>
                 <button onclick="syncAllPorsline()" id="btnSyncAll"
+                        data-label="{% if kullanici and kullanici.rol == 'admin' %}Tümünü Sync Et{% else %}Tümünü Güncelle{% endif %}"
                         class="text-xs px-3 py-1.5 rounded-lg font-medium bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-600/30 transition-colors flex items-center gap-1.5">
                     <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
                         <path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
                     </svg>
-                    Tümünü Sync Et
+                    {% if kullanici and kullanici.rol == 'admin' %}Tümünü Sync Et{% else %}Tümünü Güncelle{% endif %}
                 </button>
             </div>
         </div>
@@ -276,39 +271,59 @@ span.tur-pill.otel-link:hover { color: #60a5fa !important; border-color: rgba(96
         </div>
         <div class="flex items-center gap-2 mb-4 flex-wrap">
             <button onclick="checkDbDiag()" class="text-xs px-2 py-1 rounded bg-slate-800 border border-slate-700 text-slate-400 hover:text-slate-200 transition-colors">
-                🔍 DB Durumu Kontrol Et
+                🔍 {% if kullanici and kullanici.rol == 'admin' %}DB Durumu Kontrol Et{% else %}Sistem Durumunu Kontrol Et{% endif %}
             </button>
             <button onclick="forceResyncAll()" id="btnForceResync" class="text-xs px-2 py-1 rounded bg-amber-900/30 border border-amber-700/40 text-amber-400 hover:bg-amber-900/50 transition-colors">
                 🔄 Puanları Yeniden Hesapla
             </button>
-            <span class="text-xs text-slate-600">Sync çalışmıyorsa veya puanlar null geliyorsa kullanın</span>
+            <span class="text-xs text-slate-600">Güncelleme çalışmıyorsa veya puanlar görünmüyorsa kullanın</span>
         </div>
         <div id="forceResyncResult" class="hidden mb-3 text-xs text-amber-300 rounded-lg p-2 bg-amber-900/20 border border-amber-700/30"></div>
 
         <!-- Anket listesi -->
         <div id="porslineSurveyList">
-            <p class="text-center py-6 text-slate-600 text-sm">"Listele" butonuna basarak Porsline anketlerini çekin</p>
+            <p class="text-center py-6 text-slate-600 text-sm">Anket listesini görüntülemek için "Listele" butonuna tıklayın</p>
         </div>
     </div>
 </div>
 
 <!-- ── Stats bar ───────────────────────────────────────────────────────── -->
 <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-    <div class="card text-center py-3">
-        <div class="text-2xl font-bold text-slate-100" id="stToplam">—</div>
-        <div class="text-xs text-slate-500 mt-1">Toplam Yanıt</div>
+    <!-- Comfort Turlar -->
+    <div class="card py-3 px-4">
+        <div class="flex items-center justify-between mb-1">
+            <span class="text-xs text-slate-500 font-medium">🛋️ Comfort Turlar</span>
+            <span class="text-xs text-slate-600" id="stComfortSayi">—</span>
+        </div>
+        <div class="text-2xl font-bold text-cyan-400" id="stComfortPuan">—</div>
+        <div class="text-xs text-slate-600 mt-0.5">ort. puan</div>
     </div>
-    <div class="card text-center py-3">
-        <div class="text-2xl font-bold text-cyan-400" id="stOrtPuan">—</div>
-        <div class="text-xs text-slate-500 mt-1">Ort. Genel Puan</div>
+    <!-- Serüven Turlar -->
+    <div class="card py-3 px-4">
+        <div class="flex items-center justify-between mb-1">
+            <span class="text-xs text-slate-500 font-medium">🏔️ Serüven Turlar</span>
+            <span class="text-xs text-slate-600" id="stSeruvenSayi">—</span>
+        </div>
+        <div class="text-2xl font-bold text-orange-400" id="stSeruvenPuan">—</div>
+        <div class="text-xs text-slate-600 mt-0.5">ort. puan</div>
     </div>
-    <div class="card text-center py-3">
+    <!-- Rehber Puanı -->
+    <div class="card py-3 px-4">
+        <div class="flex items-center justify-between mb-1">
+            <span class="text-xs text-slate-500 font-medium">⭐ Rehber Puanı</span>
+            <span class="text-xs text-slate-600" id="stToplam">—</span>
+        </div>
         <div class="text-2xl font-bold text-yellow-400" id="stRehberPuan">—</div>
-        <div class="text-xs text-slate-500 mt-1">Ort. Rehber Puanı</div>
+        <div class="text-xs text-slate-600 mt-0.5">ort. puan</div>
     </div>
-    <div class="card text-center py-3">
-        <div class="text-2xl font-bold text-green-400" id="stEslesen">—</div>
-        <div class="text-xs text-slate-500 mt-1">Tur Eşleşmesi</div>
+    <!-- Genel Ortalama -->
+    <div class="card py-3 px-4">
+        <div class="flex items-center justify-between mb-1">
+            <span class="text-xs text-slate-500 font-medium">📊 Genel Ortalama</span>
+            <span class="text-xs text-slate-600" id="stEslesen">—</span>
+        </div>
+        <div class="text-2xl font-bold text-green-400" id="stOrtPuan">—</div>
+        <div class="text-xs text-slate-600 mt-0.5">ort. puan</div>
     </div>
 </div>
 
@@ -555,31 +570,52 @@ function showToast(msg, type = 'info') {
 // ─── Stats ───────────────────────────────────────────────────────────────────
 function _fmt(v) { return (v != null) ? parseFloat(v).toFixed(2) : '—'; }
 
+function _puanColor(v, elId) {
+    if (v == null) return;
+    const el = document.getElementById(elId);
+    if (!el) return;
+    el.style.color = v >= 4.5 ? '#34d399' : v >= 3.5 ? '#fbbf24' : '#f87171';
+}
+
 async function loadStats() {
     const d = await fetch('/api/survey/stats').then(r=>r.json()).catch(()=>({}));
     if (!d.ok) return;
     const s = d.stats || {};
 
-    document.getElementById('stToplam').textContent     = (s.toplam || 0).toLocaleString('tr');
-    document.getElementById('stOrtPuan').textContent    = _fmt(s.ort_puan);
-    document.getElementById('stRehberPuan').textContent = _fmt(s.ort_rehber_puan);
-    const pct = s.toplam ? Math.round((s.eslendi || 0) / s.toplam * 100) : 0;
-    document.getElementById('stEslesen').textContent    = s.toplam ? pct + '%' : '—';
+    // ── Comfort Turlar ──────────────────────────────────────────────────────
+    const cp = s.comfort_puan != null ? parseFloat(s.comfort_puan) : null;
+    document.getElementById('stComfortPuan').textContent = cp != null ? cp.toFixed(2) : '—';
+    _puanColor(cp, 'stComfortPuan');
+    document.getElementById('stComfortSayi').textContent =
+        s.comfort_sayi != null ? `${s.comfort_sayi} yanıt` : '';
 
-    // Kategori puanları — Otel / Otobüs / Şoför / Program
-    const katMap = {
-        stOtel:   s.ort_otel,
-        stOtobus: s.ort_otobus,
-        stSofor:  s.ort_sofor,
-        stProgram:s.ort_program,
-    };
+    // ── Serüven Turlar ──────────────────────────────────────────────────────
+    const sp = s.seruven_puan != null ? parseFloat(s.seruven_puan) : null;
+    document.getElementById('stSeruvenPuan').textContent = sp != null ? sp.toFixed(2) : '—';
+    _puanColor(sp, 'stSeruvenPuan');
+    document.getElementById('stSeruvenSayi').textContent =
+        s.seruven_sayi != null ? `${s.seruven_sayi} yanıt` : '';
+
+    // ── Rehber Puanı ────────────────────────────────────────────────────────
+    const rp = s.ort_rehber_puan != null ? parseFloat(s.ort_rehber_puan) : null;
+    document.getElementById('stRehberPuan').textContent = rp != null ? rp.toFixed(2) : '—';
+    _puanColor(rp, 'stRehberPuan');
+    document.getElementById('stToplam').textContent =
+        s.toplam != null ? `${(s.toplam).toLocaleString('tr')} yanıt` : '';
+
+    // ── Genel Ortalama ──────────────────────────────────────────────────────
+    const gp = s.ort_puan != null ? parseFloat(s.ort_puan) : null;
+    document.getElementById('stOrtPuan').textContent = gp != null ? gp.toFixed(2) : '—';
+    _puanColor(gp, 'stOrtPuan');
+    const pct = s.toplam ? Math.round((s.eslendi || 0) / s.toplam * 100) : 0;
+    document.getElementById('stEslesen').textContent = s.toplam ? pct + '% eşleşti' : '';
+
+    // ── Kategori puanları (alt bar) ─────────────────────────────────────────
+    const katMap = { stOtel: s.ort_otel, stOtobus: s.ort_otobus, stSofor: s.ort_sofor, stProgram: s.ort_program };
     let hasKat = false;
     for (const [id, val] of Object.entries(katMap)) {
         const el = document.getElementById(id);
-        if (el) {
-            el.textContent = _fmt(val);
-            if (val != null && val !== 0) hasKat = true;
-        }
+        if (el) { el.textContent = _fmt(val); if (val != null && val !== 0) hasKat = true; }
     }
     const katWrap = document.getElementById('kategoriPuanlar');
     if (katWrap) katWrap.classList.toggle('hidden', !hasKat);
@@ -726,8 +762,8 @@ async function loadPorslineSurveys() {
                 <div class="text-xs text-slate-600 mt-0.5">${yanit} yanıt · ${s.created_date || s.created_at || ''}</div>
             </div>
             <span id="ps-status-${sid}" class="text-xs text-slate-600 hidden"></span>
-            <button id="ps-btn-${sid}" class="sync-btn" onclick="syncTekPorsline('${sid}')">Sync</button>
-            <button class="sync-btn" style="background:rgba(251,146,60,.15);color:#fb923c;border-color:rgba(251,146,60,.3)" title="Force: mevcut kayıtları da yeniden parse et" onclick="syncTekPorsline('${sid}', true)">🔄</button>
+            <button id="ps-btn-${sid}" class="sync-btn" onclick="syncTekPorsline('${sid}')">Güncelle</button>
+            <button class="sync-btn" style="background:rgba(251,146,60,.15);color:#fb923c;border-color:rgba(251,146,60,.3)" title="Tüm puanları yeniden hesapla" onclick="syncTekPorsline('${sid}', true)">🔄</button>
         </div>`;
     }).join('');
 }
@@ -782,7 +818,7 @@ async function syncTekPorsline(sid, force = false) {
             if (kalan <= 0) {
                 clearInterval(tick);
                 st.textContent = '— tekrar deneyin';
-                btn.textContent = 'Sync'; btn.disabled = false;
+                btn.textContent = 'Güncelle'; btn.disabled = false;
             }
         }, 1000);
         st.classList.remove('hidden');
@@ -795,171 +831,176 @@ async function syncTekPorsline(sid, force = false) {
 }
 
 async function forceResyncAll() {
-    if (!_porslineAnketler.length) {
-        await loadPorslineSurveys();
-        if (!_porslineAnketler.length) { alert('Önce "Listele" butonuna basın'); return; }
-    }
-    const resultEl = document.getElementById('forceResyncResult');
-    const btn      = document.getElementById('btnForceResync');
-    resultEl.classList.remove('hidden');
-    btn.disabled = true;
-
-    let toplam_gncl = 0, toplam_eklenen = 0, hatali = 0;
-    const surveys = _porslineAnketler;
-
-    for (let i = 0; i < surveys.length; i++) {
-        const s   = surveys[i];
-        const sid = String(s.id || s.survey_id || '');
-        if (!sid) continue;
-
-        resultEl.textContent = `⏳ ${i+1}/${surveys.length}: ${s.title || sid}`;
-        const url = `/api/porsline/survey/${sid}/sync?force=true`;
-
-        try {
-            const resp = await fetch(url, { method: 'POST' });
-            const d    = await resp.json();
-
-            if (d.ok) {
-                toplam_gncl    += d.guncellenen || 0;
-                toplam_eklenen += d.eklenen     || 0;
-            } else if (parseInt(d.hata) === 429 || resp.status === 429) {
-                // Rate limit — bekle ve aynı anketi tekrar dene
-                const retrySecs = parseInt(d.retry_after) || 120;
-                let kalan = retrySecs;
-                const tick = setInterval(() => {
-                    kalan--;
-                    resultEl.textContent = `⏱ Rate limit — ${Math.floor(kalan/60)}dk ${kalan%60}s sonra devam (${i+1}/${surveys.length})`;
-                    if (kalan <= 0) clearInterval(tick);
-                }, 1000);
-                await new Promise(r => setTimeout(r, retrySecs * 1000));
-                clearInterval(tick);
-                i--; // aynı anketi tekrar dene
-                continue;
-            } else {
-                hatali++;
-            }
-        } catch(e) {
-            hatali++;
-        }
-
-        // Her sync arasında 6 saniye bekle (Porsline rate limit koruması)
-        if (i < surveys.length - 1) {
-            await new Promise(r => setTimeout(r, 6000));
-        }
-    }
-
-    btn.disabled = false;
-    const hataStr = hatali > 0 ? `, ${hatali} hatalı` : '';
-    resultEl.textContent = `✓ Tamamlandı: ${toplam_eklenen} yeni, ${toplam_gncl} güncellendi${hataStr}`;
-    loadStats();
-    yukleAnketler();
+    await _runBackendSyncAll(true);
 }
 
-async function syncAllPorsline(startIdx = 0) {
-    if (!_porslineAnketler.length) {
-        await loadPorslineSurveys();
-        if (!_porslineAnketler.length) return;
-    }
-    const progress = document.getElementById('porslineSyncProgress');
-    const resultEl = document.getElementById('porslineSyncResult');
-    const msgEl    = document.getElementById('porslineSyncMsg');
-    const pctEl    = document.getElementById('porslineSyncPct');
-    const barEl    = document.getElementById('porslineSyncBar');
-    const btn      = document.getElementById('btnSyncAll');
+async function syncAllPorsline() {
+    await _runBackendSyncAll(false);
+}
 
-    progress.classList.remove('hidden');
-    resultEl.classList.add('hidden');
-    btn.disabled = true;
-    btn.textContent = 'Devam ediyor...';
+/**
+ * Polling helper — sayfa yenilenince sessionStorage task_id ile devam eder.
+ */
+function _syncUiRefs() {
+    return {
+        progress: document.getElementById("porslineSyncProgress"),
+        resultEl: document.getElementById("porslineSyncResult"),
+        msgEl:    document.getElementById("porslineSyncMsg"),
+        pctEl:    document.getElementById("porslineSyncPct"),
+        barEl:    document.getElementById("porslineSyncBar"),
+        btn:      document.getElementById("btnSyncAll"),
+        btnForce: document.getElementById("btnForceResync"),
+    };
+}
 
-    const surveys = _porslineAnketler;
-    const total   = surveys.length;
-    let eklenenToplam = 0, hataCount = 0, done = 0;
+let _activePollInterval = null;
 
-    for (let i = startIdx; i < total; i++) {
-        const s   = surveys[i];
-        const sid = s.id || s.survey_id;
-        msgEl.textContent = `Sync ediliyor: ${esc(s.title || sid)} (${i+1}/${total})`;
+function _startPolling(taskId) {
+    if (_activePollInterval) clearInterval(_activePollInterval);
+    sessionStorage.setItem("porsline_task_id", taskId);
 
-        const rowBtn = document.getElementById(`ps-btn-${sid}`);
-        const rowSt  = document.getElementById(`ps-status-${sid}`);
-        if (rowBtn) { rowBtn.disabled = true; rowBtn.textContent = '⏳'; }
-        if (rowSt)  { rowSt.textContent = '⏳'; rowSt.classList.remove('hidden'); }
+    const { progress, resultEl, msgEl, pctEl, barEl, btn, btnForce } = _syncUiRefs();
+    const panel = document.getElementById("porslinePanel");
+    if (panel) panel.classList.remove("hidden");
+    if (progress) progress.classList.remove("hidden");
+    if (barEl) { barEl.style.background = ""; barEl.style.width = "10%"; }
+    if (btn)      { btn.disabled = true; btn.textContent = "⏳ Çalışıyor..."; }
+    if (btnForce) btnForce.disabled = true;
 
+    _activePollInterval = setInterval(async () => {
         try {
-            const d = await fetch(`/api/porsline/survey/${sid}/sync`, { method: 'POST' })
-                .then(r=>r.json());
+            const s = await fetch("/api/porsline/sync-status/" + taskId)
+                          .then(r => r.json()).catch(() => null);
+            if (!s || !s.ok) return;
 
-            if (d.ok) {
-                const yeni = d.eklenen || 0;
-                eklenenToplam += yeni;
-                if (rowBtn) { rowBtn.textContent = '✓'; rowBtn.style.color = '#4ade80'; }
-                if (rowSt) {
-                    rowSt.textContent = yeni > 0 ? `+${yeni}` : `✓`;
-                    rowSt.className = 'text-xs ' + (yeni > 0 ? 'text-green-400' : 'text-slate-500');
-                }
-            } else if (parseInt(d.hata) === 429) {
-                barEl.style.background = '#f59e0b';
-                _syncResumeIndex = i;
-                btn.disabled = false;
-                btn.textContent = `▶ Devam Et (${i}/${total})`;
-                btn.onclick = () => syncAllPorsline(_syncResumeIndex);
-
-                const retryAfterSecs = d.retry_after ? parseInt(d.retry_after) : null;
-                if (retryAfterSecs && retryAfterSecs > 0) {
-                    let remaining = retryAfterSecs;
-                    const ci = setInterval(() => {
-                        remaining--;
-                        if (remaining <= 0) {
-                            clearInterval(ci);
-                            msgEl.textContent = `Rate limit kalktı — "Devam Et"e basın (${i}/${total})`;
-                            barEl.style.background = '#10b981';
-                        } else {
-                            const m = Math.floor(remaining / 60), sec = remaining % 60;
-                            msgEl.textContent = `⏱ Rate limit (${i}/${total}) — ${m > 0 ? m+'dk ' : ''}${sec}s`;
-                        }
-                    }, 1000);
-                } else {
-                    msgEl.textContent = `⏱ Rate limit (${i}/${total}) — birkaç dakika bekleyin`;
-                }
-                return;
-            } else {
-                hataCount++;
-                if (rowBtn) rowBtn.disabled = false;
-                if (rowSt) { rowSt.textContent = '⚠ Hata'; rowSt.className = 'text-xs text-red-400 ml-1'; rowSt.classList.remove('hidden'); }
+            const prog = s.progress || {};
+            if (msgEl) msgEl.textContent = prog.current || "⏳ Çalışıyor…";
+            const done  = prog.done  || 0;
+            const total = prog.total || 0;
+            if (total > 0 && barEl && pctEl) {
+                const pct = Math.min(95, Math.round(done / total * 100));
+                barEl.style.width = pct + "%";
+                pctEl.textContent = pct + "%";
             }
-        } catch(e) {
-            hataCount++;
-            if (rowBtn) rowBtn.disabled = false;
-            if (rowSt) { rowSt.textContent = '⚠ Hata'; rowSt.className = 'text-xs text-red-400 ml-1'; rowSt.classList.remove('hidden'); }
+
+            if (s.status === "done" || s.status === "error" || s.status === "rate_limited") {
+                clearInterval(_activePollInterval);
+                _activePollInterval = null;
+                sessionStorage.removeItem("porsline_task_id");
+
+                if (s.status === "done" && s.result) {
+                    const r = s.result;
+                    if (barEl) barEl.style.width = "100%";
+                    if (resultEl) {
+                        resultEl.classList.remove("hidden");
+                        resultEl.innerHTML = "<div class=\"rounded-lg p-3 text-xs bg-green-900/20 border border-green-700/30 text-green-300\">" +
+                            "✓ Tamamlandı · " + (r.anket_sayisi || 0) + " anket · " +
+                            (r.islenen || 0) + " işlendi · " + (r.atlandi || 0) + " atlandı · " +
+                            "<strong>+" + (r.toplam_eklenen || 0) + "</strong> yeni yanıt</div>";
+                    }
+                    if (msgEl) msgEl.textContent = "✓ Tamamlandı";
+                    loadStats();
+                    yukleAnketler();
+                    if ((r.toplam_eklenen || 0) > 0)
+                        setTimeout(() => { var el = document.getElementById("anketListeSection"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); }, 400);
+                    if (btn)      { btn.disabled = false; btn.textContent = btn.dataset.label || "Tümünü Güncelle"; btn.onclick = function(){ syncAllPorsline(); }; }
+                    if (btnForce) btnForce.disabled = false;
+                    setTimeout(() => { if (progress) progress.classList.add("hidden"); }, 4000);
+
+                } else if (s.status === "rate_limited") {
+                    // Porsline rate limit — geri sayım göster
+                    const waitSecs = s.rl_wait || 5400;
+                    const doneSoFar = (s.result && s.result.done_so_far) || 0;
+                    const totalSurveys = (s.result && s.result.total) || 0;
+                    if (barEl) { barEl.style.background = "#f59e0b"; barEl.style.width = (Math.round(doneSoFar / Math.max(totalSurveys,1) * 100)) + "%"; }
+                    _startRateLimitCountdown(waitSecs, doneSoFar, totalSurveys);
+
+                } else {
+                    if (barEl) { barEl.style.width = "100%"; barEl.style.background = "#f87171"; }
+                    if (msgEl) msgEl.textContent = "⚠ Hata: " + ((s.progress && s.progress.current) || "bilinmiyor");
+                    if (btn)      { btn.disabled = false; btn.textContent = btn.dataset.label || "Tümünü Güncelle"; btn.onclick = function(){ syncAllPorsline(); }; }
+                    if (btnForce) btnForce.disabled = false;
+                    setTimeout(() => { if (progress) progress.classList.add("hidden"); }, 6000);
+                }
+            }
+        } catch(e) { /* poll hatası — devam et */ }
+    }, 2000);
+}
+
+let _rlCountdownTimer = null;
+
+/**
+ * Rate-limit geri sayım gösterir. Süre dolunca otomatik devam et.
+ */
+function _startRateLimitCountdown(waitSecs, doneSoFar, totalSurveys) {
+    if (_rlCountdownTimer) clearInterval(_rlCountdownTimer);
+
+    const { progress, resultEl, msgEl, pctEl, btn, btnForce } = _syncUiRefs();
+    let remaining = waitSecs;
+
+    function fmt(s) {
+        const m = Math.floor(s / 60), sec = s % 60;
+        return m > 0 ? m + " dk " + sec + " sn" : sec + " sn";
+    }
+
+    if (resultEl) {
+        resultEl.classList.remove("hidden");
+        resultEl.innerHTML = "<div id=\"rlCountdownCard\" class=\"rounded-lg p-3 text-xs bg-amber-900/20 border border-amber-700/40 text-amber-300\">" +
+            "⏸ Porsline istek sınırı aşıldı · " + doneSoFar + "/" + totalSurveys + " anket tamamlandı<br>" +
+            "<span class=\"text-amber-400 font-medium\">Devam etmek için kalan süre: <span id=\"rlTimer\">" + fmt(remaining) + "</span></span>" +
+            "</div>";
+    }
+    if (msgEl) msgEl.textContent = "⏸ Rate limit — " + fmt(remaining) + " sonra devam edecek";
+    if (btn) { btn.disabled = true; btn.textContent = "⏸ Bekliyor..."; }
+    if (btnForce) btnForce.disabled = true;
+
+    _rlCountdownTimer = setInterval(() => {
+        remaining--;
+        const timerEl = document.getElementById("rlTimer");
+        if (timerEl) timerEl.textContent = fmt(remaining);
+        if (msgEl) msgEl.textContent = "⏸ Rate limit — " + fmt(remaining) + " sonra devam edecek";
+
+        if (remaining <= 0) {
+            clearInterval(_rlCountdownTimer);
+            _rlCountdownTimer = null;
+            if (msgEl) msgEl.textContent = "↺ Devam ediliyor…";
+            if (resultEl) resultEl.classList.add("hidden");
+            // Kaldığı yerden devam
+            _runBackendSyncAll(false);
         }
+    }, 1000);
+}
 
-        done = i + 1;
-        const pct = Math.round((done / total) * 100);
-        pctEl.textContent = `${pct}%`;
-        barEl.style.width  = `${pct}%`;
+/**
+ * Backend /api/porsline/sync-all endpoint cagirir.
+ * force=false: incremental; force=true: tumunu yeniden yukle
+ */
+async function _runBackendSyncAll(force = false) {
+    const { msgEl, pctEl, barEl, resultEl } = _syncUiRefs();
+    const forceResEl = document.getElementById("forceResyncResult");
+    if (forceResEl) forceResEl.classList.add("hidden");
+    if (resultEl) resultEl.classList.add("hidden");
+    if (msgEl) {
+        msgEl.textContent = force
+            ? "⏳ Tüm anketler yeniden yükleniyor…"
+            : "⏳ Güncellenecek anketler kontrol ediliyor…";
+    }
+    if (pctEl) pctEl.textContent = "";
 
-        await new Promise(res => setTimeout(res, 5000)); // Porsline rate limit koruması
+    const url  = "/api/porsline/sync-all" + (force ? "?force=true" : "");
+    const init = await fetch(url, { method: "POST" }).then(r => r.json())
+                     .catch(e => ({ ok: false, hata: e.message }));
+
+    if (!init.ok) {
+        const { btn, btnForce } = _syncUiRefs();
+        if (msgEl) msgEl.textContent = "⚠ Başlatılamadı: " + (init.hata || "hata");
+        if (barEl) barEl.style.background = "#f87171";
+        if (btn)      { btn.disabled = false; btn.textContent = btn.dataset.label || "Tümünü Güncelle"; }
+        if (btnForce) btnForce.disabled = false;
+        return;
     }
 
-    progress.classList.add('hidden');
-    btn.disabled = false;
-    btn.textContent = 'Tümünü Sync Et';
-    btn.onclick = () => syncAllPorsline();
-    _syncResumeIndex = 0;
-
-    resultEl.classList.remove('hidden');
-    const processedCount = total - startIdx;
-    resultEl.innerHTML = `
-        <div class="rounded-lg p-3 text-xs ${hataCount === 0 ? 'bg-green-900/20 border border-green-700/30 text-green-300' : 'bg-yellow-900/20 border border-yellow-700/30 text-yellow-300'}">
-            ✓ Sync tamamlandı · ${processedCount} anket işlendi · <strong>+${eklenenToplam}</strong> yeni yanıt eklendi
-            ${hataCount > 0 ? ` · <span class="text-red-400">${hataCount} hata</span>` : ''}
-        </div>`;
-    loadStats();
-    yukleAnketler();
-    if (eklenenToplam > 0) {
-        setTimeout(() => document.getElementById('anketListeSection')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 400);
-    }
+    _startPolling(init.task_id);
 }
 
 // ─── Rehber Kartları ─────────────────────────────────────────────────────────
@@ -1208,7 +1249,7 @@ async function otelAcGuncelle(val) {
         if (!_acListe.length) { drop.classList.add('hidden'); return; }
         drop.innerHTML = _acListe.map((item, i) => {
             const p = item.ort_puan != null ? `<span style="color:#4ade80;font-weight:700;">${item.ort_puan.toFixed(1)}</span>` : '';
-            return `<div class="ac-item" data-otel="${esc(item.otel)}" data-idx="${i}" onclick="otelSecClick(this)">
+            return `<div class="ac-item" data-otel="${esc(item.otel)}" data-idx="${i}">
                 <span class="ac-item-name">${esc(item.otel)}</span>
                 <span class="ac-item-meta">${p} <span>${item.adet} anket</span></span>
             </div>`;
@@ -1258,6 +1299,24 @@ function otelSecClick(el) {
     }, 150);
 }
 
+// Event delegation — anketListe içindeki tüm .otel-link tıklamalarını yakalar
+// (innerHTML ile üretilen elementlerde inline onclick güvenilmez olabileceğinden
+//  delegation kullanıyoruz: element DOM'a eklendiği anda çalışır)
+document.addEventListener('click', function(e) {
+    const el = e.target.closest('[data-otel]');
+    if (!el) return;
+    // Sadece anket listesi, otel kart veya autocomplete dropdown içindeki elementler
+    if (!el.closest('#anketListe') && !el.closest('#otelKartWrap') && !el.closest('#otelAcDropdown')) return;
+    e.stopPropagation();
+    const otelAdi = el.dataset.otel;
+    if (otelAdi) {
+        otelSec(otelAdi);
+        setTimeout(() => {
+            document.getElementById('otelKartWrap')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 150);
+    }
+});
+
 function otelTemizle() {
     const inp = document.getElementById('fOtel');
     if (inp) inp.value = '';
@@ -1283,53 +1342,35 @@ function gizleOtelKart() {
 
 async function yukleOtelKart(otelAdi) {
     const wrap = document.getElementById('otelKartWrap');
-    wrap.innerHTML = '<div class="otel-kart"><div class="text-xs text-slate-500 text-center py-2">Yükleniyor…</div></div>';
     wrap.classList.remove('hidden');
 
     const d = await fetch(`/api/survey/otel-kart?otel=${encodeURIComponent(otelAdi)}`).then(r=>r.json()).catch(()=>({}));
     if (!d.ok) { wrap.classList.add('hidden'); return; }
 
     const puan   = d.avg_puan != null ? d.avg_puan.toFixed(1) : '—';
-    const pColor = d.avg_puan >= 4.5 ? '#4ade80' : d.avg_puan >= 3.5 ? '#facc15' : '#f87171';
+    const pColor = d.avg_puan != null
+        ? (d.avg_puan >= 4.5 ? '#4ade80' : d.avg_puan >= 3.5 ? '#facc15' : '#f87171')
+        : '#64748b';
 
-    const turlarHtml = d.turlar?.length
-        ? d.turlar.map(t => {
-            const tarih = t.kalkis_tarihi ? t.kalkis_tarihi.split('T')[0] : '';
-            const tp    = t.ort_puan != null ? t.ort_puan.toFixed(1) : null;
-            const tpHtml = tp ? `<span class="tur-pill" style="color:#4ade80;border-color:rgba(74,222,128,.15);">★ ${tp}</span>` : '';
-            return `<a href="/turlar/${esc(t.matched_jt_kodu)}" target="_blank" class="otel-kart-tur-row">
-                <span class="text-xs font-mono text-blue-400/80 flex-shrink-0">${esc(t.matched_jt_kodu)}</span>
-                <span class="text-xs text-slate-300 flex-1 min-w-0 truncate">${esc(t.tur_adi || '')}</span>
-                ${tpHtml}
-                <span class="text-xs text-slate-600 flex-shrink-0">${tarih}</span>
-                <span class="text-xs text-slate-600 flex-shrink-0">${t.yanit_sayisi} yanıt</span>
-            </a>`;
-          }).join('')
-        : '<div class="text-xs text-slate-600 text-center py-3">Eşleşmiş tur kaydı bulunamadı</div>';
-
-    wrap.innerHTML = `<div class="otel-kart">
-        <div class="flex items-start justify-between gap-4 mb-3">
-            <div class="flex items-center gap-3">
-                <div class="flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center text-lg"
-                     style="background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.2);">🏨</div>
-                <div>
-                    <div class="text-sm font-semibold text-slate-100">${esc(d.otel)}</div>
-                    <div class="text-xs text-slate-500 mt-0.5">${d.anket_sayisi} anket kaydında geçiyor</div>
-                </div>
-            </div>
-            <div class="flex items-center gap-3 flex-shrink-0">
-                <div class="text-center">
-                    <div class="text-xl font-bold" style="color:${pColor};">${puan}</div>
-                    <div class="text-xs text-slate-600">ort. puan</div>
-                </div>
-                <button onclick="otelTemizle()"
-                        class="text-xs px-2 py-1 rounded-lg transition-colors"
-                        style="background:rgba(100,116,139,.1);border:1px solid rgba(100,116,139,.2);color:#64748b;"
-                        title="Filtreyi temizle">✕</button>
+    wrap.innerHTML = `<div class="otel-kart flex items-center justify-between gap-4">
+        <div class="flex items-center gap-3 min-w-0">
+            <div class="flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-base"
+                 style="background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.2);">🏨</div>
+            <div class="min-w-0">
+                <div class="text-sm font-semibold text-slate-100 truncate">${esc(d.otel)}</div>
+                <div class="text-xs text-slate-500 mt-0.5">${d.anket_sayisi} oylama</div>
             </div>
         </div>
-        ${d.turlar?.length ? `<div class="text-xs text-slate-600 uppercase tracking-wide font-medium mb-2">Bu oteli kullanan turlar</div>` : ''}
-        <div>${turlarHtml}</div>
+        <div class="flex items-center gap-3 flex-shrink-0">
+            <div class="text-right">
+                <div class="text-2xl font-bold leading-none" style="color:${pColor};">${puan}</div>
+                <div class="text-xs text-slate-600 mt-0.5">ort. puan</div>
+            </div>
+            <button onclick="otelTemizle()"
+                    class="text-xs w-7 h-7 rounded-lg flex items-center justify-center transition-colors"
+                    style="background:rgba(100,116,139,.1);border:1px solid rgba(100,116,139,.2);color:#64748b;"
+                    title="Filtreyi temizle">✕</button>
+        </div>
     </div>`;
 }
 
@@ -1402,7 +1443,7 @@ async function yukleAnketler() {
         const uyari = document.createElement('div');
         uyari.className = 'rounded-lg px-4 py-3 mb-3 text-xs text-amber-400';
         uyari.style.cssText = 'background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2);';
-        uyari.innerHTML = `⚠ Bu sayfadaki <strong>${d.items.length}</strong> kayıtta puan verisi hesaplanmamış. "Porsline Sync" ile yeniden çekmeyi deneyin.`;
+        uyari.innerHTML = `⚠ Bu sayfadaki <strong>${d.items.length}</strong> kayıtta puan verisi hesaplanmamış. "Anketleri Güncelle" butonu ile yeniden deneyin.`;
         liste.insertAdjacentElement('beforebegin', uyari);
     }
 
@@ -1558,7 +1599,7 @@ function _turKartIcerigi(item) {
             return `
             <div class="otel-satir">
                 <span class="otel-adi otel-link" data-otel="${esc(ad)}"
-                      onclick="otelSecClick(this)" title="Otel kartını aç">
+                      title="Otel kartını aç: ${esc(ad)}">
                     🏨 ${esc(ad)}
                 </span>
                 <div class="skor-bar-track" style="flex:1;max-width:120px;">
@@ -1584,21 +1625,7 @@ function _turKartIcerigi(item) {
             ${_skorBarHtml('🏨 Ort. Otel', parseFloat(item.ort_otel))}
         </div>` : '');
 
-    const yanit = parseInt(item.yanit_sayisi) || 1;
-    const yanitSecHtml = `
-        <div class="detay-sec">
-            <div class="detay-sec-title flex items-center justify-between" style="display:flex;align-items:center;justify-content:space-between;">
-                <span>Bireysel Yanıtlar <span style="color:#334155;">(${yanit})</span></span>
-                <button onclick="yukleYanitlar(${_anketDetayCache.indexOf(item)})"
-                        id="btn-y-${_anketDetayCache.indexOf(item)}"
-                        style="font-size:10px;padding:2px 8px;border-radius:6px;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.2);color:#60a5fa;cursor:pointer;">
-                    Yükle ▼
-                </button>
-            </div>
-            <div id="yanitlar-${_anketDetayCache.indexOf(item)}" class="mt-2"></div>
-        </div>`;
-
-    return katSecHtml + otelSecHtml + yanitSecHtml;
+    return katSecHtml + otelSecHtml;
 }
 
 function toggleTurKart(cacheIdx) {
@@ -1661,7 +1688,7 @@ async function yukleYanitlar(cacheIdx) {
                 const vv = parseFloat(v);
                 const tc = vv >= 4.5 ? '#4ade80' : vv >= 3.5 ? '#facc15' : '#f87171';
                 return `<span class="tur-pill otel-link" style="color:${tc};border-color:rgba(255,255,255,.06);"
-                              data-otel="${esc(ad)}" onclick="otelSecClick(this)" title="Otel kartını aç">
+                              data-otel="${esc(ad)}" title="Otel kartını aç: ${esc(ad)}">
                             🏨 ${esc(ad)} ${vv.toFixed(0)}
                         </span>`;
             });
@@ -1698,6 +1725,20 @@ document.addEventListener('DOMContentLoaded', () => {
     loadRehberler();
     yukleAnketler();
     yukleBolgeSelect();
+
+    // Sayfa yenilendiyse arka planda devam eden sync varsa bağlantıyı geri al
+    const savedTask = sessionStorage.getItem('porsline_task_id');
+    if (savedTask) {
+        fetch('/api/porsline/sync-status/' + savedTask)
+            .then(r => r.json())
+            .then(s => {
+                if (s && s.ok && s.status === 'running') {
+                    _startPolling(savedTask);
+                } else {
+                    sessionStorage.removeItem('porsline_task_id');
+                }
+            }).catch(() => sessionStorage.removeItem('porsline_task_id'));
+    }
 });
 </script>
 {% endblock %}

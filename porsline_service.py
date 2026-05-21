@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import time as _time_module
+import threading
 import urllib.request
 import urllib.error
 from datetime import datetime, date
@@ -16,6 +18,79 @@ from typing import Optional
 # ── Config ────────────────────────────────────────────────────────────────────
 _BASE = "https://survey.porsline.com"
 _TOKEN = os.environ.get("PORSLINE_API_KEY", "")
+
+# ── Global rate limiter ───────────────────────────────────────────────────────
+# PORSLINE_MIN_INTERVAL: saniyeler arası minimum bekleme (env var ile ayarlanabilir)
+# Varsayılan 0.8s → max ~75 istek/dakika. 429 gelirse otomatik artar.
+_rl_lock          = threading.Lock()
+_rl_last_call     = 0.0          # son başarılı/başarısız çağrının zamanı
+_rl_interval      = float(os.environ.get("PORSLINE_MIN_INTERVAL", "0.8"))
+_rl_backoff_until = 0.0          # global blok (429 sonrası tüm çağrılar bekler)
+_rl_base_interval = _rl_interval  # sıfırlama için saklanan başlangıç değeri
+
+
+_RL_LONG_LIMIT = 300.0  # bu süreyi (sn) aşan backoff → sync worker durdurulmalı
+
+
+def _rl_throttle() -> None:
+    """Her API çağrısından önce çağrılır. Rate-limit ve backoff'u uygular.
+    Uzun backoff (>_RL_LONG_LIMIT) varsa bekleme yapmaz — çağıran taraf
+    _rl_get_backoff_remaining() ile durumu kontrol edip işi durdurmalı."""
+    global _rl_last_call, _rl_backoff_until, _rl_interval
+
+    while True:
+        with _rl_lock:
+            now = _time_module.time()
+            # 1) Global backoff (429 sonrası)
+            backoff_wait = _rl_backoff_until - now
+            if backoff_wait >= _RL_LONG_LIMIT:
+                # Çok uzun bekle — throttle'ı atlat, worker sonlandırsın
+                return
+            if backoff_wait > 0:
+                sleep_for = min(backoff_wait, 1.0)
+            else:
+                # 2) Minimum interval
+                interval_wait = (_rl_last_call + _rl_interval) - now
+                if interval_wait <= 0:
+                    _rl_last_call = now
+                    return
+                sleep_for = min(interval_wait, 0.5)
+        _time_module.sleep(sleep_for)
+
+
+def _rl_on_429(retry_after=None) -> None:
+    """429 alındığında global backoff'u ve interval'ı günceller.
+    Retry-After değeri tam olarak uygulanır (üst sınır yok)."""
+    global _rl_backoff_until, _rl_interval
+    with _rl_lock:
+        wait = 30.0
+        if retry_after:
+            try:
+                wait = float(retry_after)  # tam değeri kullan — üst sınır yok
+            except (ValueError, TypeError):
+                pass
+        _rl_backoff_until = _time_module.time() + wait
+        # Interval'ı %50 artır (max 3s)
+        _rl_interval = min(_rl_interval * 1.5, 3.0)
+        import logging as _log
+        _log.getLogger(__name__).warning(
+            "Porsline 429 → %.0fs global backoff | interval artırıldı: %.1fs",
+            wait, _rl_interval
+        )
+
+
+def _rl_get_backoff_remaining() -> float:
+    """Kalan global backoff süresi (saniye). 0 ise blok yok."""
+    with _rl_lock:
+        return max(0.0, _rl_backoff_until - _time_module.time())
+
+
+def _rl_on_success() -> None:
+    """Başarılı çağrı sonrası interval'ı yavaşça azaltır (base'e doğru)."""
+    global _rl_interval
+    with _rl_lock:
+        if _rl_interval > _rl_base_interval:
+            _rl_interval = max(_rl_interval * 0.9, _rl_base_interval)
 
 # Ay adları → sayı (Türkçe)
 _MONTHS_TR = {
@@ -28,11 +103,39 @@ _MONTHS_TR = {
 }
 
 
+# ── Yardımcı: Porsline lokalize alanları dict döndürebilir ───────────────────
+
+def _str_field(val) -> str:
+    """
+    Porsline API bazen title/label alanlarını lokalize dict olarak döner:
+      {"fa": "متن", "en": "Text"}
+    Bu fonksiyon her türlü değeri güvenli şekilde str'ye çevirir.
+    """
+    if val is None:
+        return ""
+    if isinstance(val, dict):
+        # Önce İngilizce, sonra Farsça, sonra ilk değer
+        for key in ("en", "fa", "tr"):
+            if val.get(key):
+                return str(val[key])
+        for v in val.values():
+            if v:
+                return str(v)
+        return ""
+    if isinstance(val, list):
+        return " ".join(_str_field(v) for v in val if v)
+    return str(val)
+
+
 # ── HTTP yardımcıları ─────────────────────────────────────────────────────────
 
 def _get(path: str, params: dict = None) -> dict:
     if not _TOKEN:
         return {"error": "PORSLINE_API_KEY tanımlı değil"}
+
+    # Rate limiter — her çağrıdan önce gerekirse bekle
+    _rl_throttle()
+
     url = f"{_BASE}{path}"
     if params:
         qs = "&".join(f"{k}={v}" for k, v in params.items())
@@ -48,8 +151,10 @@ def _get(path: str, params: dict = None) -> dict:
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=20) as r:
-            return json.loads(r.read())
+        with urllib.request.urlopen(req, timeout=10) as r:
+            result = json.loads(r.read())
+            _rl_on_success()  # başarılı → interval yavaşça düşer
+            return result
     except urllib.error.HTTPError as e:
         body = ""
         retry_after = None
@@ -58,9 +163,34 @@ def _get(path: str, params: dict = None) -> dict:
             retry_after = e.headers.get("Retry-After") or e.headers.get("X-RateLimit-Reset")
         except Exception:
             pass
+        if e.code == 429:
+            _rl_on_429(retry_after)  # global backoff + interval artışı
         return {"error": e.code, "detail": body, "retry_after": retry_after}
     except Exception as e:
         return {"error": str(e)}
+
+
+def _get_with_retry(path: str, params: dict = None, max_retries: int = 2,
+                    max_wait: float = 15.0) -> dict:
+    """
+    _get'i çağırır; sadece 429 gelirse tekrar dener.
+    429 backoff global rate limiter tarafından zaten uygulandığı için
+    burada ek sleep YOK — sadece retry sayısı kadar tekrar dener.
+    Timeout veya diğer hatalar → hemen döner (retry yok).
+    """
+    last = {}
+    for attempt in range(max_retries):
+        last = _get(path, params)
+        if "error" not in last:
+            return last
+        err = last["error"]
+        if err == 429:
+            # Global rate limiter backoff'u zaten uyguladı (_get içinde)
+            # Sadece bir retry daha dene
+            continue
+        # 404, timeout, bağlantı hatası → tekrar deneme yok
+        break
+    return last
 
 
 # ── API çağrıları ─────────────────────────────────────────────────────────────
@@ -145,8 +275,13 @@ def get_survey_detail(survey_id: str) -> dict:
     return {"ok": False, "hata": result.get("error", "survey bulunamadı")}
 
 
-def get_responses(survey_id: str, page: int = 1, page_size: int = 100) -> dict:
-    """Bir anketin yanıtlarını getirir. results-table → yoksa responses/ dener."""
+def get_responses(survey_id: str, page: int = 1, page_size: int = 100,
+                  fast: bool = False) -> dict:
+    """
+    Bir anketin yanıtlarını getirir. results-table → yoksa responses/ dener.
+    fast=True: bulk sync modunda — 429'da max 15 sn bekler, tek deneme.
+    fast=False (default): bireysel sync — biraz daha sabırlı.
+    """
     params = {"page": page, "page_size": page_size}
 
     endpoints = [
@@ -155,16 +290,20 @@ def get_responses(survey_id: str, page: int = 1, page_size: int = 100) -> dict:
         f"/api/v2/surveys/{survey_id}/responses/",
     ]
 
+    # fast=True: bulk sync — 1 deneme/endpoint (global limiter backoff'u zaten uygular)
+    # fast=False: tek survey sync — 2 deneme (biraz daha sabırlı)
+    _retries = 1 if fast else 2
+
     last_error = None
     retry_after = None
     for ep in endpoints:
-        result = _get(ep, params)
+        result = _get_with_retry(ep, params, max_retries=_retries)
         if "error" in result:
             last_error = result["error"]
             retry_after = result.get("retry_after")
             if result["error"] == 404:
                 continue  # sonraki URL'yi dene
-            break  # 429 veya başka hata → dur
+            break  # diğer hata → dur
         # Başarılı
         header = result.get("header") or result.get("headers") or []
         body   = (result.get("body") or result.get("results")
@@ -174,20 +313,28 @@ def get_responses(survey_id: str, page: int = 1, page_size: int = 100) -> dict:
         return {"ok": True, "header": header, "body": body,
                 "count": count, "_endpoint": ep}
 
+    # Tüm endpoint'ler 404 döndürdü → henüz yanıt yok (hata değil, boş)
+    if last_error == 404:
+        return {"ok": True, "header": [], "body": [], "count": 0, "_no_responses": True}
+
     return {"ok": False, "hata": last_error or "responses endpoint bulunamadı",
             "retry_after": retry_after}
 
 
-def get_all_responses(survey_id: str) -> dict:
-    """Bir anketin TÜM yanıtlarını sayfalı olarak çeker."""
+def get_all_responses(survey_id: str, fast: bool = False) -> dict:
+    """Bir anketin TÜM yanıtlarını sayfalı olarak çeker.
+    fast=True: bulk sync modunda — 429'da kısa bekler, tek deneme."""
     all_rows = []
     header   = []
     page     = 1
 
     while True:
-        chunk = get_responses(survey_id, page=page, page_size=100)
+        chunk = get_responses(survey_id, page=page, page_size=100, fast=fast)
         if not chunk["ok"]:
             return chunk
+        # Henüz yanıt yok (tüm endpoint'ler 404) → boş başarı
+        if chunk.get("_no_responses"):
+            return {"ok": True, "header": [], "body": [], "count": 0, "_no_responses": True}
         if not header:
             header = chunk["header"]
         rows = chunk["body"]
@@ -205,7 +352,57 @@ def build_header_from_questions(questions: list) -> list:
     results-table endpoint'i çalışmadığında kullanılır.
     Sadece type=7 (yıldız) ve type=2/3 (metin/seçim) sorularını alır.
     """
-    return [q.get("title", "") for q in questions if q.get("type") in (2, 3, 7)]
+    return [_str_field(q.get("title")) for q in questions if q.get("type") in (2, 3, 7)]
+
+
+def _all_title_variants(q) -> list[str]:
+    """
+    Soru objesinden TÜM dil varyantlarını küçük harfle döndürür.
+    Porsline bazen {"en": "Guide Rating", "tr": "Rehber Puanı", "fa": "..."} döner.
+    Anahtar kelime aramasında herhangi bir varyantta eşleşmesi yeterli.
+    """
+    raw = q.get("title")
+    if isinstance(raw, dict):
+        return [str(v).lower() for v in raw.values() if v]
+    elif raw:
+        return [str(raw).lower()]
+    return [""]
+
+
+def _unwrap_answer(ans: dict):
+    """
+    Porsline cevap objesinden ham değeri güvenli şekilde çıkarır.
+    Farklı formatları destekler:
+      {"answer": "3"}
+      {"answer": {"value": 3, "label": "3 yıldız"}}
+      {"answer": null, "value": "3"}
+      {"choices": [{"id": 5, "text": "Madrid"}]}
+    """
+    raw = ans.get("answer")
+    # None ise diğer alanlara bak (0 değerini kaybetme: sadece None'a bak)
+    if raw is None:
+        raw = ans.get("value")
+    if raw is None:
+        raw = ans.get("text")
+    if raw is None:
+        # choices formatı: seçim sorusu
+        choices = ans.get("choices") or ans.get("selected_choices") or []
+        if choices:
+            # Seçilen seçeneğin text veya label'ını al
+            texts = [str(c.get("text") or c.get("label") or c.get("value") or "")
+                     for c in choices if isinstance(c, dict)]
+            raw = ", ".join(t for t in texts if t) or None
+    # Dict cevap (ör. {"value": 3, "label": "3 yıldız"})
+    if isinstance(raw, dict):
+        raw = (raw.get("value") if raw.get("value") is not None else
+               raw.get("rating") if raw.get("rating") is not None else
+               raw.get("score") if raw.get("score") is not None else
+               raw.get("answer") if raw.get("answer") is not None else
+               raw.get("text") or "")
+    # Tek elemanlı liste
+    if isinstance(raw, list):
+        raw = raw[0] if len(raw) == 1 else (", ".join(str(v) for v in raw if v) or None)
+    return raw
 
 
 def parse_response_from_questions(questions: list, response: dict) -> dict:
@@ -213,62 +410,110 @@ def parse_response_from_questions(questions: list, response: dict) -> dict:
     /api/v2/surveys/{id}/responses/ endpoint'inden gelen tek yanıtı parse eder.
     response örneği: {"id": 123, "answers": [{"question": 456, "answer": "3"}, ...]}
     questions: survey detayındaki sorular listesi.
-    """
-    # Soru ID → soru objesi haritası
-    q_map = {q["id"]: q for q in questions}
 
+    Dil-bağımsız eşleştirme: soru başlığının TÜM dil varyantlarında (tr/en/fa) arama yapılır.
+    """
     # Cevapları soru ID'ye göre indeksle
     answers_by_q = {}
     for ans in (response.get("answers") or response.get("answer_list") or []):
         q_id = ans.get("question") or ans.get("question_id")
-        val  = ans.get("answer") or ans.get("value") or ans.get("text") or ""
-        if q_id:
+        val  = _unwrap_answer(ans)
+        if q_id is not None and val is not None:
             answers_by_q[q_id] = val
 
-    musteri_adi  = ""
-    acente_adi   = ""
-    rehber_puani = None
-    otobus_puani = None
-    sofor_puani  = None
-    program_puani= None
-    otel_puanlari= {}
-    tavsiye_puan = None
+    musteri_adi       = ""
+    acente_adi        = ""
+    rehber_puani      = None
+    otobus_puani      = None
+    sofor_puani       = None
+    program_puani     = None
+    operasyon_puani   = None
+    transfer_puani    = None
+    ekstra_tur_puani  = None
+    genel_memnuniyet  = None
+    otel_puanlari     = {}
+    tavsiye_puan      = None
 
     for q in questions:
-        qid   = q["id"]
-        title = q.get("title", "").lower()
+        qid   = q.get("id")
+        if qid is None:
+            continue
         qtype = q.get("type")
         val   = answers_by_q.get(qid)
 
         if val is None:
             continue
 
-        if qtype == 2:  # metin
-            if any(k in title for k in ["isim", "soyisim", "ad"]):
-                musteri_adi = str(val).strip()
-        elif qtype == 3:  # seçim
-            if "acente" in title:
-                acente_adi = str(val).strip()
-        elif qtype == 7:  # yıldız
-            v = _safe_float(val)
-            if "rehber" in title:
-                rehber_puani = v
-            elif "otobüs" in title or "otobus" in title or "konfor" in title:
-                otobus_puani = v
-            elif "şoför" in title or "sofor" in title or "şofor" in title:
-                sofor_puani = v
-            elif "program" in title:
-                program_puani = v
-            elif "tavsiye" in title or "öneri" in title or "önerir" in title:
-                tavsiye_puan = v
-            elif any(k in title for k in ["otel", "hotel"]):
-                short = q.get("title", "")[:60]
-                if v is not None:
-                    otel_puanlari[short] = v
+        # Tüm dil varyantlarını al
+        variants = _all_title_variants(q)
 
-    all_scores = [v for v in [rehber_puani, otobus_puani, sofor_puani, program_puani]
-                  + list(otel_puanlari.values()) if v is not None]
-    genel_puan = round(sum(all_scores) / len(all_scores), 2) if all_scores else None
+        def in_title(*keywords):
+            """Herhangi bir başlık varyantında herhangi bir anahtar kelime geçiyor mu?"""
+            return any(any(k in t for k in keywords) for t in variants)
+
+        # Soru tipi belirlenemiyorsa (None) — sayısal değerse puan, değilse metin say
+        if qtype in (2,) or (qtype is None and not _safe_float(val)):
+            # Metin sorusu
+            if in_title("isim", "soyisim", "ad soyad", "adınız", "name", "müşteri", "musteri"):
+                musteri_adi = str(val).strip()
+        elif qtype in (3,) or (qtype is None and not _safe_float(val)):
+            # Seçim sorusu
+            if in_title("acente", "agency", "aracı"):
+                acente_adi = str(val).strip()
+        else:
+            # Yıldız/puan sorusu (type==7) veya sayısal
+            if qtype == 7 or _safe_float(val) is not None:
+                v = _safe_float(val)
+                if in_title("genel memnuniyet", "genel olarak memnun", "genel değerlendirme",
+                            "genel izlenim", "genel puan", "overall satisfaction",
+                            "overall", "genel olarak", "general satisfaction", "satisfaction"):
+                    genel_memnuniyet = v
+                elif in_title("rehber", "guide", "tour guide", "tur rehber", "tur rehberi"):
+                    rehber_puani = v
+                elif in_title("otobüs", "otobus", "araç konfor", "arac konfor",
+                              "bus", "coach", "vehicle comfort", "vehicle"):
+                    otobus_puani = v
+                elif in_title("şoför", "sofor", "şofor", "sürücü", "surucu",
+                              "driver", "chauffeur"):
+                    sofor_puani = v
+                elif in_title("operasyon", "organizasyon", "örgütlen", "orgutlen",
+                              "operation", "organization", "organisation"):
+                    operasyon_puani = v
+                elif in_title("transfer", "havaalani", "havaalanı", "havalimanı",
+                              "airport", "airport transfer", "shuttle"):
+                    transfer_puani = v
+                elif in_title("ekstra tur", "isteğe bağlı", "isteğe bagli",
+                              "optional", "seçmeli", "extra tour", "optional tour"):
+                    ekstra_tur_puani = v
+                elif in_title("program", "tur programı", "tur programi",
+                              "itinerary", "tour program"):
+                    program_puani = v
+                elif in_title("tavsiye", "öneri", "önerir", "onerir",
+                              "recommend", "would you recommend"):
+                    tavsiye_puan = v
+                elif in_title("otel", "hotel", "accommodation", "konaklama",
+                             "otelinden memnun", "memnun kaldınız"):
+                    raw_t = _str_field(q.get("title"))
+                    _, _, display_key = _parse_hotel_label(raw_t)
+                    if v is not None and display_key:
+                        otel_puanlari[display_key] = v
+            # qtype==2 veya 3 ama sayısal değer içerebilir — acente/ad kontrolü
+            if qtype == 2:
+                if in_title("isim", "soyisim", "ad soyad", "adınız", "name", "müşteri", "musteri"):
+                    musteri_adi = str(val).strip()
+            elif qtype == 3:
+                if in_title("acente", "agency", "aracı"):
+                    acente_adi = str(val).strip()
+
+    # Genel puan: adanmış soru varsa onu kullan
+    if genel_memnuniyet is not None:
+        genel_puan = genel_memnuniyet
+    else:
+        sub_scores = [v for v in [
+            rehber_puani, otobus_puani, sofor_puani, program_puani,
+            operasyon_puani, transfer_puani, ekstra_tur_puani,
+        ] + list(otel_puanlari.values()) if v is not None]
+        genel_puan = round(sum(sub_scores) / len(sub_scores), 2) if sub_scores else None
 
     return {
         "musteri_adi":  musteri_adi,
@@ -277,11 +522,15 @@ def parse_response_from_questions(questions: list, response: dict) -> dict:
         "genel_puan":   genel_puan,
         "rehber_puani": rehber_puani,
         "puan_detay": {
-            "oteller":  otel_puanlari,
-            "otobus":   otobus_puani,
-            "sofor":    sofor_puani,
-            "program":  program_puani,
-            "tavsiye":  tavsiye_puan,
+            "oteller":          otel_puanlari,
+            "otobus":           otobus_puani,
+            "sofor":            sofor_puani,
+            "program":          program_puani,
+            "operasyon":        operasyon_puani,
+            "transfer":         transfer_puani,
+            "ekstra_tur":       ekstra_tur_puani,
+            "genel_memnuniyet": genel_memnuniyet,
+            "tavsiye":          tavsiye_puan,
         },
     }
 
@@ -425,11 +674,28 @@ def parse_survey_title(title: str, created_date: str = "") -> dict:
 
 # ── Yanıt parse ───────────────────────────────────────────────────────────────
 
-def _find_col(header: list[str], keywords: list[str]) -> Optional[int]:
+def _header_title(h) -> str:
+    """
+    Porsline header objesinden görünen başlık metnini çıkarır.
+
+    Results-table header item formatı:
+      {"id":3185441, "title":"Tur rehberimizin...", "col_type":1, "cell_type":"int", ...}
+    Plain string header da desteklenir (geriye dönük uyumluluk).
+
+    DİKKAT: _str_field() direkt dict üzerinde çağrılırsa dict'in ilk değerini
+    (genellikle sayısal id'yi) döndürür — bu fonksiyon bunun önüne geçer.
+    """
+    if isinstance(h, dict):
+        raw = h.get("title") or h.get("label") or h.get("name") or ""
+        return _str_field(raw)
+    return _str_field(h)
+
+
+def _find_col(header: list, keywords: list[str]) -> Optional[int]:
     """Header listesinde anahtar kelime içeren ilk sütun indeksini döndürür."""
     for kw in keywords:
         for i, h in enumerate(header):
-            if kw.lower() in h.lower():
+            if kw.lower() in _header_title(h).lower():
                 return i
     return None
 
@@ -443,65 +709,153 @@ def _safe_float(val) -> Optional[float]:
         return None
 
 
-def _extract_guide_name(header: list[str]) -> Optional[str]:
+def _parse_hotel_label(raw_title: str) -> tuple:
+    """
+    Otel sorusunu parse eder.
+
+    Desteklenen format:
+      "Osaka otelinden memnun kaldınız mı? APA Hotel Osaka"
+       ^^^^^^^^ city                        ^^^^^^^^^^^^^^^^ hotel_label
+
+    Döner: (city, hotel_label, display_key)
+      - city        : "Osaka"
+      - hotel_label : "APA Hotel Osaka"  (soru işaretinden sonraki kısım)
+      - display_key : hotel_label dolu ise hotel_label, değilse city adı
+
+    Eğer format eşleşmezse ham başlığı display_key olarak kullanır.
+    """
+    raw = (raw_title or "").strip()
+
+    # "X otelinden memnun kaldınız mı? Hotel Adı" — Türkçe ana format
+    m = re.match(
+        r'^(.+?)\s+otelinden\s+memnun\s+kaldınız\s+mı\??\s*(.*)',
+        raw, re.IGNORECASE
+    )
+    if m:
+        city       = m.group(1).strip()
+        hotel_lbl  = m.group(2).strip()
+        display    = hotel_lbl if hotel_lbl else city
+        return city, hotel_lbl, display[:80]
+
+    # Genel fallback: "?" varsa sonrası hotel adı, öncesi başlık
+    if "?" in raw:
+        parts      = raw.split("?", 1)
+        hotel_lbl  = parts[1].strip()
+        city       = re.sub(r'\s+otelinden.*$', '', parts[0], flags=re.IGNORECASE).strip()
+        display    = hotel_lbl if hotel_lbl else city
+        return city, hotel_lbl, display[:80]
+
+    # Son çare: ham başlığın ilk 60 karakteri
+    return "", "", raw[:60]
+
+
+def _extract_guide_name(header: list) -> Optional[str]:
     """
     Rehber sorusunun başlığından rehber adını çıkarır.
     Örn: "Tur rehberimizin bilgi ve ilgisinden memnun kaldınız mı?  (Derya Iberi)"
     → "Derya Iberi"
     """
     for h in header:
-        if "rehber" in h.lower():
-            m = re.search(r'\(([^)]+)\)', h)
+        h_str = _header_title(h)
+        if "rehber" in h_str.lower():
+            m = re.search(r'\(([^)]+)\)', h_str)
             if m:
                 return m.group(1).strip()
     return None
 
 
-def parse_response_row(header: list[str], row: list) -> dict:
+def parse_response_row(header: list, row) -> dict:
     """
     Tek bir yanıt satırını alanlarına göre parse eder.
-    Header ile row aynı uzunlukta olmak zorunda.
+    Porsline results-table'dan gelen iki formatı destekler:
+      - Liste formatı: ["val1", "val2", ...]
+      - Dict formatı: {"responder_id": 123, "responder_code": "abc", "data": ["val1", ...]}
+    Header item'lar plain string veya {"id":...,"title":"...","col_type":...} dict olabilir.
     """
+    # Dict formatında data listesini çıkar
+    if isinstance(row, dict):
+        actual_row = row.get("data") or []
+    else:
+        actual_row = list(row) if row else []
+
     def get(idx):
-        if idx is None or idx >= len(row):
+        if idx is None or idx >= len(actual_row):
             return None
-        return row[idx]
+        return actual_row[idx]
 
     # Sütun indeksleri
-    i_musteri = _find_col(header, ["isim", "ad soyad", "ad-soyad", "name"])
-    i_acente  = _find_col(header, ["acente"])
-    i_rehber  = _find_col(header, ["rehber"])
-    i_otobus  = _find_col(header, ["otobüs", "otobus"])
-    i_sofor   = _find_col(header, ["şoför", "sofor", "şofor"])
-    i_program = _find_col(header, ["program"])
-    i_tavsiye = _find_col(header, ["tavsiye", "öneri"])
+    i_musteri     = _find_col(header, ["isim", "ad soyad", "ad-soyad", "name"])
+    i_acente      = _find_col(header, ["acente"])
+    i_rehber      = _find_col(header, ["rehber"])
+    i_otobus      = _find_col(header, ["otobüs", "otobus", "araç konfor", "arac konfor"])
+    i_sofor       = _find_col(header, ["şoför", "sofor", "şofor", "sürücü", "surucu"])
+    i_program     = _find_col(header, ["program", "tur programı", "tur programi"])
+    i_operasyon   = _find_col(header, ["operasyon", "organizasyon", "örgütlen", "orgutlen"])
+    i_transfer    = _find_col(header, ["transfer", "havaalani", "havaalanı", "havalimanı", "havalimanı servis"])
+    i_ekstra_tur  = _find_col(header, ["ekstra tur", "isteğe bağlı", "isteğe bagli", "optional", "seçmeli"])
+    i_genel_memnuniyet = _find_col(header, [
+        "genel memnuniyet", "genel olarak memnun", "genel değerlendirme",
+        "genel izlenim", "genel puan", "overall", "genel olarak",
+    ])
+    i_tavsiye = _find_col(header, ["tavsiye", "öneri", "önerir misiniz", "onerir misiniz"])
 
-    # Otel puanları: "otel" veya şehir adı içeren tüm sütunlar
-    otel_puanlari = {}
-    otel_keywords = ["otel", "hotel", "barcelona", "valencia", "granada",
-                     "sevilla", "madrid", "roma", "paris", "amsterdam",
-                     "venedik", "istanbul", "ankara", "bodrum"]
+    # Otel puanları: "otel", "hotel" veya şehir/ülke adı içeren tüm sütunlar
+    otel_puanlari: dict = {}
+    otel_keywords = [
+        "otel", "hotel",
+        "barcelona", "barselona", "valencia", "granada", "sevilla", "madrid",
+        "roma", "floransa", "venedik", "napoli", "milano", "sicilya",
+        "paris", "nice", "lyon",
+        "amsterdam", "bruksel",
+        "berlin", "frankfurt", "munih", "münchen",
+        "zurich", "zürih", "cenevre", "interlaken",
+        "viyana", "salzburg",
+        "prag", "budapes", "varso",
+        "lizbon", "porto",
+        "londra",
+        "atina", "selanik", "santorini",
+        "tiflis", "baku", "bakü", "erivan",
+        "tokyo", "osaka", "bangkok", "bali", "singapur",
+        "dubai", "kahire", "marakes",
+        "istanbul", "ankara", "bodrum", "antalya", "kapadokya",
+    ]
     for i, h in enumerate(header):
-        if any(kw in h.lower() for kw in otel_keywords):
+        h_str = _header_title(h).lower()
+        if any(kw in h_str for kw in otel_keywords):
+            # rehber, program, operasyon sütunlarıyla çakışmayı önle
+            if any(kw in h_str for kw in ["rehber", "program", "operasyon", "transfer"]):
+                continue
             v = _safe_float(get(i))
             if v is not None:
-                # Başlıktan kısa isim çıkar
-                short = h.split("?")[0].strip()[:60]
-                otel_puanlari[short] = v
+                raw_t = _header_title(header[i])
+                _, _, display_key = _parse_hotel_label(raw_t)
+                if display_key:
+                    otel_puanlari[display_key] = v
 
     # Rehber adı header'dan
     rehber_adi = _extract_guide_name(header)
 
-    # Puanlar
-    rehber_puani = _safe_float(get(i_rehber))
-    otobus_puani = _safe_float(get(i_otobus))
-    sofor_puani  = _safe_float(get(i_sofor))
-    program_puani= _safe_float(get(i_program))
+    # Sayısal puanlar
+    rehber_puani   = _safe_float(get(i_rehber))
+    otobus_puani   = _safe_float(get(i_otobus))
+    sofor_puani    = _safe_float(get(i_sofor))
+    program_puani  = _safe_float(get(i_program))
+    operasyon_puani= _safe_float(get(i_operasyon))
+    transfer_puani = _safe_float(get(i_transfer))
+    ekstra_tur_puani = _safe_float(get(i_ekstra_tur))
+    genel_memnuniyet = _safe_float(get(i_genel_memnuniyet))
+    tavsiye_puani  = _safe_float(get(i_tavsiye))   # skala ise float, yoksa metin
 
-    # Genel puan = tüm sayısal puanların ortalaması
-    all_scores = [v for v in [rehber_puani, otobus_puani, sofor_puani, program_puani]
-                  + list(otel_puanlari.values()) if v is not None]
-    genel_puan = round(sum(all_scores) / len(all_scores), 2) if all_scores else None
+    # Genel puan: adanmış "genel memnuniyet" sorusu varsa onu kullan
+    # yoksa tüm sayısal alt puanların ortalamasını al
+    if genel_memnuniyet is not None:
+        genel_puan = genel_memnuniyet
+    else:
+        sub_scores = [v for v in [
+            rehber_puani, otobus_puani, sofor_puani, program_puani,
+            operasyon_puani, transfer_puani, ekstra_tur_puani,
+        ] + list(otel_puanlari.values()) if v is not None]
+        genel_puan = round(sum(sub_scores) / len(sub_scores), 2) if sub_scores else None
 
     return {
         "musteri_adi":  str(get(i_musteri) or "").strip(),
@@ -510,13 +864,115 @@ def parse_response_row(header: list[str], row: list) -> dict:
         "genel_puan":   genel_puan,
         "rehber_puani": rehber_puani,
         "puan_detay": {
-            "oteller":  otel_puanlari,
-            "otobus":   otobus_puani,
-            "sofor":    sofor_puani,
-            "program":  program_puani,
-            "tavsiye":  str(get(i_tavsiye) or ""),
+            "oteller":          otel_puanlari,
+            "otobus":           otobus_puani,
+            "sofor":            sofor_puani,
+            "program":          program_puani,
+            "operasyon":        operasyon_puani,
+            "transfer":         transfer_puani,
+            "ekstra_tur":       ekstra_tur_puani,
+            "genel_memnuniyet": genel_memnuniyet,
+            "tavsiye":          tavsiye_puani,
         },
     }
+
+
+# ── Otel adı çıkarma ─────────────────────────────────────────────────────────
+
+# Soru metni → temiz şehir/otel adı eşleştirmesi
+_OTEL_SEHIR_MAP: list[tuple[str, str]] = [
+    # İspanya
+    ("barcelona", "Barcelona"), ("barselona", "Barcelona"),
+    ("valencia", "Valencia"), ("granada", "Granada"),
+    ("sevilla", "Sevilla"), ("madrid", "Madrid"),
+    ("endulus", "Endülüs"), ("endülüs", "Endülüs"),
+    # İtalya
+    ("roma", "Roma"), ("floransa", "Floransa"),
+    ("venedik", "Venedik"), ("napoli", "Napoli"),
+    ("milano", "Milano"), ("sicilya", "Sicilya"),
+    # Fransa
+    ("paris", "Paris"), ("nice", "Nice"), ("lyon", "Lyon"),
+    # Benelux
+    ("amsterdam", "Amsterdam"), ("bruksel", "Brüksel"),
+    # Almanya
+    ("berlin", "Berlin"), ("frankfurt", "Frankfurt"),
+    ("munih", "Münih"), ("münchen", "Münih"), ("hamburg", "Hamburg"),
+    # İsviçre
+    ("zurich", "Zürih"), ("zürih", "Zürih"), ("cenevre", "Cenevre"),
+    ("interlaken", "Interlaken"), ("luzern", "Luzern"),
+    # Avusturya
+    ("viyana", "Viyana"), ("salzburg", "Salzburg"),
+    # Doğu Avrupa
+    ("prag", "Prag"), ("budapes", "Budapeşte"),
+    ("varso", "Varşova"), ("varşo", "Varşova"),
+    ("bratislava", "Bratislava"), ("krakow", "Krakow"),
+    # Portekiz
+    ("lizbon", "Lizbon"), ("porto", "Porto"),
+    # İngiltere
+    ("londra", "Londra"), ("edinburgh", "Edinburgh"),
+    # Balkanlar
+    ("belgrad", "Belgrad"), ("dubrovnik", "Dubrovnik"),
+    ("zagreb", "Zagreb"), ("budva", "Budva"),
+    ("tiran", "Tiran"), ("skopye", "Üsküp"),
+    # Yunanistan
+    ("atina", "Atina"), ("selanik", "Selanik"),
+    ("santorini", "Santorini"), ("rodos", "Rodos"),
+    # Kafkasya
+    ("tiflis", "Tiflis"), ("baku", "Bakü"), ("bakü", "Bakü"),
+    ("erivan", "Erivan"),
+    # Uzak Doğu
+    ("tokyo", "Tokyo"), ("osaka", "Osaka"), ("kyoto", "Kyoto"),
+    ("bangkok", "Bangkok"), ("bali", "Bali"),
+    ("singapur", "Singapur"), ("vietnam", "Vietnam"),
+    # Orta Doğu / Afrika
+    ("dubai", "Dubai"), ("abu dabi", "Abu Dabi"),
+    ("kahire", "Kahire"), ("luksor", "Luksor"),
+    ("marakes", "Marakeş"), ("marakeş", "Marakeş"),
+    # Amerika
+    ("new york", "New York"), ("los angeles", "Los Angeles"),
+    ("miami", "Miami"), ("toronto", "Toronto"),
+    # Türkiye
+    ("istanbul", "İstanbul"), ("ankara", "Ankara"),
+    ("bodrum", "Bodrum"), ("antalya", "Antalya"),
+    ("kapadokya", "Kapadokya"), ("pamukkale", "Pamukkale"),
+    # Fas
+    ("kazablanka", "Kazablanka"), ("fes", "Fes"), ("rabat", "Rabat"),
+    # İskandinav
+    ("oslo", "Oslo"), ("stockholm", "Stockholm"),
+    ("kopenhag", "Kopenhag"), ("helsinki", "Helsinki"),
+]
+
+
+def extract_otel_adi(puan_detay: dict) -> str:
+    """
+    puan_detay['oteller'] dict'inden temiz şehir/otel isim listesi çıkarır.
+
+    Örn:  {"Barselona otelinizden memnun kaldınız mı": 4.0, "Madrid Oteli": 3.5}
+          → "Barcelona, Madrid"
+
+    Dönen string DB'ye `otel_adi` kolonuna yazılır;  ILIKE ile aranır.
+    """
+    oteller: dict = puan_detay.get("oteller") or {}
+    if not oteller:
+        return ""
+
+    found: list[str] = []
+    for key in oteller.keys():
+        key_low = key.lower()
+        matched = False
+        for kw, city in _OTEL_SEHIR_MAP:
+            if kw in key_low:
+                if city not in found:
+                    found.append(city)
+                matched = True
+                break
+        if not matched:
+            # Şehir bulunamadı — ilk 3 kelimeyi al (temiz görünüm)
+            words = key.split()[:3]
+            short = " ".join(words).strip("?").strip()[:30]
+            if short and short not in found:
+                found.append(short)
+    return ", ".join(found)
 
 
 # ── Bölge tespiti ─────────────────────────────────────────────────────────────
