@@ -2049,6 +2049,7 @@ def survey_results(
     otel:      str = "",
     status:    str = "",       # matched | review | pending
     grup:      bool = True,    # True → her anket bir kart; False → her yanıt bir satır
+    porsline_survey_id: str = "",  # Belirli bir Porsline anketi için filtre (detay modal)
 ):
     """
     Anket sonuçlarını döndürür.
@@ -2083,6 +2084,9 @@ def survey_results(
     if otel:
         filters.append("LOWER(hs.otel_adi) LIKE LOWER(:otel)")
         params["otel"] = f"%{otel}%"
+    if porsline_survey_id:
+        filters.append("hs.porsline_survey_id = :porsline_survey_id")
+        params["porsline_survey_id"] = porsline_survey_id
 
     # Mevcut kolonları kontrol et (DB migration henüz tamamlanmamış olabilir)
     def _col_exists(conn, col: str) -> bool:

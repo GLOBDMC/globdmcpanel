@@ -307,6 +307,32 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════════════
+     ANKET DETAY MODAL (gruplu karta tıklanınca)
+     ══════════════════════════════════════════════════════════════════ -->
+<div id="anketDetayModal" class="fixed inset-0 z-50 hidden items-center justify-center">
+    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="closeAnketDetay()"></div>
+    <div class="relative bg-[#0f1729] border border-slate-700/60 rounded-xl shadow-2xl w-full max-w-2xl mx-4 overflow-hidden flex flex-col" style="max-height:90vh;">
+        <!-- Başlık -->
+        <div class="flex items-start justify-between px-6 py-4 border-b border-slate-700/40 flex-shrink-0">
+            <div class="min-w-0 flex-1 pr-4">
+                <h3 class="text-sm font-semibold text-slate-100 truncate" id="adm_baslik">—</h3>
+                <div class="flex items-center gap-3 mt-1 text-xs text-slate-500 flex-wrap" id="adm_meta"></div>
+            </div>
+            <button onclick="closeAnketDetay()" class="text-slate-500 hover:text-slate-300 text-xl leading-none flex-shrink-0">×</button>
+        </div>
+        <!-- Özet istatistikler -->
+        <div class="px-6 pt-4 pb-3 flex-shrink-0">
+            <div class="grid grid-cols-3 sm:grid-cols-6 gap-2" id="adm_stats"></div>
+        </div>
+        <!-- Yanıtlar listesi -->
+        <div class="px-6 pb-6 overflow-y-auto flex-1">
+            <p class="text-xs text-slate-600 uppercase font-medium mb-2 tracking-wide">Bireysel Yanıtlar</p>
+            <div id="adm_yanitlar" class="space-y-2"></div>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════
      REHBER EKLE/DÜZENLE MODAL
      ══════════════════════════════════════════════════════════════════ -->
 <div id="rehberModal" class="fixed inset-0 z-50 hidden items-center justify-center">
@@ -387,6 +413,7 @@ let _anketBolge   = '';
 let _anketOtel    = '';
 let _anketDebounce = null;
 let _anketGrup    = true;   // true=gruplu, false=bireysel yanıtlar
+let _anketDetayCache = [];  // gruplu kart tıklama için item cache
 let _porslineAnketler = [];
 let _syncResumeIndex = 0;
 
@@ -1103,6 +1130,7 @@ async function yukleAnketler() {
     const pag   = document.getElementById('anketPagination');
     liste.innerHTML = '<div class="text-center py-12 text-slate-600 text-sm">Yükleniyor...</div>';
     pag.classList.add('hidden');
+    _anketDetayCache = [];  // Sayfa değişince cache sıfırla
 
     const otelInput = document.getElementById('fOtel').value.trim();
     if (otelInput !== _anketOtel && otelInput !== '') {
@@ -1217,14 +1245,23 @@ async function yukleAnketler() {
         // Müşteri adı (bireysel modda)
         const musteriStr = !_anketGrup && item.musteri_adi ? `<span>👤 ${esc(item.musteri_adi)}</span>` : '';
 
+        // Gruplu modda karta tıklanınca detay modal açılır
+        // item nesnesini _anketDetayCache'e koyup index ile referans veriyoruz (HTML escape sorununu önler)
+        let clickAttr = '';
+        if (_anketGrup && item.porsline_survey_id) {
+            const cacheIdx = _anketDetayCache.push(item) - 1;
+            clickAttr = `onclick="acAnketDetay(${cacheIdx})" style="cursor:pointer;"`;
+        }
+
         return `
-        <div class="result-card flex items-center gap-3">
+        <div class="result-card flex items-center gap-3 ${_anketGrup ? 'hover:border-blue-500/30' : ''}" ${clickAttr}>
             <div class="puan-badge ${puanBadgeClass(p)}">${p != null ? p.toFixed(1) : '—'}</div>
             <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2 flex-wrap">
                     <span class="text-sm font-medium text-slate-200 truncate">${esc(item.tur_adi_ham || '—')}</span>
                     ${durumBadge}
                     ${yanitBadge}
+                    ${_anketGrup && item.porsline_survey_id ? `<span style="font-size:9px;color:#334155;">↗ detay</span>` : ''}
                 </div>
                 <div class="flex items-center gap-3 mt-0.5 text-xs text-slate-500 flex-wrap">
                     ${item.kalkis_tarihi ? `<span>${item.kalkis_tarihi}</span>` : ''}
@@ -1249,6 +1286,92 @@ async function yukleAnketler() {
 
 function anketSayfaGeri()  { if (_anketSayfa > 0)                        { _anketSayfa--; yukleAnketler(); } }
 function anketSayfaIleri() { if (_anketSayfa < _anketTotalSayfa - 1)     { _anketSayfa++; yukleAnketler(); } }
+
+// ─── Anket Detay Modal ────────────────────────────────────────────────────────
+function closeAnketDetay() {
+    const m = document.getElementById('anketDetayModal');
+    m.classList.add('hidden'); m.classList.remove('flex');
+}
+
+async function acAnketDetay(cacheIdx) {
+    const grup = _anketDetayCache[cacheIdx];
+    if (!grup) return;
+    const m = document.getElementById('anketDetayModal');
+
+    // Başlık & meta
+    document.getElementById('adm_baslik').textContent = grup.tur_adi_ham || '—';
+    const metaParts = [];
+    if (grup.kalkis_tarihi) metaParts.push(grup.kalkis_tarihi);
+    if (grup.rehber_adi)    metaParts.push('🧑‍✈️ ' + grup.rehber_adi);
+    if (grup.bolge)         metaParts.push('📍 ' + grup.bolge);
+    document.getElementById('adm_meta').textContent = metaParts.join('  ·  ');
+
+    // Özet istatistikler (gruptan)
+    const stats = [
+        { label: 'Yanıt',   val: grup.yanit_sayisi || 1,                       color: '#94a3b8' },
+        { label: 'Genel',   val: grup.genel_puan   != null ? parseFloat(grup.genel_puan).toFixed(2)   : '—', color: puanColor(grup.genel_puan != null ? parseFloat(grup.genel_puan) : null) },
+        { label: 'Rehber',  val: grup.rehber_puani != null ? parseFloat(grup.rehber_puani).toFixed(2) : '—', color: '#facc15' },
+        { label: '🏨 Otel', val: grup.ort_otel     != null ? parseFloat(grup.ort_otel).toFixed(2)     : '—', color: '#fb923c' },
+        { label: '🚌 Otobüs',val: grup.ort_otobus  != null ? parseFloat(grup.ort_otobus).toFixed(2)  : '—', color: '#60a5fa' },
+        { label: '🗺 Program',val: grup.ort_program != null ? parseFloat(grup.ort_program).toFixed(2) : '—', color: '#a78bfa' },
+    ];
+    document.getElementById('adm_stats').innerHTML = stats.map(s => `
+        <div class="rounded-lg px-2 py-2 text-center" style="background:rgba(15,23,41,.8);border:1px solid rgba(255,255,255,.06);">
+            <div class="text-sm font-bold" style="color:${s.color};">${s.val}</div>
+            <div class="text-slate-600 mt-0.5" style="font-size:10px;">${s.label}</div>
+        </div>`).join('');
+
+    // Modal aç
+    const yanitlarEl = document.getElementById('adm_yanitlar');
+    yanitlarEl.innerHTML = '<div class="text-xs text-slate-600 text-center py-6">Yükleniyor...</div>';
+    m.classList.remove('hidden'); m.classList.add('flex');
+
+    // Bireysel yanıtları çek
+    const sid = grup.porsline_survey_id;
+    const params = new URLSearchParams({
+        sayfa: 0, limit: 100, grup: 'false',
+        porsline_survey_id: sid,
+    });
+    const d = await fetch('/api/survey/results?' + params).then(r=>r.json()).catch(()=>({}));
+
+    if (!d.ok || !d.items?.length) {
+        yanitlarEl.innerHTML = '<div class="text-xs text-slate-500 text-center py-6">Bireysel yanıt bulunamadı.</div>';
+        return;
+    }
+
+    yanitlarEl.innerHTML = d.items.map(a => {
+        const p  = a.genel_puan   != null ? parseFloat(a.genel_puan)   : null;
+        const rp = a.rehber_puani != null ? parseFloat(a.rehber_puani) : null;
+        const pd = a.puan_detay || {};
+
+        // Şehir bazlı otel puanları
+        const oteller = pd.oteller || {};
+        const otelParts = Object.entries(oteller)
+            .filter(([,v]) => v != null)
+            .map(([k,v]) => `<span style="color:#94a3b8;font-weight:600;">${parseFloat(v).toFixed(1)}</span><span style="color:#475569;"> ${esc(k.split('?')[0].trim().slice(0,20))}</span>`);
+
+        // Kategori puanları
+        const katParts = [];
+        if (a.otel_ort_puani != null) katParts.push(`🏨 <b>${parseFloat(a.otel_ort_puani).toFixed(1)}</b>`);
+        else if (otelParts.length)    katParts.push(`🏨 ${otelParts.join(' · ')}`);
+        if (pd.otobus  != null) katParts.push(`🚌 <b>${parseFloat(pd.otobus).toFixed(1)}</b>`);
+        if (pd.sofor   != null) katParts.push(`🧑‍✈️ <b>${parseFloat(pd.sofor).toFixed(1)}</b>`);
+        if (pd.program != null) katParts.push(`🗺 <b>${parseFloat(pd.program).toFixed(1)}</b>`);
+
+        return `
+        <div class="result-card flex items-center gap-3">
+            <div class="puan-badge ${puanBadgeClass(p)} flex-shrink-0">${p != null ? p.toFixed(1) : '—'}</div>
+            <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                    <span class="text-sm text-slate-200">${esc(a.musteri_adi || 'Anonim')}</span>
+                    ${a.survey_date ? `<span class="text-xs text-slate-600">${a.survey_date}</span>` : ''}
+                    ${rp != null ? `<span class="text-xs text-yellow-400">${rp.toFixed(1)} ★ rehber</span>` : ''}
+                </div>
+                ${katParts.length ? `<div class="mt-1 text-xs text-slate-500 flex flex-wrap gap-3">${katParts.map(k=>`<span>${k}</span>`).join('')}</div>` : ''}
+            </div>
+        </div>`;
+    }).join('');
+}
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
