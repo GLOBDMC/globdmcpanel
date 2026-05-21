@@ -6,6 +6,7 @@ APIRouter kullanır — main.py'de modül seviyesinde include_router ile eklenir
 """
 import json as _json
 import logging
+import os
 import concurrent.futures as _futures
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -152,6 +153,75 @@ def create_tur_kart_router(db_engine, templates) -> APIRouter:
             "mesaj": f"{len(jt_kodlari)} tur için sync başlatıldı",
             "toplam": len(jt_kodlari),
         })
+
+    # ── Gordios Sync Status ───────────────────────────────────────────────────
+
+    @router.get("/api/gordios/sync-status")
+    def gordios_sync_status(request: Request):
+        """Tüm turların Gordios sync durumunu döndürür."""
+        from main import oturum_kullanicisi
+        kullanici = oturum_kullanicisi(request)
+        if not kullanici or kullanici["rol"] != "admin":
+            return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+        try:
+            with db_engine.connect() as conn:
+                # Özet istatistikler
+                ozet = conn.execute(text("""
+                    SELECT sync_status, COUNT(*) as adet
+                    FROM tur_detaylar
+                    GROUP BY sync_status
+                """)).fetchall()
+
+                # Hatalı kayıtlar
+                hatali = conn.execute(text("""
+                    SELECT td.jt_kodu, t.tur_adi, td.hata_mesaj, td.gordios_sync_at
+                    FROM tur_detaylar td
+                    LEFT JOIN turlar t ON t.jt_kodu = td.jt_kodu
+                    WHERE td.sync_status = 'error'
+                    ORDER BY td.gordios_sync_at DESC NULLS LAST
+                    LIMIT 30
+                """)).fetchall()
+
+                # Bekleyen / hiç çekilmemiş turlar
+                bekleyen = conn.execute(text("""
+                    SELECT t.jt_kodu, t.tur_adi, t.kalkis_tarihi
+                    FROM turlar t
+                    LEFT JOIN tur_detaylar td ON td.jt_kodu = t.jt_kodu
+                    WHERE t.jt_kodu IS NOT NULL AND t.jt_kodu != ''
+                      AND (td.jt_kodu IS NULL OR td.sync_status IN ('pending','error'))
+                    ORDER BY t.kalkis_tarihi DESC NULLS LAST
+                    LIMIT 20
+                """)).fetchall()
+
+                # Başarılı son 5
+                basarili = conn.execute(text("""
+                    SELECT td.jt_kodu, t.tur_adi, td.gordios_sync_at,
+                           td.program_baslik,
+                           (SELECT COUNT(*) FROM json_array_elements(td.program_json::json)) AS gun_sayisi
+                    FROM tur_detaylar td
+                    LEFT JOIN turlar t ON t.jt_kodu = td.jt_kodu
+                    WHERE td.sync_status = 'ok'
+                    ORDER BY td.gordios_sync_at DESC NULLS LAST
+                    LIMIT 5
+                """)).fetchall()
+
+            def _d(r): return {k: (v.isoformat() if hasattr(v,'isoformat') else v) for k,v in r._mapping.items()}
+
+            return JSONResponse({
+                "ok": True,
+                "ozet":     [_d(r) for r in ozet],
+                "hatali":   [_d(r) for r in hatali],
+                "bekleyen": [_d(r) for r in bekleyen],
+                "basarili": [_d(r) for r in basarili],
+                "env": {
+                    "playwright": _check_playwright(),
+                    "gordios_user": bool(os.getenv("GORDIOS_USERNAME")),
+                    "gordios_pass": bool(os.getenv("GORDIOS_PASSWORD")),
+                    "gordios_inst": os.getenv("GORDIOS_INSTITUTION",""),
+                },
+            })
+        except Exception as e:
+            return JSONResponse({"hata": str(e)}, status_code=500)
 
     # ── Gordios Login Debug ───────────────────────────────────────────────────
 
@@ -391,6 +461,16 @@ def gordios_sync_all_tours(db_engine):
                 logger.error("[gordios-auto] %s hata: %s", jt_kodu, e)
     except Exception as e:
         logger.error("[gordios-auto] genel hata: %s", e)
+
+
+def _check_playwright() -> str:
+    try:
+        from playwright.sync_api import sync_playwright  # noqa
+        return "ok"
+    except ImportError:
+        return "kurulu_degil"
+    except Exception as e:
+        return str(e)[:80]
 
 
 def _run_gordios_sync(jt_kodu: str) -> dict:

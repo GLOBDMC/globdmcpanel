@@ -144,8 +144,12 @@
     </button>
 
     {% if kullanici and kullanici.rol == 'admin' %}
+    <button onclick="gordiosSyncStatusGoster()"
+      class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-xs font-medium text-gray-400 hover:text-white hover:border-slate-500/50 hover:bg-slate-500/10 transition-all">
+      🔍 Sync Durum
+    </button>
     <button id="syncAllBtn" onclick="gordiosSyncAll()"
-      class="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-xs font-medium text-gray-400 hover:text-white hover:border-blue-500/50 hover:bg-blue-500/10 transition-all">
+      class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-xs font-medium text-gray-400 hover:text-white hover:border-blue-500/50 hover:bg-blue-500/10 transition-all">
       <svg id="syncAllIcon" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
           d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
@@ -154,6 +158,19 @@
     </button>
     {% endif %}
 </div>
+
+<!-- Gordios Sync Durum Paneli -->
+{% if kullanici and kullanici.rol == 'admin' %}
+<div id="gordiosSyncPanel" class="hidden mb-4">
+  <div class="card p-4">
+    <div class="flex items-center justify-between mb-3">
+      <span class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Gordios Sync Durumu</span>
+      <button onclick="document.getElementById('gordiosSyncPanel').classList.add('hidden')" class="text-slate-600 hover:text-slate-300 text-sm">✕</button>
+    </div>
+    <div id="gordiosSyncContent" class="text-xs text-slate-400 font-mono whitespace-pre-wrap"></div>
+  </div>
+</div>
+{% endif %}
 
 <!-- TAB 1: Kontenjanlar -->
 <div id="panel-kontenjan">
@@ -654,6 +671,56 @@
         document.getElementById('satisSayac').textContent = gorunen + ' tur';
         const baslik = document.getElementById('satis-baslik');
         baslik.textContent = hy ? 'Kritik Satış Uyarısı — ' + hy : 'Kritik Satış Uyarısı';
+    }
+
+    async function gordiosSyncStatusGoster() {
+        const panel   = document.getElementById('gordiosSyncPanel');
+        const content = document.getElementById('gordiosSyncContent');
+        panel.classList.remove('hidden');
+        content.textContent = 'Yükleniyor…';
+
+        const d = await fetch('/api/gordios/sync-status').then(r=>r.json()).catch(e=>({hata:e.message}));
+        if (d.hata) { content.textContent = '⚠ ' + d.hata; return; }
+
+        const lines = [];
+
+        // ENV kontrolü
+        lines.push('── Ortam ─────────────────────────────────');
+        lines.push(`  playwright : ${d.env?.playwright}`);
+        lines.push(`  kullanıcı  : ${d.env?.gordios_user ? '✓' : '✗ eksik!'}`);
+        lines.push(`  şifre      : ${d.env?.gordios_pass ? '✓' : '✗ eksik!'}`);
+        lines.push(`  kurum kodu : ${d.env?.gordios_inst || '✗ eksik!'}`);
+        lines.push('');
+
+        // Özet
+        lines.push('── Sync Özeti ────────────────────────────');
+        (d.ozet || []).forEach(o => lines.push(`  ${o.sync_status || 'null'} : ${o.adet}`));
+        lines.push('');
+
+        // Bekleyen
+        if (d.bekleyen?.length) {
+            lines.push(`── Bekleyen / Hatalı Turlar (${d.bekleyen.length}) ────`);
+            d.bekleyen.forEach(t => lines.push(`  ${t.jt_kodu}  ${t.tur_adi||''}  ${t.kalkis_tarihi||''}`));
+            lines.push('');
+        }
+
+        // Hatalar
+        if (d.hatali?.length) {
+            lines.push(`── Son Hatalar (${d.hatali.length}) ────────────────`);
+            d.hatali.forEach(t => {
+                lines.push(`  ${t.jt_kodu}  ${t.gordios_sync_at||'?'}`);
+                lines.push(`    → ${(t.hata_mesaj||'').slice(0,120)}`);
+            });
+            lines.push('');
+        }
+
+        // Başarılılar
+        if (d.basarili?.length) {
+            lines.push('── Son Başarılılar ───────────────────────');
+            d.basarili.forEach(t => lines.push(`  ✓ ${t.jt_kodu}  ${t.gun_sayisi||0} gün  ${t.gordios_sync_at||''}`));
+        }
+
+        content.textContent = lines.join('\n');
     }
 
     async function gordiosSyncAll() {
