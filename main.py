@@ -618,6 +618,52 @@ def tablo_olustur():
     except Exception as e:
         logger.warning("idx_hs_porsline_resp_uniq migration: %s", e)
 
+    # ── Porsline tur istatistikleri tablosu (sadece ortalamalar) ────────────
+    try:
+        with db_engine.connect() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS porsline_tour_stats (
+                    id                  SERIAL PRIMARY KEY,
+                    porsline_survey_id  VARCHAR(100) UNIQUE NOT NULL,
+                    survey_title        TEXT         DEFAULT '',
+                    tur_adi             TEXT         DEFAULT '',
+                    kalkis_tarihi       VARCHAR(50)  DEFAULT '',
+                    rehber_adi          TEXT         DEFAULT '',
+                    havayolu            VARCHAR(100) DEFAULT '',
+                    matched_tur_id      INTEGER REFERENCES turlar(id) ON DELETE SET NULL,
+                    matched_jt_kodu     VARCHAR(50)  DEFAULT '',
+                    match_status        VARCHAR(30)  DEFAULT 'pending',
+                    match_confidence    INTEGER      DEFAULT 0,
+                    -- Ortalama puanlar
+                    response_count      INTEGER      DEFAULT 0,
+                    avg_genel_puan      FLOAT,
+                    avg_rehber_puani    FLOAT,
+                    avg_otobus          FLOAT,
+                    avg_sofor           FLOAT,
+                    avg_program         FLOAT,
+                    avg_operasyon       FLOAT,
+                    avg_transfer        FLOAT,
+                    avg_ekstra_tur      FLOAT,
+                    avg_tavsiye         FLOAT,
+                    avg_genel_memnuniyet FLOAT,
+                    -- JSON: otel bazında ortalama {"Barcelona": 4.2, ...}
+                    avg_oteller         JSONB        DEFAULT '{}',
+                    -- Tüm sorular (ek alanlar için)
+                    avg_detay           JSONB        DEFAULT '{}',
+                    last_synced_at      TIMESTAMP,
+                    created_at          TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_pts_jt ON porsline_tour_stats(matched_jt_kodu)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_pts_match ON porsline_tour_stats(match_status)"
+            ))
+            conn.commit()
+    except Exception as e:
+        logger.warning("porsline_tour_stats migration: %s", e)
+
     logger.info("Tablolar hazir")
 
 def _row_dict(row) -> dict:
@@ -1953,6 +1999,324 @@ async def apify_webhook(request: Request):
         return JSONResponse({"ok": False, "hata": str(exc)}, status_code=500)
 
     return JSONResponse({"ok": True, "aktör": aktor_tur, "item_sayisi": len(items), **sonuc})
+
+
+@app.post("/api/porsline/stats-sync")
+def porsline_stats_sync(request: Request, force: bool = False, interval: float = 5.0):
+    """
+    Tüm Porsline anketlerini çekip sadece ortalama puanları porsline_tour_stats
+    tablosuna yazar. Rate-limit'e takılmaz (5s interval, backoff'u bekler).
+    force=True: response_count değişmemiş olsa bile yeniden çek.
+    """
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    task_id = str(uuid.uuid4())[:8]
+    _porsline_tasks[task_id] = {
+        "status":   "running",
+        "progress": {"done": 0, "total": 0, "current": "Başlatılıyor…"},
+        "result":   None,
+    }
+
+    def _run():
+        import porsline_service as _ps
+        old_interval = _ps._rl_interval
+        old_base     = _ps._rl_base_interval
+        try:
+            _ps._rl_interval      = interval
+            _ps._rl_base_interval = interval
+            _porsline_stats_worker(task_id, force, kullanici["kullanici_adi"])
+        finally:
+            _ps._rl_interval      = old_interval
+            _ps._rl_base_interval = old_base
+
+    threading.Thread(target=_run, daemon=True).start()
+    return JSONResponse({"ok": True, "task_id": task_id,
+                         "status_url": f"/api/porsline/sync-status/{task_id}"})
+
+
+def _porsline_stats_worker(task_id: str, force: bool, username: str):
+    """
+    Her survey için: tüm yanıtları çek → ortalamaları hesapla → porsline_tour_stats'a yaz.
+    historical_surveys'e dokunmaz. Rate_limited durumunda bekler, durmaz.
+    """
+    import time as _time_mod
+    task = _porsline_tasks[task_id]
+
+    def _upd(msg, done=None, total=None):
+        task["progress"]["current"] = msg
+        if done  is not None: task["progress"]["done"]  = done
+        if total is not None: task["progress"]["total"] = total
+
+    def _avg(vals):
+        nums = [v for v in vals if v is not None and isinstance(v, (int, float))]
+        return round(sum(nums) / len(nums), 2) if nums else None
+
+    try:
+        from porsline_service import (
+            list_surveys, get_survey_detail, get_all_responses,
+            parse_survey_title, parse_response_row, extract_otel_adi,
+            _rl_get_backoff_remaining,
+        )
+        from survey_matcher import SurveyMatcher, SurveyRecord
+
+        _upd("Anket listesi çekiliyor…")
+        chunk = list_surveys()
+        if not chunk["ok"]:
+            task["status"] = "error"
+            _upd(f"Liste alınamadı: {chunk.get('hata')}")
+            return
+
+        all_surveys = chunk["surveys"]
+        _upd(f"{len(all_surveys)} anket bulundu", total=len(all_surveys))
+
+        # Mevcut stats tablosundan response_count'ları al (skip kontrolü)
+        db_counts: dict = {}
+        if not force:
+            try:
+                with db_engine.connect() as conn:
+                    rows_db = conn.execute(text(
+                        "SELECT porsline_survey_id, response_count FROM porsline_tour_stats"
+                    )).fetchall()
+                    db_counts = {str(r[0]): (r[1] or 0) for r in rows_db}
+            except Exception:
+                pass
+
+        tours       = _survey_load_tours()
+        toplam_yeni = 0
+        atlanan     = 0
+
+        for idx, s in enumerate(all_surveys):
+            sid = str(s.get("id") or s.get("uid") or "")
+            if not sid:
+                continue
+
+            title = str(s.get("title") or s.get("name") or sid)
+
+            # Rate-limit backoff — ne kadar uzun olursa olsun bekle
+            rl_wait = _rl_get_backoff_remaining()
+            if rl_wait > 0:
+                _upd(f"[{idx+1}/{len(all_surveys)}] Rate-limit: {int(rl_wait)}s bekleniyor…", done=idx)
+                logger.info("STATS_SYNC rate-limit bekleniyor: %.0fs", rl_wait)
+                _time_mod.sleep(rl_wait + 1)
+
+            # Skip: sayı değişmemişse atla
+            if not force:
+                pcount = int(s.get("responses_count") or s.get("respondents_count") or
+                             s.get("response_count") or s.get("total_responses") or -1)
+                stored = db_counts.get(sid, -1)
+                if pcount != -1 and stored != -1 and pcount == stored:
+                    atlanan += 1
+                    continue
+
+            _upd(f"[{idx+1}/{len(all_surveys)}] {title[:50]}", done=idx)
+
+            # Survey detayı (tur adı, tarih)
+            detail = get_survey_detail(sid)
+            sv     = detail["survey"] if detail["ok"] else s
+            title  = str(sv.get("title") or sv.get("name") or title)
+            created_date = str(sv.get("created_date") or sv.get("created_at") or
+                               s.get("created_date") or "")
+            parsed = parse_survey_title(title, created_date)
+
+            # Yanıtları çek
+            resp = get_all_responses(sid, fast=False)
+            if not resp["ok"]:
+                logger.warning("STATS_SYNC [%s] yanıt alınamadı: %s", sid, resp.get("hata"))
+                continue
+
+            header = resp["header"]
+            rows   = resp["body"]
+            if not rows:
+                # Yanıt yok — sıfır satır kaydet
+                with db_engine.connect() as conn:
+                    conn.execute(text("""
+                        INSERT INTO porsline_tour_stats
+                            (porsline_survey_id, survey_title, tur_adi, kalkis_tarihi,
+                             response_count, last_synced_at)
+                        VALUES (:sid, :title, :tur, :kalkis, 0, NOW())
+                        ON CONFLICT (porsline_survey_id) DO UPDATE SET
+                            last_synced_at=NOW(), response_count=0,
+                            survey_title=EXCLUDED.survey_title
+                    """), {"sid": sid, "title": title,
+                           "tur": parsed["tur_adi"], "kalkis": parsed.get("kalkis_str") or ""})
+                    conn.commit()
+                continue
+
+            # Parse her satırı → listeler oluştur
+            genel_list = []; rehber_list = []
+            otobus_l = []; sofor_l = []; program_l = []; operasyon_l = []
+            transfer_l = []; ekstra_l = []; tavsiye_l = []; genel_mem_l = []
+            otel_sums: dict[str, list] = {}
+
+            for row in rows:
+                pr = parse_response_row(header, row)
+                genel_list.append(pr.get("genel_puan"))
+                rehber_list.append(pr.get("rehber_puani"))
+                pd = pr.get("puan_detay") or {}
+                otobus_l.append(pd.get("otobus"))
+                sofor_l.append(pd.get("sofor"))
+                program_l.append(pd.get("program"))
+                operasyon_l.append(pd.get("operasyon"))
+                transfer_l.append(pd.get("transfer"))
+                ekstra_l.append(pd.get("ekstra_tur"))
+                tavsiye_l.append(pd.get("tavsiye"))
+                genel_mem_l.append(pd.get("genel_memnuniyet"))
+                # Otel bazında toplama
+                for otel_soru, otel_puan in (pd.get("oteller") or {}).items():
+                    if otel_puan is not None:
+                        otel_sums.setdefault(otel_soru, []).append(otel_puan)
+
+            # Otel ortalama
+            avg_oteller = {k: round(sum(v)/len(v), 2) for k, v in otel_sums.items() if v}
+
+            # Tur eşleştirme
+            matched_tur_id  = None
+            matched_jt_kodu = ""
+            match_status    = "no_match"
+            match_conf      = 0
+            try:
+                matcher = SurveyMatcher(tours)
+                sr = SurveyRecord(
+                    tur_adi=parsed["tur_adi"],
+                    kalkis_tarihi=parsed.get("kalkis_str") or "",
+                    rehber_adi=parsed.get("rehber_adi") or "",
+                )
+                mr = matcher.match_one(sr)
+                if mr.best_match:
+                    matched_tur_id  = mr.best_match.tour.id
+                    matched_jt_kodu = mr.best_match.tour.jt_kodu
+                match_status = mr.status
+                match_conf   = mr.confidence
+            except Exception:
+                pass
+
+            # DB'ye yaz
+            with db_engine.connect() as conn:
+                conn.execute(text("""
+                    INSERT INTO porsline_tour_stats (
+                        porsline_survey_id, survey_title, tur_adi, kalkis_tarihi,
+                        rehber_adi, havayolu,
+                        matched_tur_id, matched_jt_kodu, match_status, match_confidence,
+                        response_count,
+                        avg_genel_puan, avg_rehber_puani,
+                        avg_otobus, avg_sofor, avg_program, avg_operasyon,
+                        avg_transfer, avg_ekstra_tur, avg_tavsiye, avg_genel_memnuniyet,
+                        avg_oteller, avg_detay, last_synced_at
+                    ) VALUES (
+                        :sid, :title, :tur, :kalkis, :rehber, :havayolu,
+                        :tur_id, :jt, :status, :conf,
+                        :rc,
+                        :genel, :reh_p,
+                        :otobus, :sofor, :program, :operasyon,
+                        :transfer, :ekstra, :tavsiye, :genel_mem,
+                        :oteller::jsonb, :detay::jsonb, NOW()
+                    )
+                    ON CONFLICT (porsline_survey_id) DO UPDATE SET
+                        survey_title=EXCLUDED.survey_title,
+                        tur_adi=EXCLUDED.tur_adi,
+                        kalkis_tarihi=EXCLUDED.kalkis_tarihi,
+                        rehber_adi=EXCLUDED.rehber_adi,
+                        matched_tur_id=EXCLUDED.matched_tur_id,
+                        matched_jt_kodu=EXCLUDED.matched_jt_kodu,
+                        match_status=EXCLUDED.match_status,
+                        match_confidence=EXCLUDED.match_confidence,
+                        response_count=EXCLUDED.response_count,
+                        avg_genel_puan=EXCLUDED.avg_genel_puan,
+                        avg_rehber_puani=EXCLUDED.avg_rehber_puani,
+                        avg_otobus=EXCLUDED.avg_otobus,
+                        avg_sofor=EXCLUDED.avg_sofor,
+                        avg_program=EXCLUDED.avg_program,
+                        avg_operasyon=EXCLUDED.avg_operasyon,
+                        avg_transfer=EXCLUDED.avg_transfer,
+                        avg_ekstra_tur=EXCLUDED.avg_ekstra_tur,
+                        avg_tavsiye=EXCLUDED.avg_tavsiye,
+                        avg_genel_memnuniyet=EXCLUDED.avg_genel_memnuniyet,
+                        avg_oteller=EXCLUDED.avg_oteller,
+                        avg_detay=EXCLUDED.avg_detay,
+                        last_synced_at=NOW()
+                """), {
+                    "sid": sid, "title": title,
+                    "tur": parsed["tur_adi"], "kalkis": parsed.get("kalkis_str") or "",
+                    "rehber": parsed.get("rehber_adi") or "",
+                    "havayolu": parsed.get("havayolu") or "",
+                    "tur_id": matched_tur_id, "jt": matched_jt_kodu,
+                    "status": match_status, "conf": match_conf,
+                    "rc": len(rows),
+                    "genel": _avg(genel_list), "reh_p": _avg(rehber_list),
+                    "otobus": _avg(otobus_l), "sofor": _avg(sofor_l),
+                    "program": _avg(program_l), "operasyon": _avg(operasyon_l),
+                    "transfer": _avg(transfer_l), "ekstra": _avg(ekstra_l),
+                    "tavsiye": _avg(tavsiye_l), "genel_mem": _avg(genel_mem_l),
+                    "oteller": json.dumps(avg_oteller, ensure_ascii=False),
+                    "detay": json.dumps({}, ensure_ascii=False),
+                })
+                conn.commit()
+
+            toplam_yeni += 1
+            logger.info("STATS_SYNC [%d/%d] %s → %d yanıt, genel=%.1f, rehber=%.1f",
+                        idx + 1, len(all_surveys), title[:40], len(rows),
+                        _avg(genel_list) or 0, _avg(rehber_list) or 0)
+
+        task["status"] = "done"
+        task["result"] = {
+            "ok": True, "toplam": len(all_surveys),
+            "islenen": toplam_yeni, "atlanan": atlanan,
+        }
+        _upd(f"Tamamlandı — {toplam_yeni} anket güncellendi, {atlanan} atlandı",
+             done=len(all_surveys))
+        logger.info("STATS_SYNC TAMAMLANDI — %d güncellendi, %d atlandı",
+                    toplam_yeni, atlanan)
+
+    except Exception as e:
+        task["status"] = "error"
+        task["result"] = {"ok": False, "hata": str(e)}
+        logger.error("STATS_SYNC kritik hata: %s", e, exc_info=True)
+
+
+@app.get("/api/porsline/tour-stats")
+def get_porsline_tour_stats(request: Request, jt_kodu: str = None,
+                             match_status: str = None, limit: int = 200):
+    """
+    porsline_tour_stats tablosundan tur ortalamalarını döndürür.
+    Filtreleme: ?jt_kodu=JT123 veya ?match_status=matched
+    """
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici:
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    where_clauses = []
+    params: dict = {"limit": limit}
+    if jt_kodu:
+        where_clauses.append("matched_jt_kodu = :jt")
+        params["jt"] = jt_kodu
+    if match_status:
+        where_clauses.append("match_status = :ms")
+        params["ms"] = match_status
+
+    where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+
+    with db_engine.connect() as conn:
+        rows = conn.execute(text(f"""
+            SELECT porsline_survey_id, survey_title, tur_adi, kalkis_tarihi,
+                   rehber_adi, matched_jt_kodu, match_status, match_confidence,
+                   response_count,
+                   avg_genel_puan, avg_rehber_puani, avg_program, avg_otobus,
+                   avg_sofor, avg_operasyon, avg_transfer, avg_ekstra_tur,
+                   avg_tavsiye, avg_genel_memnuniyet, avg_oteller,
+                   last_synced_at
+            FROM porsline_tour_stats
+            {where_sql}
+            ORDER BY last_synced_at DESC NULLS LAST
+            LIMIT :limit
+        """), params).fetchall()
+
+    return JSONResponse({
+        "ok": True,
+        "count": len(rows),
+        "stats": [_row_dict(r) for r in rows],
+    })
 
 
 @app.get("/api/porsline/probe-analytics/{survey_id}")
