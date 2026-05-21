@@ -186,6 +186,11 @@
     display: flex; align-items: center; gap: 8px; margin-bottom: 5px;
 }
 .otel-adi { font-size: 11px; color: #cbd5e1; min-width: 0; flex: 1; truncate; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.otel-link {
+    cursor: pointer; transition: color .12s, border-color .12s;
+}
+.otel-adi.otel-link:hover { color: #60a5fa !important; text-decoration: underline dotted; }
+span.tur-pill.otel-link:hover { color: #60a5fa !important; border-color: rgba(96,165,250,.35) !important; }
 
 /* ── Yanıt satırı ────────────────────────── */
 .yanit-satir {
@@ -1542,7 +1547,10 @@ function _turKartIcerigi(item) {
             const ad  = _cleanHotelKey(sehir);
             return `
             <div class="otel-satir">
-                <span class="otel-adi" title="${esc(ad)}">🏨 ${esc(ad)}</span>
+                <span class="otel-adi otel-link" title="Otel kartını aç: ${esc(ad)}"
+                      onclick="otelSec('${esc(ad)}');document.getElementById('otelKartWrap')?.scrollIntoView({behavior:'smooth',block:'start'})">
+                    🏨 ${esc(ad)}
+                </span>
                 <div class="skor-bar-track" style="flex:1;max-width:120px;">
                     <div class="skor-bar-fill ${fc}" style="width:${pct}%"></div>
                 </div>
@@ -1642,7 +1650,11 @@ async function yukleYanitlar(cacheIdx) {
                 const ad = _cleanHotelKey(k).slice(0, 28);
                 const vv = parseFloat(v);
                 const tc = vv >= 4.5 ? '#4ade80' : vv >= 3.5 ? '#facc15' : '#f87171';
-                return `<span class="tur-pill" style="color:${tc};border-color:rgba(255,255,255,.06);">🏨 ${esc(ad)} ${vv.toFixed(0)}</span>`;
+                return `<span class="tur-pill otel-link" style="color:${tc};border-color:rgba(255,255,255,.06);"
+                              title="Otel kartını aç: ${esc(ad)}"
+                              onclick="otelSec('${esc(ad)}');document.getElementById('otelKartWrap')?.scrollIntoView({behavior:'smooth',block:'start'})">
+                            🏨 ${esc(ad)} ${vv.toFixed(0)}
+                        </span>`;
             });
 
         // Diğer kategori pilleri
