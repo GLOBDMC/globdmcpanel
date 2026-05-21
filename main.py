@@ -1912,9 +1912,9 @@ def survey_stats(request: Request):
                     SELECT ROUND(AVG(otel_avg), 2) AS ort_otel
                     FROM (
                         SELECT
-                            (SELECT AVG(val::numeric)
+                            (SELECT AVG(value::numeric)
                              FROM jsonb_each_text(COALESCE(puan_detay->'oteller', '{}'))
-                             WHERE val ~ '^[0-9]+[.]?[0-9]*$'
+                             WHERE value ~ '^[0-9]+[.]?[0-9]*$'
                             ) AS otel_avg
                         FROM historical_surveys
                         WHERE puan_detay IS NOT NULL
@@ -2149,9 +2149,9 @@ def survey_results(
                 if has_puan_det:
                     sub_avg_expr = """
                         ROUND(AVG(
-                            (SELECT AVG(v::numeric)
+                            (SELECT AVG(value::numeric)
                              FROM jsonb_each_text(COALESCE(hs.puan_detay->'oteller','{}'))
-                             WHERE v ~ '^[0-9]+[.]?[0-9]*$')
+                             WHERE value ~ '^[0-9]+[.]?[0-9]*$')
                         )::numeric, 2) AS ort_otel,
                         ROUND(AVG(NULLIF((hs.puan_detay->>'otobus'),  '')::numeric)::numeric, 2) AS ort_otobus,
                         ROUND(AVG(NULLIF((hs.puan_detay->>'sofor'),   '')::numeric)::numeric, 2) AS ort_sofor,
