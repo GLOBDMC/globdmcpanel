@@ -2161,51 +2161,6 @@ def survey_stats(request: Request):
     })
 
 
-@app.get("/api/survey/stats-debug")
-def survey_stats_debug(request: Request):
-    """Geçici: DB'deki tur adlarını ve ham sayıları gösterir."""
-    kullanici = oturum_kullanicisi(request)
-    if not kullanici or kullanici["rol"] != "admin":
-        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
-    try:
-        with db_engine.connect() as conn:
-            # En çok geçen tur_adi_ham değerleri
-            ham = conn.execute(text("""
-                SELECT tur_adi_ham, COUNT(*) AS adet
-                FROM historical_surveys
-                WHERE match_status != 'rejected'
-                GROUP BY tur_adi_ham
-                ORDER BY adet DESC
-                LIMIT 30
-            """)).fetchall()
-            # turlar tablosundaki tur adları
-            turlar = conn.execute(text("""
-                SELECT tur_adi, COUNT(*) AS adet
-                FROM turlar
-                GROUP BY tur_adi
-                ORDER BY adet DESC
-                LIMIT 30
-            """)).fetchall()
-            # eşleşen kayıtlarda t.tur_adi örnekleri
-            eslesen = conn.execute(text("""
-                SELECT COALESCE(t.tur_adi, hs.tur_adi_ham) AS isim, COUNT(*) AS adet
-                FROM historical_surveys hs
-                LEFT JOIN turlar t ON t.jt_kodu = hs.matched_jt_kodu
-                WHERE hs.match_status != 'rejected'
-                GROUP BY 1
-                ORDER BY adet DESC
-                LIMIT 30
-            """)).fetchall()
-        return JSONResponse({
-            "ok": True,
-            "tur_adi_ham": [{"isim": r[0], "adet": r[1]} for r in ham],
-            "turlar_tablosu": [{"isim": r[0], "adet": r[1]} for r in turlar],
-            "eslesen_coalesce": [{"isim": r[0], "adet": r[1]} for r in eslesen],
-        })
-    except Exception as exc:
-        return JSONResponse({"ok": False, "hata": str(exc)})
-
-
 @app.post("/api/survey/match/{survey_id}")
 def survey_match_confirm(survey_id: int, request: Request, jt_kodu: str = Form(...)):
     """
@@ -3260,24 +3215,6 @@ def porsline_ratelimit_check(request: Request):
         })
 
     return JSONResponse({"ok": True, "rate_limited": False})
-
-
-@app.get("/api/porsline/debug-fields")
-def porsline_debug_fields(request: Request):
-    """Ham survey objesinin tüm field adlarını döndürür (hangi key'ler var?)."""
-    kullanici = oturum_kullanicisi(request)
-    if not kullanici or kullanici["rol"] != "admin":
-        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
-    from porsline_service import list_surveys
-    chunk = list_surveys(page=1, page_size=2)
-    if not chunk["ok"] or not chunk["surveys"]:
-        return JSONResponse({"ok": False, "hata": "Anket bulunamadı"})
-    first = chunk["surveys"][0]
-    return JSONResponse({
-        "ok":     True,
-        "fields": list(first.keys()),
-        "sample": first,   # tüm ham veri
-    })
 
 
 @app.get("/api/porsline/survey/{survey_id}/raw")
@@ -4343,36 +4280,3 @@ def vitrin_sync(request: Request):
         return JSONResponse({"ok": False, "hata": str(e)}, status_code=500)
 
 
-@app.get("/api/vitrin-debug")
-def vitrin_debug(request: Request):
-    """Tarih format uyuşmazlığını tespit etmek için debug endpoint."""
-    kullanici = oturum_kullanicisi(request)
-    if not kullanici:
-        return JSONResponse({"hata": "Yetkisiz"}, status_code=401)
-    with db_engine.connect() as conn:
-        # jolly_sonuc tablosundan örnek
-        js_rows = conn.execute(text(
-            "SELECT grup_adi, kalkis_tarihi, vitrinde FROM jolly_sonuc LIMIT 10"
-        )).fetchall()
-        # turlar tablosundan örnek
-        t_rows = conn.execute(text(
-            "SELECT tur_adi, kalkis_tarihi FROM turlar LIMIT 10"
-        )).fetchall()
-        # JOIN sonucu kaç eşleşme var
-        match_count = conn.execute(text(
-            "SELECT COUNT(*) FROM turlar t "
-            "JOIN jolly_sonuc j ON LOWER(TRIM(t.tur_adi))=LOWER(TRIM(j.grup_adi)) "
-            "AND COALESCE(t.kalkis_tarihi,'')=COALESCE(j.kalkis_tarihi,'')"
-        )).scalar()
-        # jolly_sonuc toplam kayıt
-        js_total = conn.execute(text("SELECT COUNT(*) FROM jolly_sonuc")).scalar()
-    return JSONResponse({
-        "jolly_sonuc_toplam": js_total,
-        "join_eslesme_sayisi": match_count,
-        "jolly_sonuc_ornekler": [
-            {"grup_adi": r[0], "kalkis_tarihi": r[1], "vitrinde": r[2]} for r in js_rows
-        ],
-        "turlar_ornekler": [
-            {"tur_adi": r[0], "kalkis_tarihi": r[1]} for r in t_rows
-        ],
-    })

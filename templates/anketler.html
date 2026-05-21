@@ -578,9 +578,8 @@ function _puanColor(v, elId) {
 }
 
 async function loadStats() {
-    const d = await fetch('/api/survey/stats').then(r=>r.json()).catch(e=>{console.error('stats fetch hata:',e);return {};});
-    console.log('[loadStats]', JSON.stringify(d));
-    if (!d.ok) { console.warn('[loadStats] ok=false veya eksik, d=', d); return; }
+    const d = await fetch('/api/survey/stats').then(r=>r.json()).catch(()=>({}));
+    if (!d.ok) return;
     const s = d.stats || {};
 
     // ── Comfort Turlar ──────────────────────────────────────────────────────
