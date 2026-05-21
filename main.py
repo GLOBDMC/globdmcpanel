@@ -2160,9 +2160,24 @@ def survey_results(
                         ROUND(AVG(NULLIF((hs.puan_detay->>'otobus'),  '')::numeric)::numeric, 2) AS ort_otobus,
                         ROUND(AVG(NULLIF((hs.puan_detay->>'sofor'),   '')::numeric)::numeric, 2) AS ort_sofor,
                         ROUND(AVG(NULLIF((hs.puan_detay->>'program'), '')::numeric)::numeric, 2) AS ort_program,
+                        (SELECT jsonb_object_agg(k, ROUND(avg_val::numeric, 2))
+                         FROM (
+                             SELECT kv.key AS k, AVG(kv.value::numeric) AS avg_val
+                             FROM historical_surveys h2
+                             CROSS JOIN LATERAL jsonb_each_text(
+                                 COALESCE(h2.puan_detay->'oteller', '{}')
+                             ) kv
+                             WHERE kv.value ~ '^[0-9]+[.]?[0-9]*$'
+                               AND COALESCE(h2.porsline_survey_id,'') = COALESCE(hs.porsline_survey_id,'')
+                               AND COALESCE(h2.tur_adi_ham,'')        = COALESCE(hs.tur_adi_ham,'')
+                               AND COALESCE(h2.kalkis_tarihi,'')      = COALESCE(hs.kalkis_tarihi,'')
+                               AND COALESCE(h2.rehber_adi,'')         = COALESCE(hs.rehber_adi,'')
+                             GROUP BY kv.key
+                         ) _h
+                        ) AS oteller_ort,
                     """
                 else:
-                    sub_avg_expr = "NULL AS ort_otel, NULL AS ort_otobus, NULL AS ort_sofor, NULL AS ort_program,"
+                    sub_avg_expr = "NULL AS ort_otel, NULL AS ort_otobus, NULL AS ort_sofor, NULL AS ort_program, NULL AS oteller_ort,"
 
                 rows = conn.execute(text(f"""
                     SELECT
@@ -2219,7 +2234,8 @@ def survey_results(
                         hs.match_confidence,
                         hs.matched_jt_kodu,
                         hs.import_batch,
-                        hs.created_at::text,
+                        hs.created_at::text  AS created_at,
+                        COALESCE(hs.kalkis_tarihi, hs.created_at::text) AS survey_date,
                         {bolge_expr}    AS bolge,
                         {otel_adi_expr} AS otel_adi,
                         t.tur_adi       AS eslesen_tur,
@@ -2272,6 +2288,14 @@ def survey_results(
             oteller = pd_raw.get("oteller") or {}
             otel_vals = [v for v in oteller.values() if isinstance(v, (int, float))]
             d["otel_ort_puani"] = round(sum(otel_vals)/len(otel_vals), 2) if otel_vals else None
+
+        # Gruplu modda oteller_ort JSON parse (şehir bazlı ortalamalar)
+        if grup:
+            oo = d.get("oteller_ort")
+            if oo and isinstance(oo, str):
+                try: oo = json.loads(oo)
+                except Exception: oo = {}
+            d["oteller_ort"] = oo or {}
 
         for k, v in list(d.items()):
             if hasattr(v, "isoformat"):
