@@ -2001,6 +2001,22 @@ async def apify_webhook(request: Request):
     return JSONResponse({"ok": True, "aktör": aktor_tur, "item_sayisi": len(items), **sonuc})
 
 
+@app.post("/api/porsline/reset-ratelimit")
+def porsline_reset_ratelimit(request: Request):
+    """Porsline rate-limit backoff'unu sıfırlar. Sadece admin."""
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+    import porsline_service as _ps
+    old_backoff = _ps._rl_backoff_until
+    _ps._rl_backoff_until = 0.0
+    _ps._rl_interval      = _ps._rl_base_interval
+    import time as _t
+    kalan = max(0, old_backoff - _t.time())
+    logger.info("PORSLINE rate-limit sıfırlandı (kalan=%.0fs)", kalan)
+    return JSONResponse({"ok": True, "sıfırlanan_backoff_saniye": int(kalan)})
+
+
 @app.post("/api/porsline/stats-sync")
 def porsline_stats_sync(request: Request, force: bool = False, interval: float = 5.0):
     """
@@ -2021,15 +2037,11 @@ def porsline_stats_sync(request: Request, force: bool = False, interval: float =
 
     def _run():
         import porsline_service as _ps
-        old_interval = _ps._rl_interval
-        old_base     = _ps._rl_base_interval
-        try:
-            _ps._rl_interval      = interval
-            _ps._rl_base_interval = interval
-            _porsline_stats_worker(task_id, force, kullanici["kullanici_adi"])
-        finally:
-            _ps._rl_interval      = old_interval
-            _ps._rl_base_interval = old_base
+        # Mevcut backoff'u temizle — yavaş interval kullandığımız için gerek yok
+        _ps._rl_backoff_until = 0.0
+        _ps._rl_interval      = interval
+        _ps._rl_base_interval = interval
+        _porsline_stats_worker(task_id, force, kullanici["kullanici_adi"])
 
     threading.Thread(target=_run, daemon=True).start()
     return JSONResponse({"ok": True, "task_id": task_id,
