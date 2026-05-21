@@ -310,6 +310,61 @@ def create_tur_kart_router(db_engine, templates) -> APIRouter:
         except Exception as e:
             return JSONResponse({"hata": str(e)}, status_code=500)
 
+    # ── API: Program PDF Dışa Aktar ───────────────────────────────────────────
+
+    @router.get("/api/tur/{jt_kodu}/export-pdf")
+    def api_tur_export_pdf(request: Request, jt_kodu: str):
+        """
+        DB'deki program ve uçuş verisinden PDF üretir.
+        Gordios auth gerektirmez — panele erişimi olan herkes indirebilir.
+        """
+        from main import oturum_kullanicisi
+        from fastapi.responses import Response
+        kullanici = oturum_kullanicisi(request)
+        if not kullanici:
+            return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+        # Tur temel bilgileri
+        try:
+            with db_engine.connect() as conn:
+                tur_row = conn.execute(text(
+                    "SELECT tur_adi, kalkis_tarihi, havayolu FROM turlar WHERE jt_kodu = :jt"
+                ), {"jt": jt_kodu}).fetchone()
+                detay_row = conn.execute(text(
+                    "SELECT program_json, ucus_json FROM tur_detaylar WHERE jt_kodu = :jt"
+                ), {"jt": jt_kodu}).fetchone()
+        except Exception as e:
+            return JSONResponse({"hata": str(e)}, status_code=500)
+
+        if not detay_row:
+            return JSONResponse({"hata": "Tur programı bulunamadı — önce Gordios sync yapın"}, status_code=404)
+
+        program_gunler = _json.loads(detay_row[0] or "[]")
+        ucus_listesi   = _json.loads(detay_row[1] or "[]")
+
+        if not program_gunler and not ucus_listesi:
+            return JSONResponse({"hata": "Program verisi henüz çekilmemiş"}, status_code=404)
+
+        tur_adi       = tur_row[0] if tur_row else jt_kodu
+        kalkis_tarihi = tur_row[1] if tur_row else ""
+        havayolu      = tur_row[2] if tur_row else ""
+
+        try:
+            pdf_bytes = _build_program_pdf(
+                jt_kodu, tur_adi, kalkis_tarihi, havayolu,
+                program_gunler, ucus_listesi,
+            )
+        except Exception as e:
+            logger.error("export-pdf [%s]: %s", jt_kodu, e, exc_info=True)
+            return JSONResponse({"hata": f"PDF oluşturulamadı: {e}"}, status_code=500)
+
+        safe_ad = "".join(c if c.isalnum() or c in "-_" else "_" for c in jt_kodu)
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="tur-programi-{safe_ad}.pdf"'},
+        )
+
     # ── API: Snapshot Geçmişi ─────────────────────────────────────────────────
 
     @router.get("/api/tur/{jt_kodu}/snapshots")
@@ -487,3 +542,195 @@ def _run_gordios_sync(jt_kodu: str) -> dict:
         "program_baslik": raw.get("program_baslik", ""),
         "hata":           raw.get("hata"),
     }
+
+
+# ── PDF Üretimi ──────────────────────────────────────────────────────────────
+
+def _build_program_pdf(jt_kodu: str, tur_adi: str, kalkis_tarihi: str,
+                       havayolu: str, program_gunler: list, ucus_listesi: list) -> bytes:
+    """
+    DB'deki program ve uçuş verisinden reportlab ile PDF üretir.
+    Gordios auth gerektirmez — panele erişimi olan herkes indirebilir.
+    """
+    from io import BytesIO
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.lib import colors
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+        HRFlowable, KeepTogether,
+    )
+    from reportlab.lib.enums import TA_LEFT, TA_CENTER
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=2*cm, rightMargin=2*cm,
+        topMargin=2*cm, bottomMargin=2*cm,
+        title=f"Tur Programı — {jt_kodu}",
+    )
+
+    W = A4[0] - 4*cm  # kullanılabilir genişlik
+
+    # ── Stiller ──────────────────────────────────────────────────────────────
+    base = getSampleStyleSheet()
+
+    s_baslik = ParagraphStyle(
+        "baslik",
+        fontName="Helvetica-Bold", fontSize=15,
+        textColor=colors.HexColor("#1e293b"),
+        spaceAfter=4,
+    )
+    s_altyazi = ParagraphStyle(
+        "altyazi",
+        fontName="Helvetica", fontSize=9,
+        textColor=colors.HexColor("#64748b"),
+        spaceAfter=2,
+    )
+    s_bolum = ParagraphStyle(
+        "bolum",
+        fontName="Helvetica-Bold", fontSize=10,
+        textColor=colors.HexColor("#1e40af"),
+        spaceBefore=14, spaceAfter=6,
+    )
+    s_gun_no = ParagraphStyle(
+        "gun_no",
+        fontName="Helvetica-Bold", fontSize=9,
+        textColor=colors.HexColor("#ffffff"),
+    )
+    s_gun_baslik = ParagraphStyle(
+        "gun_baslik",
+        fontName="Helvetica-Bold", fontSize=10,
+        textColor=colors.HexColor("#1e293b"),
+        spaceAfter=3,
+    )
+    s_gun_icerik = ParagraphStyle(
+        "gun_icerik",
+        fontName="Helvetica", fontSize=9,
+        textColor=colors.HexColor("#374151"),
+        leading=13, spaceAfter=4,
+    )
+    s_tablo_baslik = ParagraphStyle(
+        "tablo_baslik",
+        fontName="Helvetica-Bold", fontSize=8,
+        textColor=colors.white,
+    )
+    s_tablo_hucre = ParagraphStyle(
+        "tablo_hucre",
+        fontName="Helvetica", fontSize=8,
+        textColor=colors.HexColor("#1e293b"),
+        leading=11,
+    )
+    s_footer = ParagraphStyle(
+        "footer",
+        fontName="Helvetica", fontSize=7,
+        textColor=colors.HexColor("#94a3b8"),
+        alignment=TA_CENTER,
+    )
+
+    story = []
+
+    # ── Başlık bloğu ─────────────────────────────────────────────────────────
+    story.append(Paragraph(tur_adi or jt_kodu, s_baslik))
+    meta_parts = [f"Kod: {jt_kodu}"]
+    if kalkis_tarihi: meta_parts.append(f"Kalkış: {kalkis_tarihi}")
+    if havayolu:      meta_parts.append(f"Havayolu: {havayolu}")
+    story.append(Paragraph("  ·  ".join(meta_parts), s_altyazi))
+    story.append(HRFlowable(width=W, thickness=1, color=colors.HexColor("#e2e8f0"),
+                             spaceAfter=10))
+
+    # ── Uçuş Bilgileri ───────────────────────────────────────────────────────
+    if ucus_listesi:
+        story.append(Paragraph("UÇUŞ BİLGİLERİ", s_bolum))
+
+        tbl_data = [[
+            Paragraph("Yön", s_tablo_baslik),
+            Paragraph("Uçuş No", s_tablo_baslik),
+            Paragraph("Kalkış", s_tablo_baslik),
+            Paragraph("Varış", s_tablo_baslik),
+            Paragraph("Havayolu", s_tablo_baslik),
+        ]]
+        for u in ucus_listesi:
+            tbl_data.append([
+                Paragraph(u.get("yon", ""), s_tablo_hucre),
+                Paragraph(u.get("ucus_no", ""), s_tablo_hucre),
+                Paragraph(
+                    f"{u.get('kalkis_saat','')}\n{u.get('kalkis_yeri','')}", s_tablo_hucre
+                ),
+                Paragraph(
+                    f"{u.get('varis_saat','')}\n{u.get('varis_yeri','')}", s_tablo_hucre
+                ),
+                Paragraph(u.get("havayolu", ""), s_tablo_hucre),
+            ])
+
+        col_w = [W*0.12, W*0.13, W*0.28, W*0.28, W*0.19]
+        tbl = Table(tbl_data, colWidths=col_w, repeatRows=1)
+        tbl.setStyle(TableStyle([
+            ("BACKGROUND",  (0,0), (-1,0), colors.HexColor("#1e40af")),
+            ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.HexColor("#f8fafc"), colors.white]),
+            ("GRID",        (0,0), (-1,-1), 0.4, colors.HexColor("#cbd5e1")),
+            ("VALIGN",      (0,0), (-1,-1), "TOP"),
+            ("LEFTPADDING",  (0,0), (-1,-1), 5),
+            ("RIGHTPADDING", (0,0), (-1,-1), 5),
+            ("TOPPADDING",   (0,0), (-1,-1), 4),
+            ("BOTTOMPADDING",(0,0), (-1,-1), 4),
+        ]))
+        story.append(tbl)
+
+    # ── Günlük Program ────────────────────────────────────────────────────────
+    if program_gunler:
+        story.append(Paragraph("GÜNLÜK PROGRAM", s_bolum))
+
+        for gun in program_gunler:
+            gun_no   = str(gun.get("gun", ""))
+            baslik   = gun.get("baslik", "")
+            icerik   = gun.get("icerik", "").replace("\n", "<br/>")
+
+            # Gün numarası baloncuğu + başlık yan yana tablo olarak
+            badge = Table(
+                [[Paragraph(gun_no, s_gun_no)]],
+                colWidths=[0.65*cm],
+                rowHeights=[0.65*cm],
+            )
+            badge.setStyle(TableStyle([
+                ("BACKGROUND",   (0,0), (0,0), colors.HexColor("#1e40af")),
+                ("ALIGN",        (0,0), (0,0), "CENTER"),
+                ("VALIGN",       (0,0), (0,0), "MIDDLE"),
+                ("ROUNDEDCORNERS", [3]),
+                ("LEFTPADDING",  (0,0), (0,0), 2),
+                ("RIGHTPADDING", (0,0), (0,0), 2),
+            ]))
+
+            header_row = Table(
+                [[badge, Paragraph(baslik, s_gun_baslik)]],
+                colWidths=[0.9*cm, W - 0.9*cm],
+            )
+            header_row.setStyle(TableStyle([
+                ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+                ("LEFTPADDING",  (0,0), (-1,-1), 0),
+                ("RIGHTPADDING", (0,0), (-1,-1), 0),
+                ("TOPPADDING",   (0,0), (-1,-1), 0),
+                ("BOTTOMPADDING",(0,0), (-1,-1), 4),
+            ]))
+
+            block = [header_row]
+            if icerik:
+                block.append(Paragraph(icerik, s_gun_icerik))
+            block.append(HRFlowable(width=W, thickness=0.4,
+                                    color=colors.HexColor("#e2e8f0"), spaceAfter=6))
+
+            story.append(KeepTogether(block))
+
+    # ── Footer ────────────────────────────────────────────────────────────────
+    from datetime import datetime as _dt
+    story.append(Spacer(1, 0.5*cm))
+    story.append(HRFlowable(width=W, thickness=0.5, color=colors.HexColor("#e2e8f0"),
+                             spaceAfter=4))
+    story.append(Paragraph(
+        f"Glob DMC Panel · {jt_kodu} · {_dt.now().strftime('%d.%m.%Y')} tarihinde oluşturuldu",
+        s_footer,
+    ))
+
+    doc.build(story)
+    return buf.getvalue()
