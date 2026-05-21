@@ -1999,6 +1999,50 @@ def survey_stats(request: Request):
     })
 
 
+@app.get("/api/survey/stats-debug")
+def survey_stats_debug(request: Request):
+    """Geçici: DB'deki tur adlarını ve ham sayıları gösterir."""
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+    try:
+        with db_engine.connect() as conn:
+            # En çok geçen tur_adi_ham değerleri
+            ham = conn.execute(text("""
+                SELECT tur_adi_ham, COUNT(*) AS adet
+                FROM historical_surveys
+                WHERE match_status != 'rejected'
+                GROUP BY tur_adi_ham
+                ORDER BY adet DESC
+                LIMIT 30
+            """)).fetchall()
+            # turlar tablosundaki tur adları
+            turlar = conn.execute(text("""
+                SELECT tur_adi, COUNT(*) AS adet
+                FROM turlar
+                GROUP BY tur_adi
+                ORDER BY adet DESC
+                LIMIT 30
+            """)).fetchall()
+            # eşleşen kayıtlarda t.tur_adi örnekleri
+            eslesen = conn.execute(text("""
+                SELECT COALESCE(t.tur_adi, hs.tur_adi_ham) AS isim, COUNT(*) AS adet
+                FROM historical_surveys hs
+                LEFT JOIN turlar t ON t.jt_kodu = hs.matched_jt_kodu
+                WHERE hs.match_status != 'rejected'
+                GROUP BY 1
+                ORDER BY adet DESC
+                LIMIT 30
+            """)).fetchall()
+        return JSONResponse({
+            "ok": True,
+            "tur_adi_ham": [{"isim": r[0], "adet": r[1]} for r in ham],
+            "turlar_tablosu": [{"isim": r[0], "adet": r[1]} for r in turlar],
+            "eslesen_coalesce": [{"isim": r[0], "adet": r[1]} for r in eslesen],
+        })
+    except Exception as exc:
+        return JSONResponse({"ok": False, "hata": str(exc)})
+
 
 @app.post("/api/survey/match/{survey_id}")
 def survey_match_confirm(survey_id: int, request: Request, jt_kodu: str = Form(...)):
