@@ -831,171 +831,85 @@ async function syncTekPorsline(sid, force = false) {
 }
 
 async function forceResyncAll() {
-    if (!_porslineAnketler.length) {
-        await loadPorslineSurveys();
-        if (!_porslineAnketler.length) { alert('Önce "Listele" butonuna basın'); return; }
-    }
-    const resultEl = document.getElementById('forceResyncResult');
-    const btn      = document.getElementById('btnForceResync');
-    resultEl.classList.remove('hidden');
-    btn.disabled = true;
-
-    let toplam_gncl = 0, toplam_eklenen = 0, hatali = 0;
-    const surveys = _porslineAnketler;
-
-    for (let i = 0; i < surveys.length; i++) {
-        const s   = surveys[i];
-        const sid = String(s.id || s.survey_id || '');
-        if (!sid) continue;
-
-        resultEl.textContent = `⏳ ${i+1}/${surveys.length}: ${s.title || sid}`;
-        const url = `/api/porsline/survey/${sid}/sync?force=true`;
-
-        try {
-            const resp = await fetch(url, { method: 'POST' });
-            const d    = await resp.json();
-
-            if (d.ok) {
-                toplam_gncl    += d.guncellenen || 0;
-                toplam_eklenen += d.eklenen     || 0;
-            } else if (parseInt(d.hata) === 429 || resp.status === 429) {
-                // Rate limit — bekle ve aynı anketi tekrar dene
-                const retrySecs = parseInt(d.retry_after) || 120;
-                let kalan = retrySecs;
-                const tick = setInterval(() => {
-                    kalan--;
-                    resultEl.textContent = `⏱ Rate limit — ${Math.floor(kalan/60)}dk ${kalan%60}s sonra devam (${i+1}/${surveys.length})`;
-                    if (kalan <= 0) clearInterval(tick);
-                }, 1000);
-                await new Promise(r => setTimeout(r, retrySecs * 1000));
-                clearInterval(tick);
-                i--; // aynı anketi tekrar dene
-                continue;
-            } else {
-                hatali++;
-            }
-        } catch(e) {
-            hatali++;
-        }
-
-        // Her sync arasında 6 saniye bekle (Porsline rate limit koruması)
-        if (i < surveys.length - 1) {
-            await new Promise(r => setTimeout(r, 6000));
-        }
-    }
-
-    btn.disabled = false;
-    const hataStr = hatali > 0 ? `, ${hatali} hatalı` : '';
-    resultEl.textContent = `✓ Tamamlandı: ${toplam_eklenen} yeni, ${toplam_gncl} güncellendi${hataStr}`;
-    loadStats();
-    yukleAnketler();
+    await _runBackendSyncAll(true);
 }
 
-async function syncAllPorsline(startIdx = 0) {
-    if (!_porslineAnketler.length) {
-        await loadPorslineSurveys();
-        if (!_porslineAnketler.length) return;
-    }
+async function syncAllPorsline() {
+    await _runBackendSyncAll(false);
+}
+
+/**
+ * Backend /api/porsline/sync-all endpoint'ini çağırır.
+ * force=false → incremental (yanıt sayısı değişmemişse atla)
+ * force=true  → tümünü yeniden çek
+ */
+async function _runBackendSyncAll(force = false) {
     const progress = document.getElementById('porslineSyncProgress');
     const resultEl = document.getElementById('porslineSyncResult');
     const msgEl    = document.getElementById('porslineSyncMsg');
     const pctEl    = document.getElementById('porslineSyncPct');
     const barEl    = document.getElementById('porslineSyncBar');
     const btn      = document.getElementById('btnSyncAll');
+    const btnForce = document.getElementById('btnForceResync');
+    const forceResEl = document.getElementById('forceResyncResult');
 
     progress.classList.remove('hidden');
     resultEl.classList.add('hidden');
-    btn.disabled = true;
-    btn.textContent = 'Devam ediyor...';
+    if (forceResEl) forceResEl.classList.add('hidden');
+    if (btn)      { btn.disabled = true;      btn.textContent = '⏳ Çalışıyor...'; }
+    if (btnForce) { btnForce.disabled = true; }
 
-    const surveys = _porslineAnketler;
-    const total   = surveys.length;
-    let eklenenToplam = 0, hataCount = 0, done = 0;
+    msgEl.textContent = force
+        ? '⏳ Tüm anketler yeniden çekiliyor (force)…'
+        : '⏳ Değişen anketler kontrol ediliyor…';
+    pctEl.textContent = '';
+    barEl.style.width = '10%';
 
-    for (let i = startIdx; i < total; i++) {
-        const s   = surveys[i];
-        const sid = s.id || s.survey_id;
-        msgEl.textContent = `Sync ediliyor: ${esc(s.title || sid)} (${i+1}/${total})`;
+    try {
+        const url = '/api/porsline/sync-all' + (force ? '?force=true' : '');
+        const d   = await fetch(url, { method: 'POST' })
+            .then(r => r.json())
+            .catch(e => ({ ok: false, hata: e.message }));
 
-        const rowBtn = document.getElementById(`ps-btn-${sid}`);
-        const rowSt  = document.getElementById(`ps-status-${sid}`);
-        if (rowBtn) { rowBtn.disabled = true; rowBtn.textContent = '⏳'; }
-        if (rowSt)  { rowSt.textContent = '⏳'; rowSt.classList.remove('hidden'); }
+        barEl.style.width = '100%';
 
-        try {
-            const d = await fetch(`/api/porsline/survey/${sid}/sync`, { method: 'POST' })
-                .then(r=>r.json());
+        if (d.ok) {
+            const eklenen  = d.toplam_eklenen || 0;
+            const islenen  = d.islenen  || 0;
+            const atlandi  = d.atlandi  || 0;
+            const toplam   = d.anket_sayisi || 0;
+            const hataliSay = (d.detay || []).filter(r => !r.ok && !r.atlandı).length;
 
-            if (d.ok) {
-                const yeni = d.eklenen || 0;
-                eklenenToplam += yeni;
-                if (rowBtn) { rowBtn.textContent = '✓'; rowBtn.style.color = '#4ade80'; }
-                if (rowSt) {
-                    rowSt.textContent = yeni > 0 ? `+${yeni}` : `✓`;
-                    rowSt.className = 'text-xs ' + (yeni > 0 ? 'text-green-400' : 'text-slate-500');
-                }
-            } else if (parseInt(d.hata) === 429) {
-                barEl.style.background = '#f59e0b';
-                _syncResumeIndex = i;
-                btn.disabled = false;
-                btn.textContent = `▶ Devam Et (${i}/${total})`;
-                btn.onclick = () => syncAllPorsline(_syncResumeIndex);
-
-                const retryAfterSecs = d.retry_after ? parseInt(d.retry_after) : null;
-                if (retryAfterSecs && retryAfterSecs > 0) {
-                    let remaining = retryAfterSecs;
-                    const ci = setInterval(() => {
-                        remaining--;
-                        if (remaining <= 0) {
-                            clearInterval(ci);
-                            msgEl.textContent = `Rate limit kalktı — "Devam Et"e basın (${i}/${total})`;
-                            barEl.style.background = '#10b981';
-                        } else {
-                            const m = Math.floor(remaining / 60), sec = remaining % 60;
-                            msgEl.textContent = `⏱ Rate limit (${i}/${total}) — ${m > 0 ? m+'dk ' : ''}${sec}s`;
-                        }
-                    }, 1000);
-                } else {
-                    msgEl.textContent = `⏱ Rate limit (${i}/${total}) — birkaç dakika bekleyin`;
-                }
-                return;
-            } else {
-                hataCount++;
-                if (rowBtn) rowBtn.disabled = false;
-                if (rowSt) { rowSt.textContent = '⚠ Hata'; rowSt.className = 'text-xs text-red-400 ml-1'; rowSt.classList.remove('hidden'); }
+            resultEl.classList.remove('hidden');
+            resultEl.innerHTML = `
+                <div class="rounded-lg p-3 text-xs ${hataliSay === 0
+                    ? 'bg-green-900/20 border border-green-700/30 text-green-300'
+                    : 'bg-yellow-900/20 border border-yellow-700/30 text-yellow-300'}">
+                    ✓ Sync tamamlandı ·
+                    ${toplam} anket ·
+                    ${islenen} işlendi · ${atlandi} atlandı ·
+                    <strong>+${eklenen}</strong> yeni yanıt
+                    ${hataliSay > 0 ? ` · <span class="text-red-400">${hataliSay} hata</span>` : ''}
+                </div>`;
+            msgEl.textContent = `✓ Tamamlandı`;
+            loadStats();
+            yukleAnketler();
+            if (eklenen > 0) {
+                setTimeout(() => document.getElementById('anketListeSection')
+                    ?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 400);
             }
-        } catch(e) {
-            hataCount++;
-            if (rowBtn) rowBtn.disabled = false;
-            if (rowSt) { rowSt.textContent = '⚠ Hata'; rowSt.className = 'text-xs text-red-400 ml-1'; rowSt.classList.remove('hidden'); }
+        } else {
+            msgEl.textContent = `⚠ Hata: ${d.hata || 'bilinmiyor'}`;
+            barEl.style.background = '#f87171';
         }
-
-        done = i + 1;
-        const pct = Math.round((done / total) * 100);
-        pctEl.textContent = `${pct}%`;
-        barEl.style.width  = `${pct}%`;
-
-        await new Promise(res => setTimeout(res, 5000)); // Porsline rate limit koruması
+    } catch(e) {
+        msgEl.textContent = `⚠ ${e.message}`;
+        barEl.style.background = '#f87171';
     }
 
-    progress.classList.add('hidden');
-    btn.disabled = false;
-    btn.textContent = 'Tümünü Sync Et';
-    btn.onclick = () => syncAllPorsline();
-    _syncResumeIndex = 0;
-
-    resultEl.classList.remove('hidden');
-    const processedCount = total - startIdx;
-    resultEl.innerHTML = `
-        <div class="rounded-lg p-3 text-xs ${hataCount === 0 ? 'bg-green-900/20 border border-green-700/30 text-green-300' : 'bg-yellow-900/20 border border-yellow-700/30 text-yellow-300'}">
-            ✓ Sync tamamlandı · ${processedCount} anket işlendi · <strong>+${eklenenToplam}</strong> yeni yanıt eklendi
-            ${hataCount > 0 ? ` · <span class="text-red-400">${hataCount} hata</span>` : ''}
-        </div>`;
-    loadStats();
-    yukleAnketler();
-    if (eklenenToplam > 0) {
-        setTimeout(() => document.getElementById('anketListeSection')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 400);
-    }
+    if (btn)      { btn.disabled = false;      btn.textContent = 'Tümünü Sync Et'; btn.onclick = () => syncAllPorsline(); }
+    if (btnForce) { btnForce.disabled = false; }
+    setTimeout(() => { progress.classList.add('hidden'); }, 4000);
 }
 
 // ─── Rehber Kartları ─────────────────────────────────────────────────────────

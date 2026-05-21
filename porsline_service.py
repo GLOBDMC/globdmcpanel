@@ -87,17 +87,14 @@ def _get(path: str, params: dict = None) -> dict:
         return {"error": str(e)}
 
 
-def _get_with_retry(path: str, params: dict = None,
-                    max_retries: int = 4, _delay: float = 0.8) -> dict:
+def _get_with_retry(path: str, params: dict = None, max_retries: int = 3) -> dict:
     """
     _get'i çağırır; 429 (rate-limit) gelirse Retry-After kadar bekler ve tekrar dener.
-    Her denemeden önce _delay saniye uyur (Porsline'ın burst sınırı için).
+    Normal isteklerde bekleme yok — sadece 429 sonrası Retry-After süresi beklenir.
     """
     import time as _t
     last = {}
     for attempt in range(max_retries):
-        if attempt > 0 or _delay > 0:
-            _t.sleep(_delay)
         last = _get(path, params)
         if "error" not in last:
             return last
@@ -111,13 +108,12 @@ def _get_with_retry(path: str, params: dict = None,
                     pass
             import logging as _log
             _log.getLogger(__name__).warning(
-                "Porsline 429 rate-limit — %s sn bekleniyor (deneme %d/%d)",
+                "Porsline 429 rate-limit — %.0f sn bekleniyor (deneme %d/%d)",
                 wait, attempt + 1, max_retries,
             )
             _t.sleep(wait)
             continue
-        # 429 dışında hata → tekrar deneme
-        break
+        break  # 429 dışında hata → tekrar deneme yapma
     return last
 
 
