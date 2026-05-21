@@ -412,16 +412,164 @@ document.addEventListener('DOMContentLoaded', loadChart);
 setTimeout(() => location.reload(), 5000);
 {% endif %}
 
-/* ── Rehber Dropdown ───────────────────────────────────────────────── */
-let _tkRehberListesi = [];
-let _tkDdOpen = false;
+/* ── Rehber Dropdown + Profil Kartı ───────────────────────────────── */
+let _tkRehberListesi = [];   // [{id, ad_soyad, e_posta, telefon, notlar, anket_sayisi, ort_rehber, ...}]
+let _tkRehberMap    = {};    // ad_soyad → obje
+let _tkDdOpen  = false;
+let _tkKartOpen = false;
 
 fetch('/api/rehberler')
     .then(r => r.json())
-    .then(d => { if (d.ok) _tkRehberListesi = d.rehberler.filter(r => r.aktif); })
+    .then(d => {
+        if (d.ok) {
+            _tkRehberListesi = d.rehberler.filter(r => r.aktif);
+            _tkRehberListesi.forEach(r => { _tkRehberMap[r.ad_soyad] = r; });
+        }
+    })
     .catch(() => {});
 
-// Dropdown elementini oluştur
+// ── Profil kartı elementi ──────────────────────────────────────────
+const _tkKart = document.createElement('div');
+_tkKart.id = 'tkRehberKart';
+_tkKart.className = 'hidden';
+_tkKart.style.cssText = 'position:fixed;z-index:9999;background:#0f1729;border:1px solid rgba(99,130,246,0.22);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,0.6);width:260px;overflow:hidden;';
+_tkKart.innerHTML = `
+    <div style="padding:16px 16px 12px; display:flex; align-items:flex-start; gap:12px; position:relative;">
+        <div id="tkKartAvatar"
+             style="width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#1d4ed8,#6366f1);
+                    display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;
+                    color:white;flex-shrink:0;letter-spacing:0.5px;"></div>
+        <div style="flex:1;min-width:0;">
+            <div id="tkKartAd" style="font-size:14px;font-weight:600;color:#f1f5f9;line-height:1.3;"></div>
+            <div id="tkKartRozet" style="margin-top:4px;"></div>
+        </div>
+        <button onclick="tkKartKapat()" title="Kapat"
+                style="position:absolute;top:10px;right:12px;color:#475569;font-size:15px;background:none;border:none;cursor:pointer;line-height:1;">✕</button>
+    </div>
+    <div id="tkKartIletisim" style="padding:0 16px 10px; border-top:1px solid rgba(255,255,255,0.05);"></div>
+    <div id="tkKartIstatistik" style="padding:8px 16px 10px; background:rgba(255,255,255,0.02); border-top:1px solid rgba(255,255,255,0.04);display:flex;gap:16px;"></div>
+    <div style="padding:10px 12px; border-top:1px solid rgba(255,255,255,0.05); display:flex; gap:8px;">
+        <button onclick="tkKartDegistir()"
+                style="flex:1;padding:6px 10px;border-radius:8px;font-size:12px;font-weight:500;
+                       color:#cbd5e1;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);
+                       cursor:pointer;transition:background .15s;"
+                onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='rgba(255,255,255,0.06)'">
+            ✏ Değiştir
+        </button>
+        <button onclick="tkKartKaldirOnay()"
+                style="padding:6px 10px;border-radius:8px;font-size:12px;font-weight:500;
+                       color:#f87171;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.15);
+                       cursor:pointer;transition:background .15s;"
+                onmouseover="this.style.background='rgba(239,68,68,0.15)'" onmouseout="this.style.background='rgba(239,68,68,0.08)'">
+            Kaldır
+        </button>
+    </div>`;
+document.body.appendChild(_tkKart);
+
+function tkKartGoster(anchor) {
+    const hucre  = document.getElementById('rehberHucre');
+    const adSoyad = hucre.dataset.rehber;
+    if (!adSoyad) return;
+    const r = _tkRehberMap[adSoyad] || { ad_soyad: adSoyad, e_posta: '', telefon: '', notlar: '' };
+
+    // Avatar
+    const initials = adSoyad.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
+    document.getElementById('tkKartAvatar').textContent = initials;
+
+    // Ad
+    document.getElementById('tkKartAd').textContent = adSoyad;
+
+    // Rozet (anket istatistikleri)
+    const rozet = document.getElementById('tkKartRozet');
+    if (r.ort_rehber != null) {
+        const puan = parseFloat(r.ort_rehber).toFixed(1);
+        const renk = puan >= 4 ? '#34d399' : puan >= 3 ? '#fbbf24' : '#f87171';
+        rozet.innerHTML = `<span style="font-size:11px;color:${renk};font-weight:600;">★ ${puan}</span>
+            <span style="font-size:11px;color:#475569;margin-left:4px;">rehber puanı</span>`;
+    } else {
+        rozet.innerHTML = '<span style="font-size:11px;color:#475569;">Henüz puan yok</span>';
+    }
+
+    // İletişim
+    const iletisim = document.getElementById('tkKartIletisim');
+    let items = '';
+    if (r.telefon) items += `
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.04);">
+            <span style="font-size:15px;">📞</span>
+            <a href="tel:${r.telefon}" style="font-size:12px;color:#60a5fa;text-decoration:none;"
+               onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${r.telefon}</a>
+        </div>`;
+    if (r.e_posta) items += `
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.04);">
+            <span style="font-size:15px;">✉</span>
+            <a href="mailto:${r.e_posta}" style="font-size:12px;color:#60a5fa;word-break:break-all;text-decoration:none;"
+               onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${r.e_posta}</a>
+        </div>`;
+    if (r.notlar) items += `
+        <div style="display:flex;align-items:flex-start;gap:8px;padding:7px 0;">
+            <span style="font-size:14px;flex-shrink:0;">📝</span>
+            <span style="font-size:11px;color:#94a3b8;line-height:1.5;">${r.notlar}</span>
+        </div>`;
+    iletisim.innerHTML = items || '<div style="padding:8px 0;font-size:11px;color:#475569;">İletişim bilgisi eklenmemiş</div>';
+    iletisim.style.display = items ? '' : 'none';
+
+    // İstatistik
+    const istatistik = document.getElementById('tkKartIstatistik');
+    if (r.anket_sayisi != null) {
+        istatistik.innerHTML = `
+            <div style="text-align:center;flex:1;">
+                <div style="font-size:16px;font-weight:700;color:#f1f5f9;">${r.anket_sayisi || 0}</div>
+                <div style="font-size:10px;color:#475569;margin-top:1px;">Anket</div>
+            </div>
+            <div style="width:1px;background:rgba(255,255,255,0.05);"></div>
+            <div style="text-align:center;flex:1;">
+                <div style="font-size:16px;font-weight:700;color:#f1f5f9;">${r.tur_sayisi || 0}</div>
+                <div style="font-size:10px;color:#475569;margin-top:1px;">Tur</div>
+            </div>
+            ${r.ort_genel != null ? `
+            <div style="width:1px;background:rgba(255,255,255,0.05);"></div>
+            <div style="text-align:center;flex:1;">
+                <div style="font-size:16px;font-weight:700;color:#f1f5f9;">${parseFloat(r.ort_genel).toFixed(1)}</div>
+                <div style="font-size:10px;color:#475569;margin-top:1px;">Genel Ort.</div>
+            </div>` : ''}`;
+        istatistik.style.display = 'flex';
+    } else {
+        istatistik.style.display = 'none';
+    }
+
+    // Konum
+    const rect = anchor.getBoundingClientRect();
+    _tkKart.style.top  = (rect.bottom + window.scrollY + 6) + 'px';
+    _tkKart.style.left = Math.min(rect.left + window.scrollX, window.innerWidth - 275) + 'px';
+    _tkKart.classList.remove('hidden');
+    _tkKartOpen = true;
+}
+
+function tkKartKapat() {
+    _tkKart.classList.add('hidden');
+    _tkKartOpen = false;
+}
+
+function tkKartDegistir() {
+    tkKartKapat();
+    // Dropdown'ı doğrudan aç
+    const anchor = document.getElementById('rehberHucre');
+    const rect = anchor.getBoundingClientRect();
+    _tkDd.style.top  = (rect.bottom + window.scrollY + 6) + 'px';
+    _tkDd.style.left = Math.min(rect.left + window.scrollX, window.innerWidth - 320) + 'px';
+    document.getElementById('tkRehberSearch').value = '';
+    tkRehberRenderList('');
+    _tkDd.classList.remove('hidden');
+    _tkDdOpen = true;
+    setTimeout(() => document.getElementById('tkRehberSearch').focus(), 50);
+}
+
+function tkKartKaldirOnay() {
+    tkKartKapat();
+    tkRehberKaydet('', null);
+}
+
+// ── Dropdown elementi ──────────────────────────────────────────────
 const _tkDd = document.createElement('div');
 _tkDd.id = 'tkRehberDropdown';
 _tkDd.className = 'hidden';
@@ -471,16 +619,26 @@ function tkRehberRenderList(query) {
 }
 
 function tkRehberAc() {
-    if (_tkDdOpen) { tkRehberKapat(); return; }
-    const anchor = document.getElementById('rehberHucre');
-    const rect = anchor.getBoundingClientRect();
-    _tkDd.style.top  = (rect.bottom + window.scrollY + 6) + 'px';
-    _tkDd.style.left = Math.min(rect.left + window.scrollX, window.innerWidth - 320) + 'px';
-    document.getElementById('tkRehberSearch').value = '';
-    tkRehberRenderList('');
-    _tkDd.classList.remove('hidden');
-    _tkDdOpen = true;
-    setTimeout(() => document.getElementById('tkRehberSearch').focus(), 50);
+    const hucre  = document.getElementById('rehberHucre');
+    const anchor = hucre;
+
+    // Zaten bir şey açıksa kapat
+    if (_tkDdOpen)  { tkRehberKapat(); return; }
+    if (_tkKartOpen) { tkKartKapat(); return; }
+
+    // Rehber atanmışsa → profil kartı, atanmamışsa → dropdown
+    if (hucre.dataset.rehber) {
+        tkKartGoster(anchor);
+    } else {
+        const rect = anchor.getBoundingClientRect();
+        _tkDd.style.top  = (rect.bottom + window.scrollY + 6) + 'px';
+        _tkDd.style.left = Math.min(rect.left + window.scrollX, window.innerWidth - 320) + 'px';
+        document.getElementById('tkRehberSearch').value = '';
+        tkRehberRenderList('');
+        _tkDd.classList.remove('hidden');
+        _tkDdOpen = true;
+        setTimeout(() => document.getElementById('tkRehberSearch').focus(), 50);
+    }
 }
 
 function tkRehberKapat() {
@@ -500,12 +658,6 @@ document.getElementById('tkRehberKaldir').addEventListener('click', () => {
 
 document.getElementById('tkRehberSearch').addEventListener('input', e => {
     tkRehberRenderList(e.target.value);
-});
-
-document.addEventListener('click', e => {
-    if (_tkDdOpen && !_tkDd.contains(e.target) && !e.target.closest('#rehberHucre')) {
-        tkRehberKapat();
-    }
 });
 
 function tkRehberKaydet(deger, rid) {
@@ -528,5 +680,13 @@ function tkRehberKaydet(deger, rid) {
         }
     }).catch(() => alert('Kayıt başarısız'));
 }
+
+/* ── Dışarı tıklanınca kapat ─────────────────────────────────────── */
+document.addEventListener('click', e => {
+    const anchor = document.getElementById('rehberHucre');
+    if (!anchor || e.target.closest('#rehberHucre')) return;
+    if (_tkDdOpen  && !_tkDd.contains(e.target))   tkRehberKapat();
+    if (_tkKartOpen && !_tkKart.contains(e.target)) tkKartKapat();
+});
 </script>
 {% endblock %}
