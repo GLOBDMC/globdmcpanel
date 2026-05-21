@@ -2933,8 +2933,13 @@ def porsline_sync_survey(survey_id: str, request: Request, force: bool = False):
                     mesaj = f"Rate limit — {retry_after} sonra tekrar deneyin"
             else:
                 mesaj = "Rate limit — birkaç dakika bekleyip tekrar deneyin"
+            # retry_after'ı her zaman integer saniye olarak dön
+            try:
+                retry_secs = int(float(str(retry_after).strip())) if retry_after else 120
+            except (ValueError, TypeError):
+                retry_secs = 120
             return JSONResponse({"ok": False, "hata": 429, "mesaj": mesaj,
-                                 "retry_after": retry_after},
+                                 "retry_after": retry_secs},
                                 status_code=429)
         # 404 veya başka hata → responses/ endpoint'ini dene
         from porsline_service import _get

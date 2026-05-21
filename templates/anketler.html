@@ -645,9 +645,26 @@ async function syncTekPorsline(sid, force = false) {
         loadStats();
         yukleAnketler();
         if (yeni > 0 || gncl > 0) document.getElementById('anketListeSection')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else if (parseInt(d.hata) === 429) {
+        // Rate limit — countdown göster
+        const retrySecs = parseInt(d.retry_after) || 120;
+        let kalan = retrySecs;
+        btn.textContent = '⏱'; btn.disabled = true;
+        const tick = setInterval(() => {
+            kalan--;
+            const m = Math.floor(kalan/60), s2 = kalan%60;
+            st.textContent = `⏱ ${m > 0 ? m+'dk ' : ''}${s2}s`;
+            st.className = 'text-xs text-amber-400';
+            if (kalan <= 0) {
+                clearInterval(tick);
+                st.textContent = '— tekrar deneyin';
+                btn.textContent = 'Sync'; btn.disabled = false;
+            }
+        }, 1000);
+        st.classList.remove('hidden');
     } else {
-        const hata = d.insert_hata || d.mesaj || d.hata || 'hata';
-        st.textContent = '⚠ ' + String(hata).slice(0, 50);
+        const hata = d.mesaj || d.insert_hata || String(d.hata || 'hata');
+        st.textContent = '⚠ ' + hata.slice(0, 50);
         st.className = 'text-xs text-red-400';
         btn.textContent = '✕'; btn.disabled = false;
     }
@@ -661,28 +678,55 @@ async function forceResyncAll() {
     const resultEl = document.getElementById('forceResyncResult');
     const btn      = document.getElementById('btnForceResync');
     resultEl.classList.remove('hidden');
-    resultEl.textContent = '⏳ Force re-sync başlıyor...';
     btn.disabled = true;
 
-    let toplam_gncl = 0, toplam_eklenen = 0, done = 0;
+    let toplam_gncl = 0, toplam_eklenen = 0, hatali = 0;
     const surveys = _porslineAnketler;
-    for (const s of surveys) {
+
+    for (let i = 0; i < surveys.length; i++) {
+        const s   = surveys[i];
         const sid = String(s.id || s.survey_id || '');
         if (!sid) continue;
-        resultEl.textContent = `⏳ ${done+1}/${surveys.length}: ${s.title || sid}`;
+
+        resultEl.textContent = `⏳ ${i+1}/${surveys.length}: ${s.title || sid}`;
         const url = `/api/porsline/survey/${sid}/sync?force=true`;
+
         try {
-            const d = await fetch(url, { method: 'POST' }).then(r=>r.json());
+            const resp = await fetch(url, { method: 'POST' });
+            const d    = await resp.json();
+
             if (d.ok) {
                 toplam_gncl    += d.guncellenen || 0;
                 toplam_eklenen += d.eklenen     || 0;
+            } else if (parseInt(d.hata) === 429 || resp.status === 429) {
+                // Rate limit — bekle ve aynı anketi tekrar dene
+                const retrySecs = parseInt(d.retry_after) || 120;
+                let kalan = retrySecs;
+                const tick = setInterval(() => {
+                    kalan--;
+                    resultEl.textContent = `⏱ Rate limit — ${Math.floor(kalan/60)}dk ${kalan%60}s sonra devam (${i+1}/${surveys.length})`;
+                    if (kalan <= 0) clearInterval(tick);
+                }, 1000);
+                await new Promise(r => setTimeout(r, retrySecs * 1000));
+                clearInterval(tick);
+                i--; // aynı anketi tekrar dene
+                continue;
+            } else {
+                hatali++;
             }
-        } catch(e) {}
-        done++;
-        await new Promise(r => setTimeout(r, 400)); // rate-limit önlemi
+        } catch(e) {
+            hatali++;
+        }
+
+        // Her sync arasında 6 saniye bekle (Porsline rate limit koruması)
+        if (i < surveys.length - 1) {
+            await new Promise(r => setTimeout(r, 6000));
+        }
     }
+
     btn.disabled = false;
-    resultEl.textContent = `✓ Tamamlandı: ${toplam_eklenen} yeni eklendi, ${toplam_gncl} kayıt güncellendi`;
+    const hataStr = hatali > 0 ? `, ${hatali} hatalı` : '';
+    resultEl.textContent = `✓ Tamamlandı: ${toplam_eklenen} yeni, ${toplam_gncl} güncellendi${hataStr}`;
     loadStats();
     yukleAnketler();
 }
@@ -730,7 +774,7 @@ async function syncAllPorsline(startIdx = 0) {
                     rowSt.textContent = yeni > 0 ? `+${yeni}` : `✓`;
                     rowSt.className = 'text-xs ' + (yeni > 0 ? 'text-green-400' : 'text-slate-500');
                 }
-            } else if (d.rate_limited) {
+            } else if (parseInt(d.hata) === 429) {
                 barEl.style.background = '#f59e0b';
                 _syncResumeIndex = i;
                 btn.disabled = false;
