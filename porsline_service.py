@@ -249,14 +249,18 @@ def parse_response_from_questions(questions: list, response: dict) -> dict:
         if q_id:
             answers_by_q[q_id] = val
 
-    musteri_adi  = ""
-    acente_adi   = ""
-    rehber_puani = None
-    otobus_puani = None
-    sofor_puani  = None
-    program_puani= None
-    otel_puanlari= {}
-    tavsiye_puan = None
+    musteri_adi       = ""
+    acente_adi        = ""
+    rehber_puani      = None
+    otobus_puani      = None
+    sofor_puani       = None
+    program_puani     = None
+    operasyon_puani   = None
+    transfer_puani    = None
+    ekstra_tur_puani  = None
+    genel_memnuniyet  = None
+    otel_puanlari     = {}
+    tavsiye_puan      = None
 
     for q in questions:
         qid   = q["id"]
@@ -275,24 +279,39 @@ def parse_response_from_questions(questions: list, response: dict) -> dict:
                 acente_adi = str(val).strip()
         elif qtype == 7:  # yıldız
             v = _safe_float(val)
-            if "rehber" in title:
+            if any(k in title for k in ["genel memnuniyet", "genel olarak memnun",
+                                         "genel değerlendirme", "genel puan", "overall"]):
+                genel_memnuniyet = v
+            elif "rehber" in title:
                 rehber_puani = v
-            elif "otobüs" in title or "otobus" in title or "konfor" in title:
+            elif any(k in title for k in ["otobüs", "otobus", "araç konfor", "konfor"]):
                 otobus_puani = v
-            elif "şoför" in title or "sofor" in title or "şofor" in title:
+            elif any(k in title for k in ["şoför", "sofor", "şofor", "sürücü"]):
                 sofor_puani = v
+            elif any(k in title for k in ["operasyon", "organizasyon"]):
+                operasyon_puani = v
+            elif any(k in title for k in ["transfer", "havaalani", "havaalanı", "havalimanı"]):
+                transfer_puani = v
+            elif any(k in title for k in ["ekstra tur", "isteğe bağlı", "optional", "seçmeli"]):
+                ekstra_tur_puani = v
             elif "program" in title:
                 program_puani = v
-            elif "tavsiye" in title or "öneri" in title or "önerir" in title:
-                tavsiye_puan = v
+            elif any(k in title for k in ["tavsiye", "öneri", "önerir"]):
+                tavsiye_puan = _safe_float(val)
             elif any(k in title for k in ["otel", "hotel"]):
                 short = _str_field(q.get("title"))[:60]
                 if v is not None:
                     otel_puanlari[short] = v
 
-    all_scores = [v for v in [rehber_puani, otobus_puani, sofor_puani, program_puani]
-                  + list(otel_puanlari.values()) if v is not None]
-    genel_puan = round(sum(all_scores) / len(all_scores), 2) if all_scores else None
+    # Genel puan: adanmış soru varsa onu kullan
+    if genel_memnuniyet is not None:
+        genel_puan = genel_memnuniyet
+    else:
+        sub_scores = [v for v in [
+            rehber_puani, otobus_puani, sofor_puani, program_puani,
+            operasyon_puani, transfer_puani, ekstra_tur_puani,
+        ] + list(otel_puanlari.values()) if v is not None]
+        genel_puan = round(sum(sub_scores) / len(sub_scores), 2) if sub_scores else None
 
     return {
         "musteri_adi":  musteri_adi,
@@ -301,11 +320,15 @@ def parse_response_from_questions(questions: list, response: dict) -> dict:
         "genel_puan":   genel_puan,
         "rehber_puani": rehber_puani,
         "puan_detay": {
-            "oteller":  otel_puanlari,
-            "otobus":   otobus_puani,
-            "sofor":    sofor_puani,
-            "program":  program_puani,
-            "tavsiye":  tavsiye_puan,
+            "oteller":          otel_puanlari,
+            "otobus":           otobus_puani,
+            "sofor":            sofor_puani,
+            "program":          program_puani,
+            "operasyon":        operasyon_puani,
+            "transfer":         transfer_puani,
+            "ekstra_tur":       ekstra_tur_puani,
+            "genel_memnuniyet": genel_memnuniyet,
+            "tavsiye":          tavsiye_puan,
         },
     }
 
@@ -493,40 +516,76 @@ def parse_response_row(header: list[str], row: list) -> dict:
         return row[idx]
 
     # Sütun indeksleri
-    i_musteri = _find_col(header, ["isim", "ad soyad", "ad-soyad", "name"])
-    i_acente  = _find_col(header, ["acente"])
-    i_rehber  = _find_col(header, ["rehber"])
-    i_otobus  = _find_col(header, ["otobüs", "otobus"])
-    i_sofor   = _find_col(header, ["şoför", "sofor", "şofor"])
-    i_program = _find_col(header, ["program"])
-    i_tavsiye = _find_col(header, ["tavsiye", "öneri"])
+    i_musteri     = _find_col(header, ["isim", "ad soyad", "ad-soyad", "name"])
+    i_acente      = _find_col(header, ["acente"])
+    i_rehber      = _find_col(header, ["rehber"])
+    i_otobus      = _find_col(header, ["otobüs", "otobus", "araç konfor", "arac konfor"])
+    i_sofor       = _find_col(header, ["şoför", "sofor", "şofor", "sürücü", "surucu"])
+    i_program     = _find_col(header, ["program", "tur programı", "tur programi"])
+    i_operasyon   = _find_col(header, ["operasyon", "organizasyon", "örgütlen", "orgutlen"])
+    i_transfer    = _find_col(header, ["transfer", "havaalani", "havaalanı", "havalimanı", "havalimanı servis"])
+    i_ekstra_tur  = _find_col(header, ["ekstra tur", "isteğe bağlı", "isteğe bagli", "optional", "seçmeli"])
+    i_genel_memnuniyet = _find_col(header, [
+        "genel memnuniyet", "genel olarak memnun", "genel değerlendirme",
+        "genel izlenim", "genel puan", "overall", "genel olarak",
+    ])
+    i_tavsiye = _find_col(header, ["tavsiye", "öneri", "önerir misiniz", "onerir misiniz"])
 
-    # Otel puanları: "otel" veya şehir adı içeren tüm sütunlar
-    otel_puanlari = {}
-    otel_keywords = ["otel", "hotel", "barcelona", "valencia", "granada",
-                     "sevilla", "madrid", "roma", "paris", "amsterdam",
-                     "venedik", "istanbul", "ankara", "bodrum"]
+    # Otel puanları: "otel", "hotel" veya şehir/ülke adı içeren tüm sütunlar
+    otel_puanlari: dict = {}
+    otel_keywords = [
+        "otel", "hotel",
+        "barcelona", "barselona", "valencia", "granada", "sevilla", "madrid",
+        "roma", "floransa", "venedik", "napoli", "milano", "sicilya",
+        "paris", "nice", "lyon",
+        "amsterdam", "bruksel",
+        "berlin", "frankfurt", "munih", "münchen",
+        "zurich", "zürih", "cenevre", "interlaken",
+        "viyana", "salzburg",
+        "prag", "budapes", "varso",
+        "lizbon", "porto",
+        "londra",
+        "atina", "selanik", "santorini",
+        "tiflis", "baku", "bakü", "erivan",
+        "tokyo", "osaka", "bangkok", "bali", "singapur",
+        "dubai", "kahire", "marakes",
+        "istanbul", "ankara", "bodrum", "antalya", "kapadokya",
+    ]
     for i, h in enumerate(header):
-        h_str = _str_field(h)
-        if any(kw in h_str.lower() for kw in otel_keywords):
+        h_str = _str_field(h).lower()
+        if any(kw in h_str for kw in otel_keywords):
+            # rehber, program, operasyon sütunlarıyla çakışmayı önle
+            if any(kw in h_str for kw in ["rehber", "program", "operasyon", "transfer"]):
+                continue
             v = _safe_float(get(i))
             if v is not None:
-                short = h_str.split("?")[0].strip()[:60]
-                otel_puanlari[short] = v
+                label = _str_field(header[i]).split("?")[0].strip()[:60]
+                otel_puanlari[label] = v
 
     # Rehber adı header'dan
     rehber_adi = _extract_guide_name(header)
 
-    # Puanlar
-    rehber_puani = _safe_float(get(i_rehber))
-    otobus_puani = _safe_float(get(i_otobus))
-    sofor_puani  = _safe_float(get(i_sofor))
-    program_puani= _safe_float(get(i_program))
+    # Sayısal puanlar
+    rehber_puani   = _safe_float(get(i_rehber))
+    otobus_puani   = _safe_float(get(i_otobus))
+    sofor_puani    = _safe_float(get(i_sofor))
+    program_puani  = _safe_float(get(i_program))
+    operasyon_puani= _safe_float(get(i_operasyon))
+    transfer_puani = _safe_float(get(i_transfer))
+    ekstra_tur_puani = _safe_float(get(i_ekstra_tur))
+    genel_memnuniyet = _safe_float(get(i_genel_memnuniyet))
+    tavsiye_puani  = _safe_float(get(i_tavsiye))   # skala ise float, yoksa metin
 
-    # Genel puan = tüm sayısal puanların ortalaması
-    all_scores = [v for v in [rehber_puani, otobus_puani, sofor_puani, program_puani]
-                  + list(otel_puanlari.values()) if v is not None]
-    genel_puan = round(sum(all_scores) / len(all_scores), 2) if all_scores else None
+    # Genel puan: adanmış "genel memnuniyet" sorusu varsa onu kullan
+    # yoksa tüm sayısal alt puanların ortalamasını al
+    if genel_memnuniyet is not None:
+        genel_puan = genel_memnuniyet
+    else:
+        sub_scores = [v for v in [
+            rehber_puani, otobus_puani, sofor_puani, program_puani,
+            operasyon_puani, transfer_puani, ekstra_tur_puani,
+        ] + list(otel_puanlari.values()) if v is not None]
+        genel_puan = round(sum(sub_scores) / len(sub_scores), 2) if sub_scores else None
 
     return {
         "musteri_adi":  str(get(i_musteri) or "").strip(),
@@ -535,11 +594,15 @@ def parse_response_row(header: list[str], row: list) -> dict:
         "genel_puan":   genel_puan,
         "rehber_puani": rehber_puani,
         "puan_detay": {
-            "oteller":  otel_puanlari,
-            "otobus":   otobus_puani,
-            "sofor":    sofor_puani,
-            "program":  program_puani,
-            "tavsiye":  str(get(i_tavsiye) or ""),
+            "oteller":          otel_puanlari,
+            "otobus":           otobus_puani,
+            "sofor":            sofor_puani,
+            "program":          program_puani,
+            "operasyon":        operasyon_puani,
+            "transfer":         transfer_puani,
+            "ekstra_tur":       ekstra_tur_puani,
+            "genel_memnuniyet": genel_memnuniyet,
+            "tavsiye":          tavsiye_puani,
         },
     }
 

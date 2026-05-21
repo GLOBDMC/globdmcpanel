@@ -165,7 +165,7 @@
 </div>
 
 <!-- ── Stats bar ───────────────────────────────────────────────────────── -->
-<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
+<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
     <div class="card text-center py-3">
         <div class="text-2xl font-bold text-slate-100" id="stToplam">—</div>
         <div class="text-xs text-slate-500 mt-1">Toplam Yanıt</div>
@@ -181,6 +181,38 @@
     <div class="card text-center py-3">
         <div class="text-2xl font-bold text-green-400" id="stEslesen">—</div>
         <div class="text-xs text-slate-500 mt-1">Tur Eşleşmesi</div>
+    </div>
+</div>
+
+<!-- ── Kategori puanları ─────────────────────────────────────────────── -->
+<div id="kategoriPuanlar" class="flex flex-wrap gap-2 mb-8 hidden">
+    <div class="rounded-lg px-3 py-2 text-center" style="background:rgba(15,23,41,.6);border:1px solid rgba(255,255,255,.05);min-width:80px">
+        <div class="text-sm font-semibold text-orange-300" id="stOtel">—</div>
+        <div class="text-xs text-slate-600 mt-0.5">🏨 Otel</div>
+    </div>
+    <div class="rounded-lg px-3 py-2 text-center" style="background:rgba(15,23,41,.6);border:1px solid rgba(255,255,255,.05);min-width:80px">
+        <div class="text-sm font-semibold text-blue-300" id="stOtobus">—</div>
+        <div class="text-xs text-slate-600 mt-0.5">🚌 Otobüs</div>
+    </div>
+    <div class="rounded-lg px-3 py-2 text-center" style="background:rgba(15,23,41,.6);border:1px solid rgba(255,255,255,.05);min-width:80px">
+        <div class="text-sm font-semibold text-blue-300" id="stSofor">—</div>
+        <div class="text-xs text-slate-600 mt-0.5">🧑‍✈️ Şoför</div>
+    </div>
+    <div class="rounded-lg px-3 py-2 text-center" style="background:rgba(15,23,41,.6);border:1px solid rgba(255,255,255,.05);min-width:80px">
+        <div class="text-sm font-semibold text-purple-300" id="stProgram">—</div>
+        <div class="text-xs text-slate-600 mt-0.5">🗺 Program</div>
+    </div>
+    <div class="rounded-lg px-3 py-2 text-center" style="background:rgba(15,23,41,.6);border:1px solid rgba(255,255,255,.05);min-width:80px">
+        <div class="text-sm font-semibold text-teal-300" id="stOperasyon">—</div>
+        <div class="text-xs text-slate-600 mt-0.5">⚙️ Operasyon</div>
+    </div>
+    <div class="rounded-lg px-3 py-2 text-center" style="background:rgba(15,23,41,.6);border:1px solid rgba(255,255,255,.05);min-width:80px">
+        <div class="text-sm font-semibold text-sky-300" id="stTransfer">—</div>
+        <div class="text-xs text-slate-600 mt-0.5">🚐 Transfer</div>
+    </div>
+    <div class="rounded-lg px-3 py-2 text-center" style="background:rgba(15,23,41,.6);border:1px solid rgba(255,255,255,.05);min-width:80px">
+        <div class="text-sm font-semibold text-pink-300" id="stEkstraTur">—</div>
+        <div class="text-xs text-slate-600 mt-0.5">✨ Ekstra Tur</div>
     </div>
 </div>
 
@@ -207,7 +239,7 @@
 <!-- ══════════════════════════════════════════════════════════════════════
      ANKETLER
      ══════════════════════════════════════════════════════════════════ -->
-<div>
+<div id="anketListeSection">
     <div class="sec-header">
         <span class="sec-title">Anketler</span>
         <span id="anketSayac" class="text-xs text-slate-600"></span>
@@ -372,15 +404,39 @@ function showToast(msg, type = 'info') {
 }
 
 // ─── Stats ───────────────────────────────────────────────────────────────────
+function _fmt(v) { return (v != null && v !== 0) ? parseFloat(v).toFixed(2) : '—'; }
+
 async function loadStats() {
     const d = await fetch('/api/survey/stats').then(r=>r.json()).catch(()=>({}));
     if (!d.ok) return;
     const s = d.stats || {};
+
     document.getElementById('stToplam').textContent     = (s.toplam || 0).toLocaleString('tr');
-    document.getElementById('stOrtPuan').textContent    = s.ort_puan      ? s.ort_puan.toFixed(2)      : '—';
-    document.getElementById('stRehberPuan').textContent = s.ort_rehber_puan ? s.ort_rehber_puan.toFixed(2) : '—';
+    document.getElementById('stOrtPuan').textContent    = _fmt(s.ort_puan);
+    document.getElementById('stRehberPuan').textContent = _fmt(s.ort_rehber_puan);
     const pct = s.toplam ? Math.round((s.eslendi || 0) / s.toplam * 100) : 0;
     document.getElementById('stEslesen').textContent    = s.toplam ? pct + '%' : '—';
+
+    // Kategori puanları — en az bir değer varsa satırı göster
+    const katMap = {
+        stOtel:      s.ort_otel,
+        stOtobus:    s.ort_otobus,
+        stSofor:     s.ort_sofor,
+        stProgram:   s.ort_program,
+        stOperasyon: s.ort_operasyon,
+        stTransfer:  s.ort_transfer,
+        stEkstraTur: s.ort_ekstra_tur,
+    };
+    let hasKat = false;
+    for (const [id, val] of Object.entries(katMap)) {
+        const el = document.getElementById(id);
+        if (el) {
+            el.textContent = _fmt(val);
+            if (val != null && val !== 0) hasKat = true;
+        }
+    }
+    const katWrap = document.getElementById('kategoriPuanlar');
+    if (katWrap) katWrap.classList.toggle('hidden', !hasKat);
 }
 
 // ─── Porsline Sync Paneli ────────────────────────────────────────────────────
@@ -441,12 +497,19 @@ async function syncTekPorsline(sid) {
         const yeni   = d.eklenen   || 0;
         const mevcut = d.zaten_var || 0;
         const api    = d.yanit_sayisi || 0;
-        st.textContent = yeni > 0 ? `+${yeni} kayıt` : mevcut > 0 ? `✓ ${mevcut}` : `+0 (API:${api})`;
-        st.className = 'text-xs ' + (yeni > 0 ? 'text-green-400' : 'text-slate-500');
-        btn.textContent = '✓';
-        btn.style.color = '#4ade80';
+        const ih     = d.insert_hata ? String(d.insert_hata).slice(0, 60) : '';
+        if (ih) {
+            st.textContent = `⚠ ${ih}`;
+            st.className = 'text-xs text-red-400';
+        } else {
+            st.textContent = yeni > 0 ? `+${yeni} kayıt` : mevcut > 0 ? `✓ ${mevcut} zaten var` : `+0 (API:${api})`;
+            st.className = 'text-xs ' + (yeni > 0 ? 'text-green-400' : 'text-slate-500');
+        }
+        btn.textContent = ih ? '⚠' : '✓';
+        btn.style.color = ih ? '#f87171' : '#4ade80';
         loadStats();
         yukleAnketler();
+        if (yeni > 0) document.getElementById('anketListeSection')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } else {
         const hata = d.insert_hata || d.mesaj || d.hata || 'hata';
         st.textContent = '⚠ ' + String(hata).slice(0, 50);
@@ -557,6 +620,9 @@ async function syncAllPorsline(startIdx = 0) {
         </div>`;
     loadStats();
     yukleAnketler();
+    if (eklenenToplam > 0) {
+        setTimeout(() => document.getElementById('anketListeSection')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 400);
+    }
 }
 
 // ─── Rehber Kartları ─────────────────────────────────────────────────────────
@@ -858,11 +924,34 @@ async function yukleAnketler() {
     }
 
     liste.innerHTML = d.items.map(item => {
-        const p  = item.genel_puan  != null ? parseFloat(item.genel_puan)  : null;
-        const rp = item.rehber_puani != null ? parseFloat(item.rehber_puani) : null;
+        const p   = item.genel_puan   != null ? parseFloat(item.genel_puan)   : null;
+        const rp  = item.rehber_puani != null ? parseFloat(item.rehber_puani) : null;
+        const pd  = item.puan_detay   || {};
+        const op  = item.otel_ort_puani != null ? parseFloat(item.otel_ort_puani) : null;
+
         const durumBadge = item.match_status === 'matched' && item.matched_jt_kodu
             ? `<span style="font-size:10px;padding:2px 8px;border-radius:999px;background:rgba(16,185,129,.12);color:#34D399;border:1px solid rgba(16,185,129,.2);">✓ ${esc(item.matched_jt_kodu)}</span>`
             : `<span style="font-size:10px;padding:2px 8px;border-radius:999px;background:rgba(100,116,139,.1);color:#64748B;border:1px solid rgba(100,116,139,.15);">Arşiv</span>`;
+
+        // Sub-score mini badge'leri — sadece değer olan kategoriler görünür
+        const subScores = [
+            { icon: '🏨', label: 'Otel',      val: op },
+            { icon: '🚌', label: 'Otobüs',    val: pd.otobus    != null ? parseFloat(pd.otobus)    : null },
+            { icon: '🗺', label: 'Program',   val: pd.program   != null ? parseFloat(pd.program)   : null },
+            { icon: '⚙️', label: 'Operasyon', val: pd.operasyon != null ? parseFloat(pd.operasyon) : null },
+            { icon: '🚐', label: 'Transfer',  val: pd.transfer  != null ? parseFloat(pd.transfer)  : null },
+            { icon: '✨', label: 'Ekstra',    val: pd.ekstra_tur!= null ? parseFloat(pd.ekstra_tur): null },
+        ].filter(s => s.val != null);
+
+        const subLine = subScores.length
+            ? `<div class="flex items-center gap-2 mt-1.5 flex-wrap">
+                ${subScores.map(s => `
+                    <span style="font-size:10px;color:#64748b;" title="${s.label}">
+                        ${s.icon} <span style="color:#94a3b8;font-weight:600;">${s.val.toFixed(1)}</span>
+                    </span>`).join('')}
+               </div>`
+            : '';
+
         return `
         <div class="result-card flex items-center gap-3">
             <div class="puan-badge ${puanBadgeClass(p)}">${p != null ? p.toFixed(1) : '—'}</div>
@@ -877,6 +966,7 @@ async function yukleAnketler() {
                     ${item.bolge        ? `<span>📍 ${esc(item.bolge)}</span>` : ''}
                     ${item.otel_adi     ? `<span>🏨 ${esc(item.otel_adi)}</span>` : ''}
                 </div>
+                ${subLine}
             </div>
             ${rp != null ? `<div class="text-xs text-yellow-400 flex-shrink-0 text-right">${rp.toFixed(1)} ★<div class="text-slate-600" style="font-size:10px;">rehber</div></div>` : ''}
         </div>`;

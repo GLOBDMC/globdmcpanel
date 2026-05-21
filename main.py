@@ -478,31 +478,12 @@ def tablo_olustur():
               AND puan_detay->'oteller' IS NOT NULL
               AND puan_detay->'oteller' != '{}'::jsonb
         """))
-        # unique: aynı yanıt iki kez girilmez
-        # NOT: DEFERRABLE constraint ON CONFLICT ile çalışmaz — non-deferrable olmalı
-        conn.execute(text("""
-            DO $$
-            BEGIN
-                -- Varsa eski DEFERRABLE constraint'i düşür
-                IF EXISTS (
-                    SELECT 1 FROM pg_constraint
-                    WHERE conname = 'hs_porsline_response_uniq'
-                      AND condeferrable = TRUE
-                ) THEN
-                    ALTER TABLE historical_surveys
-                        DROP CONSTRAINT hs_porsline_response_uniq;
-                END IF;
-                -- Non-deferrable olarak yeniden oluştur
-                IF NOT EXISTS (
-                    SELECT 1 FROM pg_constraint
-                    WHERE conname = 'hs_porsline_response_uniq'
-                ) THEN
-                    ALTER TABLE historical_surveys
-                        ADD CONSTRAINT hs_porsline_response_uniq
-                        UNIQUE (porsline_response_id);
-                END IF;
-            END $$;
-        """))
+        # Eski full-unique constraint'i düşür (varsa) — partial index ile değiştiriliyor
+        # NOT: CREATE INDEX ayrı transaction'da, aşağıda
+        conn.execute(text(
+            "ALTER TABLE historical_surveys "
+            "DROP CONSTRAINT IF EXISTS hs_porsline_response_uniq"
+        ))
 
         # ── Historical surveys tablosu ──────────────────────────────────
         conn.execute(text("""
@@ -616,6 +597,19 @@ def tablo_olustur():
         except Exception as e:
             logger.warning("tur_detaylar migration step %d: %s", _i, e)
     logger.info("tur_detaylar tablosu hazir")
+
+    # Porsline partial unique index — boş string'ler (eski veri) dışlanır
+    # Ayrı transaction: ana bloktan bağımsız, varolan duplikatlara toleranslı
+    try:
+        with db_engine.connect() as conn:
+            conn.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_hs_porsline_resp_uniq
+                ON historical_surveys(porsline_response_id)
+                WHERE porsline_response_id IS NOT NULL AND porsline_response_id != ''
+            """))
+            conn.commit()
+    except Exception as e:
+        logger.warning("idx_hs_porsline_resp_uniq migration: %s", e)
 
     logger.info("Tablolar hazir")
 
@@ -1839,8 +1833,23 @@ def survey_stats(request: Request):
                               THEN CAST(genel_puan AS NUMERIC) END), 2)       AS ort_puan,
                     ROUND(AVG(CASE WHEN rehber_puani IS NOT NULL
                               THEN CAST(rehber_puani AS NUMERIC) END), 2)     AS ort_rehber_puan,
-                    ROUND(AVG(CAST(match_confidence AS NUMERIC)), 1)           AS ort_confidence
+                    ROUND(AVG(CAST(match_confidence AS NUMERIC)), 1)           AS ort_confidence,
+                    -- Kategori puanları (puan_detay JSONB'den)
+                    ROUND(AVG(NULLIF(puan_detay->>'otobus', '')::numeric), 2)        AS ort_otobus,
+                    ROUND(AVG(NULLIF(puan_detay->>'sofor', '')::numeric), 2)         AS ort_sofor,
+                    ROUND(AVG(NULLIF(puan_detay->>'program', '')::numeric), 2)       AS ort_program,
+                    ROUND(AVG(NULLIF(puan_detay->>'operasyon', '')::numeric), 2)     AS ort_operasyon,
+                    ROUND(AVG(NULLIF(puan_detay->>'transfer', '')::numeric), 2)      AS ort_transfer,
+                    ROUND(AVG(NULLIF(puan_detay->>'ekstra_tur', '')::numeric), 2)    AS ort_ekstra_tur,
+                    ROUND(AVG(NULLIF(puan_detay->>'genel_memnuniyet', '')::numeric), 2) AS ort_genel_memnuniyet,
+                    -- Otel ortalaması: her satırdaki otel avg'larının ortalaması
+                    ROUND(AVG(
+                        (SELECT AVG(val::numeric)
+                         FROM jsonb_each_text(COALESCE(puan_detay->'oteller', '{}'))
+                         WHERE val ~ '^[0-9]+[.]?[0-9]*$')
+                    ), 2) AS ort_otel
                 FROM historical_surveys
+                WHERE match_status != 'rejected'
             """)).fetchone()
 
             top_guides = conn.execute(text("""
@@ -1868,7 +1877,20 @@ def survey_stats(request: Request):
         stats = {}
         if row:
             for k, v in dict(row._mapping).items():
-                stats[k] = float(v) if v is not None else 0
+                # Sayısal alanlar float, None → None kalır (0 değil — 0'ı "veri yok"tan ayırt etmek için)
+                if v is None:
+                    stats[k] = None
+                else:
+                    try:
+                        stats[k] = float(v)
+                    except (TypeError, ValueError):
+                        stats[k] = v
+            # toplam'ı int göster
+            stats["toplam"]     = int(stats.get("toplam") or 0)
+            stats["eslendi"]    = int(stats.get("eslendi") or 0)
+            stats["inceleme"]   = int(stats.get("inceleme") or 0)
+            stats["reddedildi"] = int(stats.get("reddedildi") or 0)
+            stats["bekliyor"]   = int(stats.get("bekliyor") or 0)
 
         return JSONResponse({
             "ok":        True,
@@ -2090,16 +2112,24 @@ def survey_results(
 
     def row_to_dict(r):
         d = dict(r._mapping)
-        if d.get("puan_detay") and isinstance(d["puan_detay"], str):
+        pd = d.get("puan_detay")
+        if pd and isinstance(pd, str):
             try:
-                d["puan_detay"] = json.loads(d["puan_detay"])
+                pd = json.loads(pd)
             except Exception:
-                d["puan_detay"] = {}
-        for k, v in d.items():
+                pd = {}
+        elif not pd:
+            pd = {}
+        d["puan_detay"] = pd
+
+        # Otel ortalama puanını hesapla (otel dict → sayısal değerlerin ortalaması)
+        oteller = pd.get("oteller") or {}
+        otel_vals = [v for v in oteller.values() if isinstance(v, (int, float))]
+        d["otel_ort_puani"] = round(sum(otel_vals) / len(otel_vals), 2) if otel_vals else None
+
+        for k, v in list(d.items()):
             if hasattr(v, "isoformat"):
                 d[k] = v.isoformat()
-            elif v is None:
-                d[k] = None
         return d
 
     return JSONResponse({
@@ -2308,10 +2338,14 @@ def rehberler_listesi(request: Request):
                     COUNT(DISTINCT hs.matched_jt_kodu)
                         FILTER (WHERE hs.matched_jt_kodu != '')                      AS tur_sayisi
                 FROM rehberler r
-                LEFT JOIN historical_surveys hs ON hs.rehber_id = r.id
-                    AND hs.match_status = 'matched'
+                LEFT JOIN historical_surveys hs ON (
+                    -- FK ile bağlantı varsa kullan
+                    hs.rehber_id = r.id
+                    -- yoksa isim benzerliğiyle eşleştir (Porsline sync'ten gelen veriler için)
+                    OR (hs.rehber_id IS NULL AND LOWER(hs.rehber_adi) = LOWER(r.ad_soyad))
+                )
                 GROUP BY r.id
-                ORDER BY r.aktif DESC, r.ad_soyad
+                ORDER BY r.aktif DESC, anket_sayisi DESC, r.ad_soyad
             """)).fetchall()
         return JSONResponse({"ok": True, "rehberler": _build_rehber_rows(rows, True)})
     except Exception as exc:
@@ -2862,7 +2896,9 @@ def porsline_sync_survey(survey_id: str, request: Request):
             :batch, :resp_id, :survey_id,
             :bolge, :otel_adi
         )
-        ON CONFLICT (porsline_response_id) DO NOTHING
+        ON CONFLICT (porsline_response_id)
+        WHERE porsline_response_id IS NOT NULL AND porsline_response_id != ''
+        DO NOTHING
     """
 
     # Rehber adını header veya questions'dan çıkar
@@ -3088,7 +3124,9 @@ def porsline_sync_all(request: Request):
                                 (:musteri,:rehber,:acente,:kalkis,
                                  :genel,:rehber_p,:detay,:tur_adi,
                                  :tur_id,:jt,:conf,:method,:status,:batch,:resp_id,:survey_id)
-                            ON CONFLICT (porsline_response_id) DO NOTHING
+                            ON CONFLICT (porsline_response_id)
+                            WHERE porsline_response_id IS NOT NULL AND porsline_response_id != ''
+                            DO NOTHING
                         """), {
                             "musteri":  pr.get("musteri_adi") or "",
                             "rehber":   pr.get("rehber_adi") or parsed.get("rehber_adi") or "",
