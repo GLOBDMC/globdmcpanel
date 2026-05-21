@@ -87,6 +87,40 @@ def _get(path: str, params: dict = None) -> dict:
         return {"error": str(e)}
 
 
+def _get_with_retry(path: str, params: dict = None,
+                    max_retries: int = 4, _delay: float = 0.8) -> dict:
+    """
+    _get'i çağırır; 429 (rate-limit) gelirse Retry-After kadar bekler ve tekrar dener.
+    Her denemeden önce _delay saniye uyur (Porsline'ın burst sınırı için).
+    """
+    import time as _t
+    last = {}
+    for attempt in range(max_retries):
+        if attempt > 0 or _delay > 0:
+            _t.sleep(_delay)
+        last = _get(path, params)
+        if "error" not in last:
+            return last
+        if last["error"] == 429:
+            wait = 60.0
+            ra = last.get("retry_after")
+            if ra:
+                try:
+                    wait = min(float(ra), 300)  # en fazla 5 dk bekle
+                except (ValueError, TypeError):
+                    pass
+            import logging as _log
+            _log.getLogger(__name__).warning(
+                "Porsline 429 rate-limit — %s sn bekleniyor (deneme %d/%d)",
+                wait, attempt + 1, max_retries,
+            )
+            _t.sleep(wait)
+            continue
+        # 429 dışında hata → tekrar deneme
+        break
+    return last
+
+
 # ── API çağrıları ─────────────────────────────────────────────────────────────
 
 def test_connection() -> dict:
@@ -182,13 +216,13 @@ def get_responses(survey_id: str, page: int = 1, page_size: int = 100) -> dict:
     last_error = None
     retry_after = None
     for ep in endpoints:
-        result = _get(ep, params)
+        result = _get_with_retry(ep, params)
         if "error" in result:
             last_error = result["error"]
             retry_after = result.get("retry_after")
             if result["error"] == 404:
                 continue  # sonraki URL'yi dene
-            break  # 429 veya başka hata → dur
+            break  # diğer hata → dur
         # Başarılı
         header = result.get("header") or result.get("headers") or []
         body   = (result.get("body") or result.get("results")
