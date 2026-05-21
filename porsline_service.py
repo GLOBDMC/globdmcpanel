@@ -232,6 +232,10 @@ def get_responses(survey_id: str, page: int = 1, page_size: int = 100) -> dict:
         return {"ok": True, "header": header, "body": body,
                 "count": count, "_endpoint": ep}
 
+    # Tüm endpoint'ler 404 döndürdü → henüz yanıt yok (hata değil, boş)
+    if last_error == 404:
+        return {"ok": True, "header": [], "body": [], "count": 0, "_no_responses": True}
+
     return {"ok": False, "hata": last_error or "responses endpoint bulunamadı",
             "retry_after": retry_after}
 
@@ -246,6 +250,9 @@ def get_all_responses(survey_id: str) -> dict:
         chunk = get_responses(survey_id, page=page, page_size=100)
         if not chunk["ok"]:
             return chunk
+        # Henüz yanıt yok (tüm endpoint'ler 404) → boş başarı
+        if chunk.get("_no_responses"):
+            return {"ok": True, "header": [], "body": [], "count": 0, "_no_responses": True}
         if not header:
             header = chunk["header"]
         rows = chunk["body"]

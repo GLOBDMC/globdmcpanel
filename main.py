@@ -3354,7 +3354,7 @@ def porsline_sync_survey(survey_id: str, request: Request, force: bool = False):
     # Yanıtları çek — results-table çalışıyorsa onu kullan
     resp = get_all_responses(survey_id)
 
-    # results-table başarısız (429 veya 404) → questions bazlı parse yap
+    # results-table başarısız (429) veya henüz yanıt yok (404→_no_responses)
     use_question_parse = False
     if not resp["ok"]:
         if resp.get("hata") == 429:
@@ -3369,7 +3369,6 @@ def porsline_sync_survey(survey_id: str, request: Request, force: bool = False):
                     mesaj = f"Rate limit — {retry_after} sonra tekrar deneyin"
             else:
                 mesaj = "Rate limit — birkaç dakika bekleyip tekrar deneyin"
-            # retry_after'ı her zaman integer saniye olarak dön
             try:
                 retry_secs = int(float(str(retry_after).strip())) if retry_after else 120
             except (ValueError, TypeError):
@@ -3377,26 +3376,15 @@ def porsline_sync_survey(survey_id: str, request: Request, force: bool = False):
             return JSONResponse({"ok": False, "hata": 429, "mesaj": mesaj,
                                  "retry_after": retry_secs},
                                 status_code=429)
-        # 404 veya başka hata → responses/ endpoint'ini dene
-        from porsline_service import _get
-        resp2 = _get(f"/api/v2/surveys/{survey_id}/responses/",
-                     {"page": 1, "page_size": 100})
-        if "error" in resp2:
-            return JSONResponse({"ok": False, "hata": resp2["error"],
-                                 "mesaj": "Yanıt endpoint'i bulunamadı"}, status_code=500)
-        rows = (resp2.get("results") or resp2.get("responses") or
-                resp2.get("body") or [])
-        # Eğer questions listesi boşsa (folders cache'de questions yoksa) tam detayı çek
-        if not questions:
-            logger.info("PORSLINE_SYNC [%s] questions boş, tam survey detayı çekiliyor...", survey_id)
-            full_detail = _get(f"/api/v2/surveys/{survey_id}/")
-            if "error" not in full_detail:
-                questions = full_detail.get("questions") or []
-                logger.info("PORSLINE_SYNC [%s] tam detaydan %d soru alındı", survey_id, len(questions))
-            else:
-                logger.warning("PORSLINE_SYNC [%s] tam detay alınamadı: %s", survey_id, full_detail.get("error"))
-        header = build_header_from_questions(questions)
-        use_question_parse = True
+        # Başka hata — 0 yanıt döndür (sessiz başarı)
+        logger.info("PORSLINE_SYNC [%s] yanıt alınamadı (hata=%s), 0 yanıt olarak işleniyor",
+                    survey_id, resp.get("hata"))
+        header = []
+        rows   = []
+    elif resp.get("_no_responses"):
+        # Tüm endpoint'ler 404 → henüz yanıt yok
+        header = []
+        rows   = []
     else:
         header = resp["header"]
         rows   = resp["body"]
@@ -3771,6 +3759,12 @@ def porsline_sync_all(request: Request, force: bool = False):
             resp = get_all_responses(sid)
             if not resp["ok"]:
                 results.append({"survey_id": sid, "ok": False, "hata": resp.get("hata")})
+                continue
+
+            # Henüz yanıt yok (404) — hata değil, sessizce atla
+            if resp.get("_no_responses") or resp.get("count", 0) == 0 and not resp.get("header"):
+                results.append({"survey_id": sid, "ok": True, "atlandı": True,
+                                 "neden": "henüz yanıt yok"})
                 continue
 
             header = resp["header"]
