@@ -232,21 +232,70 @@ def build_header_from_questions(questions: list) -> list:
     return [_str_field(q.get("title")) for q in questions if q.get("type") in (2, 3, 7)]
 
 
+def _all_title_variants(q) -> list[str]:
+    """
+    Soru objesinden TÜM dil varyantlarını küçük harfle döndürür.
+    Porsline bazen {"en": "Guide Rating", "tr": "Rehber Puanı", "fa": "..."} döner.
+    Anahtar kelime aramasında herhangi bir varyantta eşleşmesi yeterli.
+    """
+    raw = q.get("title")
+    if isinstance(raw, dict):
+        return [str(v).lower() for v in raw.values() if v]
+    elif raw:
+        return [str(raw).lower()]
+    return [""]
+
+
+def _unwrap_answer(ans: dict):
+    """
+    Porsline cevap objesinden ham değeri güvenli şekilde çıkarır.
+    Farklı formatları destekler:
+      {"answer": "3"}
+      {"answer": {"value": 3, "label": "3 yıldız"}}
+      {"answer": null, "value": "3"}
+      {"choices": [{"id": 5, "text": "Madrid"}]}
+    """
+    raw = ans.get("answer")
+    # None ise diğer alanlara bak (0 değerini kaybetme: sadece None'a bak)
+    if raw is None:
+        raw = ans.get("value")
+    if raw is None:
+        raw = ans.get("text")
+    if raw is None:
+        # choices formatı: seçim sorusu
+        choices = ans.get("choices") or ans.get("selected_choices") or []
+        if choices:
+            # Seçilen seçeneğin text veya label'ını al
+            texts = [str(c.get("text") or c.get("label") or c.get("value") or "")
+                     for c in choices if isinstance(c, dict)]
+            raw = ", ".join(t for t in texts if t) or None
+    # Dict cevap (ör. {"value": 3, "label": "3 yıldız"})
+    if isinstance(raw, dict):
+        raw = (raw.get("value") if raw.get("value") is not None else
+               raw.get("rating") if raw.get("rating") is not None else
+               raw.get("score") if raw.get("score") is not None else
+               raw.get("answer") if raw.get("answer") is not None else
+               raw.get("text") or "")
+    # Tek elemanlı liste
+    if isinstance(raw, list):
+        raw = raw[0] if len(raw) == 1 else (", ".join(str(v) for v in raw if v) or None)
+    return raw
+
+
 def parse_response_from_questions(questions: list, response: dict) -> dict:
     """
     /api/v2/surveys/{id}/responses/ endpoint'inden gelen tek yanıtı parse eder.
     response örneği: {"id": 123, "answers": [{"question": 456, "answer": "3"}, ...]}
     questions: survey detayındaki sorular listesi.
-    """
-    # Soru ID → soru objesi haritası
-    q_map = {q["id"]: q for q in questions}
 
+    Dil-bağımsız eşleştirme: soru başlığının TÜM dil varyantlarında (tr/en/fa) arama yapılır.
+    """
     # Cevapları soru ID'ye göre indeksle
     answers_by_q = {}
     for ans in (response.get("answers") or response.get("answer_list") or []):
         q_id = ans.get("question") or ans.get("question_id")
-        val  = ans.get("answer") or ans.get("value") or ans.get("text") or ""
-        if q_id:
+        val  = _unwrap_answer(ans)
+        if q_id is not None and val is not None:
             answers_by_q[q_id] = val
 
     musteri_adi       = ""
@@ -263,45 +312,73 @@ def parse_response_from_questions(questions: list, response: dict) -> dict:
     tavsiye_puan      = None
 
     for q in questions:
-        qid   = q["id"]
-        title = _str_field(q.get("title")).lower()
+        qid   = q.get("id")
+        if qid is None:
+            continue
         qtype = q.get("type")
         val   = answers_by_q.get(qid)
 
         if val is None:
             continue
 
-        if qtype == 2:  # metin
-            if any(k in title for k in ["isim", "soyisim", "ad"]):
+        # Tüm dil varyantlarını al
+        variants = _all_title_variants(q)
+
+        def in_title(*keywords):
+            """Herhangi bir başlık varyantında herhangi bir anahtar kelime geçiyor mu?"""
+            return any(any(k in t for k in keywords) for t in variants)
+
+        # Soru tipi belirlenemiyorsa (None) — sayısal değerse puan, değilse metin say
+        if qtype in (2,) or (qtype is None and not _safe_float(val)):
+            # Metin sorusu
+            if in_title("isim", "soyisim", "ad soyad", "adınız", "name", "müşteri", "musteri"):
                 musteri_adi = str(val).strip()
-        elif qtype == 3:  # seçim
-            if "acente" in title:
+        elif qtype in (3,) or (qtype is None and not _safe_float(val)):
+            # Seçim sorusu
+            if in_title("acente", "agency", "aracı"):
                 acente_adi = str(val).strip()
-        elif qtype == 7:  # yıldız
-            v = _safe_float(val)
-            if any(k in title for k in ["genel memnuniyet", "genel olarak memnun",
-                                         "genel değerlendirme", "genel puan", "overall"]):
-                genel_memnuniyet = v
-            elif "rehber" in title:
-                rehber_puani = v
-            elif any(k in title for k in ["otobüs", "otobus", "araç konfor", "konfor"]):
-                otobus_puani = v
-            elif any(k in title for k in ["şoför", "sofor", "şofor", "sürücü"]):
-                sofor_puani = v
-            elif any(k in title for k in ["operasyon", "organizasyon"]):
-                operasyon_puani = v
-            elif any(k in title for k in ["transfer", "havaalani", "havaalanı", "havalimanı"]):
-                transfer_puani = v
-            elif any(k in title for k in ["ekstra tur", "isteğe bağlı", "optional", "seçmeli"]):
-                ekstra_tur_puani = v
-            elif "program" in title:
-                program_puani = v
-            elif any(k in title for k in ["tavsiye", "öneri", "önerir"]):
-                tavsiye_puan = _safe_float(val)
-            elif any(k in title for k in ["otel", "hotel"]):
-                short = _str_field(q.get("title"))[:60]
-                if v is not None:
-                    otel_puanlari[short] = v
+        else:
+            # Yıldız/puan sorusu (type==7) veya sayısal
+            if qtype == 7 or _safe_float(val) is not None:
+                v = _safe_float(val)
+                if in_title("genel memnuniyet", "genel olarak memnun", "genel değerlendirme",
+                            "genel izlenim", "genel puan", "overall satisfaction",
+                            "overall", "genel olarak", "general satisfaction", "satisfaction"):
+                    genel_memnuniyet = v
+                elif in_title("rehber", "guide", "tour guide", "tur rehber", "tur rehberi"):
+                    rehber_puani = v
+                elif in_title("otobüs", "otobus", "araç konfor", "arac konfor",
+                              "bus", "coach", "vehicle comfort", "vehicle"):
+                    otobus_puani = v
+                elif in_title("şoför", "sofor", "şofor", "sürücü", "surucu",
+                              "driver", "chauffeur"):
+                    sofor_puani = v
+                elif in_title("operasyon", "organizasyon", "örgütlen", "orgutlen",
+                              "operation", "organization", "organisation"):
+                    operasyon_puani = v
+                elif in_title("transfer", "havaalani", "havaalanı", "havalimanı",
+                              "airport", "airport transfer", "shuttle"):
+                    transfer_puani = v
+                elif in_title("ekstra tur", "isteğe bağlı", "isteğe bagli",
+                              "optional", "seçmeli", "extra tour", "optional tour"):
+                    ekstra_tur_puani = v
+                elif in_title("program", "tur programı", "tur programi",
+                              "itinerary", "tour program"):
+                    program_puani = v
+                elif in_title("tavsiye", "öneri", "önerir", "onerir",
+                              "recommend", "would you recommend"):
+                    tavsiye_puan = v
+                elif in_title("otel", "hotel", "accommodation", "konaklama"):
+                    short = _str_field(q.get("title"))[:60]
+                    if v is not None:
+                        otel_puanlari[short] = v
+            # qtype==2 veya 3 ama sayısal değer içerebilir — acente/ad kontrolü
+            if qtype == 2:
+                if in_title("isim", "soyisim", "ad soyad", "adınız", "name", "müşteri", "musteri"):
+                    musteri_adi = str(val).strip()
+            elif qtype == 3:
+                if in_title("acente", "agency", "aracı"):
+                    acente_adi = str(val).strip()
 
     # Genel puan: adanmış soru varsa onu kullan
     if genel_memnuniyet is not None:

@@ -2813,10 +2813,10 @@ def porsline_preview(survey_id: str, request: Request):
 
 
 @app.post("/api/porsline/survey/{survey_id}/sync")
-def porsline_sync_survey(survey_id: str, request: Request):
+def porsline_sync_survey(survey_id: str, request: Request, force: bool = False):
     """
     Tek bir Porsline anketini DB'ye çeker ve eşleştirir.
-    Daha önce girilmiş yanıtları atlar (porsline_response_id unique).
+    force=true: Mevcut kayıtları da yeniden parse edip günceller (puan_detay null olan kayıtlar için).
     """
     kullanici = oturum_kullanicisi(request)
     if not kullanici or kullanici["rol"] != "admin":
@@ -2871,6 +2871,15 @@ def porsline_sync_survey(survey_id: str, request: Request):
                                  "mesaj": "Yanıt endpoint'i bulunamadı"}, status_code=500)
         rows = (resp2.get("results") or resp2.get("responses") or
                 resp2.get("body") or [])
+        # Eğer questions listesi boşsa (folders cache'de questions yoksa) tam detayı çek
+        if not questions:
+            logger.info("PORSLINE_SYNC [%s] questions boş, tam survey detayı çekiliyor...", survey_id)
+            full_detail = _get(f"/api/v2/surveys/{survey_id}/")
+            if "error" not in full_detail:
+                questions = full_detail.get("questions") or []
+                logger.info("PORSLINE_SYNC [%s] tam detaydan %d soru alındı", survey_id, len(questions))
+            else:
+                logger.warning("PORSLINE_SYNC [%s] tam detay alınamadı: %s", survey_id, full_detail.get("error"))
         header = build_header_from_questions(questions)
         use_question_parse = True
     else:
@@ -2878,13 +2887,16 @@ def porsline_sync_survey(survey_id: str, request: Request):
         rows   = resp["body"]
 
     logger.info(
-        "PORSLINE_SYNC [%s] rows=%d header_len=%d use_q=%s endpoint=%s",
+        "PORSLINE_SYNC [%s] rows=%d header_len=%d use_q=%s questions=%d endpoint=%s",
         survey_id, len(rows), len(header) if header else 0,
-        use_question_parse, resp.get("_endpoint", "n/a")
+        use_question_parse, len(questions), resp.get("_endpoint", "n/a")
     )
     if rows:
         logger.info("PORSLINE_SYNC [%s] ilk row tipi=%s örnek=%s",
-                    survey_id, type(rows[0]).__name__, str(rows[0])[:200])
+                    survey_id, type(rows[0]).__name__, str(rows[0])[:300])
+    if use_question_parse and questions:
+        logger.info("PORSLINE_SYNC [%s] soru başlıkları: %s",
+                    survey_id, str([q.get("title") for q in questions[:8]])[:400])
 
     # Turları yükle → matcher kur (yanıt olmasa bile match bilgisi response'da olsun)
     tours = _survey_load_tours()
@@ -2989,6 +3001,7 @@ def porsline_sync_survey(survey_id: str, request: Request):
 
     # Her yanıtı işle
     eklenen = 0
+    guncellenen = 0
     atlanan = 0
     insert_hata_ornek = ""
 
@@ -3011,6 +3024,21 @@ def porsline_sync_survey(survey_id: str, request: Request):
         ON CONFLICT (porsline_response_id)
         WHERE porsline_response_id IS NOT NULL AND porsline_response_id != ''
         DO NOTHING
+    """
+
+    # force=True: mevcut kayıtları da güncelle (puan_detay null olanları)
+    update_sql = """
+        UPDATE historical_surveys SET
+            genel_puan   = :genel_puan,
+            rehber_puani = :rehber_puani,
+            puan_detay   = :puan_detay::jsonb,
+            otel_adi     = :otel_adi,
+            musteri_adi  = CASE WHEN musteri_adi = '' OR musteri_adi IS NULL THEN :musteri ELSE musteri_adi END,
+            rehber_adi   = CASE WHEN rehber_adi  = '' OR rehber_adi  IS NULL THEN :rehber  ELSE rehber_adi  END
+        WHERE porsline_response_id = :resp_id
+          AND (genel_puan IS NULL OR puan_detay IS NULL
+               OR (puan_detay->>'otobus') IS NULL
+               OR (puan_detay->>'rehber_puani') IS NULL)
     """
 
     # Rehber adını header veya questions'dan çıkar
@@ -3050,7 +3078,7 @@ def porsline_sync_survey(survey_id: str, request: Request):
 
             try:
                 _puan_detay_dict = parsed_row.get("puan_detay") or {}
-                result = conn.execute(text(insert_sql), {
+                params = {
                     "survey_date": "",
                     "musteri":     parsed_row.get("musteri_adi") or "",
                     "rehber":      rehber_adi,
@@ -3070,11 +3098,20 @@ def porsline_sync_survey(survey_id: str, request: Request):
                     "survey_id":   survey_id,
                     "bolge":       bolge,
                     "otel_adi":    extract_otel_adi(_puan_detay_dict),
-                })
+                }
+                result = conn.execute(text(insert_sql), params)
                 if result.rowcount > 0:
                     eklenen += 1
                 else:
-                    atlanan += 1
+                    # Kayıt zaten var — force modunda güncelle
+                    if force:
+                        upd = conn.execute(text(update_sql), params)
+                        if upd.rowcount > 0:
+                            guncellenen += 1
+                        else:
+                            atlanan += 1
+                    else:
+                        atlanan += 1
             except Exception as ex:
                 hata_str = str(ex)
                 logger.error("Porsline yanıt insert hatası [%s] row=%d: %s", survey_id, i, hata_str)
@@ -3086,8 +3123,8 @@ def porsline_sync_survey(survey_id: str, request: Request):
         conn.commit()
 
     audit_logger.info(
-        "PORSLINE_SYNC | user=%s | survey=%s | eklenen=%d | atlanan=%d | zaten_var=%d | match=%s(%d%%)",
-        kullanici["kullanici_adi"], survey_id, eklenen, atlanan, zaten_var_count, match_status, confidence,
+        "PORSLINE_SYNC | user=%s | survey=%s | eklenen=%d | guncellenen=%d | atlanan=%d | zaten_var=%d | match=%s(%d%%)",
+        kullanici["kullanici_adi"], survey_id, eklenen, guncellenen, atlanan, zaten_var_count, match_status, confidence,
     )
 
     return JSONResponse({
@@ -3099,6 +3136,7 @@ def porsline_sync_survey(survey_id: str, request: Request):
         "matched_jt":    matched_jt_kodu,
         "yanit_sayisi":  len(rows),
         "eklenen":       eklenen,
+        "guncellenen":   guncellenen,
         "atlanan":       atlanan,
         "zaten_var":     zaten_var_count,
         "insert_hata":   insert_hata_ornek or None,

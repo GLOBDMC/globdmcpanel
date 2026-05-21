@@ -161,12 +161,16 @@
         <div id="dbDiagWrap" class="mb-3 hidden">
             <div id="dbDiagContent" class="rounded-lg p-3 text-xs font-mono bg-slate-900/60 border border-slate-700/40 text-slate-400 whitespace-pre-wrap break-all"></div>
         </div>
-        <div class="flex items-center gap-2 mb-4">
+        <div class="flex items-center gap-2 mb-4 flex-wrap">
             <button onclick="checkDbDiag()" class="text-xs px-2 py-1 rounded bg-slate-800 border border-slate-700 text-slate-400 hover:text-slate-200 transition-colors">
                 🔍 DB Durumu Kontrol Et
             </button>
-            <span class="text-xs text-slate-600">Sync çalışmıyorsa buraya tıklayın</span>
+            <button onclick="forceResyncAll()" id="btnForceResync" class="text-xs px-2 py-1 rounded bg-amber-900/30 border border-amber-700/40 text-amber-400 hover:bg-amber-900/50 transition-colors">
+                🔄 Puanları Yeniden Hesapla
+            </button>
+            <span class="text-xs text-slate-600">Sync çalışmıyorsa veya puanlar null geliyorsa kullanın</span>
         </div>
+        <div id="forceResyncResult" class="hidden mb-3 text-xs text-amber-300 rounded-lg p-2 bg-amber-900/20 border border-amber-700/30"></div>
 
         <!-- Anket listesi -->
         <div id="porslineSurveyList">
@@ -592,11 +596,12 @@ async function loadPorslineSurveys() {
             </div>
             <span id="ps-status-${sid}" class="text-xs text-slate-600 hidden"></span>
             <button id="ps-btn-${sid}" class="sync-btn" onclick="syncTekPorsline('${sid}')">Sync</button>
+            <button class="sync-btn" style="background:rgba(251,146,60,.15);color:#fb923c;border-color:rgba(251,146,60,.3)" title="Force: mevcut kayıtları da yeniden parse et" onclick="syncTekPorsline('${sid}', true)">🔄</button>
         </div>`;
     }).join('');
 }
 
-async function syncTekPorsline(sid) {
+async function syncTekPorsline(sid, force = false) {
     const btn = document.getElementById('ps-btn-' + sid);
     const st  = document.getElementById('ps-status-' + sid);
     if (!btn) return;
@@ -604,32 +609,75 @@ async function syncTekPorsline(sid) {
     st.classList.remove('hidden');
     st.textContent = ''; st.className = 'text-xs';
 
-    const d = await fetch(`/api/porsline/survey/${sid}/sync`, { method: 'POST' })
+    const url = `/api/porsline/survey/${sid}/sync` + (force ? '?force=true' : '');
+    const d = await fetch(url, { method: 'POST' })
         .then(r=>r.json()).catch(e=>({ok:false, hata: e.message}));
 
     if (d.ok) {
-        const yeni   = d.eklenen   || 0;
-        const mevcut = d.zaten_var || 0;
+        const yeni   = d.eklened    || d.eklenen   || 0;
+        const gncl   = d.guncellenen || 0;
+        const mevcut = d.zaten_var   || 0;
         const api    = d.yanit_sayisi || 0;
         const ih     = d.insert_hata ? String(d.insert_hata).slice(0, 60) : '';
         if (ih) {
             st.textContent = `⚠ ${ih}`;
             st.className = 'text-xs text-red-400';
+        } else if (yeni > 0) {
+            st.textContent = `+${yeni} kayıt eklendi`;
+            st.className = 'text-xs text-green-400';
+        } else if (gncl > 0) {
+            st.textContent = `🔄 ${gncl} kayıt güncellendi`;
+            st.className = 'text-xs text-amber-400';
         } else {
-            st.textContent = yeni > 0 ? `+${yeni} kayıt` : mevcut > 0 ? `✓ ${mevcut} zaten var` : `+0 (API:${api})`;
-            st.className = 'text-xs ' + (yeni > 0 ? 'text-green-400' : 'text-slate-500');
+            st.textContent = mevcut > 0 ? `✓ ${mevcut} zaten var` : `+0 (API:${api})`;
+            st.className = 'text-xs text-slate-500';
         }
         btn.textContent = ih ? '⚠' : '✓';
-        btn.style.color = ih ? '#f87171' : '#4ade80';
+        btn.style.color = ih ? '#f87171' : (gncl > 0 ? '#fb923c' : '#4ade80');
+        btn.disabled = false;
         loadStats();
         yukleAnketler();
-        if (yeni > 0) document.getElementById('anketListeSection')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (yeni > 0 || gncl > 0) document.getElementById('anketListeSection')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } else {
         const hata = d.insert_hata || d.mesaj || d.hata || 'hata';
         st.textContent = '⚠ ' + String(hata).slice(0, 50);
         st.className = 'text-xs text-red-400';
         btn.textContent = '✕'; btn.disabled = false;
     }
+}
+
+async function forceResyncAll() {
+    if (!_porslineAnketler.length) {
+        await loadPorslineSurveys();
+        if (!_porslineAnketler.length) { alert('Önce "Listele" butonuna basın'); return; }
+    }
+    const resultEl = document.getElementById('forceResyncResult');
+    const btn      = document.getElementById('btnForceResync');
+    resultEl.classList.remove('hidden');
+    resultEl.textContent = '⏳ Force re-sync başlıyor...';
+    btn.disabled = true;
+
+    let toplam_gncl = 0, toplam_eklenen = 0, done = 0;
+    const surveys = _porslineAnketler;
+    for (const s of surveys) {
+        const sid = String(s.id || s.survey_id || '');
+        if (!sid) continue;
+        resultEl.textContent = `⏳ ${done+1}/${surveys.length}: ${s.title || sid}`;
+        const url = `/api/porsline/survey/${sid}/sync?force=true`;
+        try {
+            const d = await fetch(url, { method: 'POST' }).then(r=>r.json());
+            if (d.ok) {
+                toplam_gncl    += d.guncellenen || 0;
+                toplam_eklenen += d.eklenen     || 0;
+            }
+        } catch(e) {}
+        done++;
+        await new Promise(r => setTimeout(r, 400)); // rate-limit önlemi
+    }
+    btn.disabled = false;
+    resultEl.textContent = `✓ Tamamlandı: ${toplam_eklenen} yeni eklendi, ${toplam_gncl} kayıt güncellendi`;
+    loadStats();
+    yukleAnketler();
 }
 
 async function syncAllPorsline(startIdx = 0) {
