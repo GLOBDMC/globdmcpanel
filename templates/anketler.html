@@ -98,12 +98,6 @@
     border-radius: 12px;
     padding: 16px 18px;
 }
-.otel-kart-tur-row {
-    display: flex; align-items: center; gap: 10px;
-    padding: 7px 10px; border-radius: 8px; cursor: pointer;
-    transition: background .12s; text-decoration: none;
-}
-.otel-kart-tur-row:hover { background: rgba(255,255,255,.04); }
 
 /* ── Autocomplete dropdown item ─────────── */
 .ac-item {
@@ -1301,53 +1295,35 @@ function gizleOtelKart() {
 
 async function yukleOtelKart(otelAdi) {
     const wrap = document.getElementById('otelKartWrap');
-    wrap.innerHTML = '<div class="otel-kart"><div class="text-xs text-slate-500 text-center py-2">Yükleniyor…</div></div>';
     wrap.classList.remove('hidden');
 
     const d = await fetch(`/api/survey/otel-kart?otel=${encodeURIComponent(otelAdi)}`).then(r=>r.json()).catch(()=>({}));
     if (!d.ok) { wrap.classList.add('hidden'); return; }
 
     const puan   = d.avg_puan != null ? d.avg_puan.toFixed(1) : '—';
-    const pColor = d.avg_puan >= 4.5 ? '#4ade80' : d.avg_puan >= 3.5 ? '#facc15' : '#f87171';
+    const pColor = d.avg_puan != null
+        ? (d.avg_puan >= 4.5 ? '#4ade80' : d.avg_puan >= 3.5 ? '#facc15' : '#f87171')
+        : '#64748b';
 
-    const turlarHtml = d.turlar?.length
-        ? d.turlar.map(t => {
-            const tarih = t.kalkis_tarihi ? t.kalkis_tarihi.split('T')[0] : '';
-            const tp    = t.ort_puan != null ? t.ort_puan.toFixed(1) : null;
-            const tpHtml = tp ? `<span class="tur-pill" style="color:#4ade80;border-color:rgba(74,222,128,.15);">★ ${tp}</span>` : '';
-            return `<a href="/turlar/${esc(t.matched_jt_kodu)}" target="_blank" class="otel-kart-tur-row">
-                <span class="text-xs font-mono text-blue-400/80 flex-shrink-0">${esc(t.matched_jt_kodu)}</span>
-                <span class="text-xs text-slate-300 flex-1 min-w-0 truncate">${esc(t.tur_adi || '')}</span>
-                ${tpHtml}
-                <span class="text-xs text-slate-600 flex-shrink-0">${tarih}</span>
-                <span class="text-xs text-slate-600 flex-shrink-0">${t.yanit_sayisi} yanıt</span>
-            </a>`;
-          }).join('')
-        : '<div class="text-xs text-slate-600 text-center py-3">Eşleşmiş tur kaydı bulunamadı</div>';
-
-    wrap.innerHTML = `<div class="otel-kart">
-        <div class="flex items-start justify-between gap-4 mb-3">
-            <div class="flex items-center gap-3">
-                <div class="flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center text-lg"
-                     style="background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.2);">🏨</div>
-                <div>
-                    <div class="text-sm font-semibold text-slate-100">${esc(d.otel)}</div>
-                    <div class="text-xs text-slate-500 mt-0.5">${d.anket_sayisi} anket kaydında geçiyor</div>
-                </div>
-            </div>
-            <div class="flex items-center gap-3 flex-shrink-0">
-                <div class="text-center">
-                    <div class="text-xl font-bold" style="color:${pColor};">${puan}</div>
-                    <div class="text-xs text-slate-600">ort. puan</div>
-                </div>
-                <button onclick="otelTemizle()"
-                        class="text-xs px-2 py-1 rounded-lg transition-colors"
-                        style="background:rgba(100,116,139,.1);border:1px solid rgba(100,116,139,.2);color:#64748b;"
-                        title="Filtreyi temizle">✕</button>
+    wrap.innerHTML = `<div class="otel-kart flex items-center justify-between gap-4">
+        <div class="flex items-center gap-3 min-w-0">
+            <div class="flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-base"
+                 style="background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.2);">🏨</div>
+            <div class="min-w-0">
+                <div class="text-sm font-semibold text-slate-100 truncate">${esc(d.otel)}</div>
+                <div class="text-xs text-slate-500 mt-0.5">${d.anket_sayisi} oylama</div>
             </div>
         </div>
-        ${d.turlar?.length ? `<div class="text-xs text-slate-600 uppercase tracking-wide font-medium mb-2">Bu oteli kullanan turlar</div>` : ''}
-        <div>${turlarHtml}</div>
+        <div class="flex items-center gap-3 flex-shrink-0">
+            <div class="text-right">
+                <div class="text-2xl font-bold leading-none" style="color:${pColor};">${puan}</div>
+                <div class="text-xs text-slate-600 mt-0.5">ort. puan</div>
+            </div>
+            <button onclick="otelTemizle()"
+                    class="text-xs w-7 h-7 rounded-lg flex items-center justify-center transition-colors"
+                    style="background:rgba(100,116,139,.1);border:1px solid rgba(100,116,139,.2);color:#64748b;"
+                    title="Filtreyi temizle">✕</button>
+        </div>
     </div>`;
 }
 
