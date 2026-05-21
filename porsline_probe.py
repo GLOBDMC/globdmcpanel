@@ -15,19 +15,27 @@ from porsline_service import _get, list_surveys
 
 # Test edilecek endpoint pattern'ları
 PATTERNS = [
+    # /results/report/ frontend URL'sinden türetilen olası backend endpoint'ler
+    "/api/v2/surveys/{sid}/responses/report/",
+    "/api/v2/surveys/{sid}/results/report/",
+    "/api/surveys/{sid}/responses/report/",
+    "/api/surveys/{sid}/results/report/",
+    "/api/v2/surveys/{sid}/report/",
+    "/api/surveys/{sid}/report/",
+    # Diğer aggregate pattern'lar
     "/api/v2/surveys/{sid}/statistics/",
     "/api/v2/surveys/{sid}/analytics/",
     "/api/v2/surveys/{sid}/charts/",
     "/api/v2/surveys/{sid}/summary/",
-    "/api/v2/surveys/{sid}/report/",
     "/api/v2/surveys/{sid}/aggregate/",
     "/api/v2/surveys/{sid}/results/",
     "/api/surveys/{sid}/statistics/",
     "/api/surveys/{sid}/analytics/",
-    "/api/surveys/{sid}/charts/",
     "/api/surveys/{sid}/summary/",
     "/api/v2/surveys/{sid}/questions/statistics/",
     "/api/v2/surveys/{sid}/questions/analytics/",
+    "/api/v2/surveys/{sid}/responses/statistics/",
+    "/api/v2/surveys/{sid}/responses/analytics/",
 ]
 
 def probe(sid: str):
