@@ -1820,93 +1820,121 @@ def survey_stats(request: Request):
     if not kullanici or kullanici["rol"] != "admin":
         return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
 
+    stats: dict = {}
+    top_guides = []
+    top_dest   = []
+
+    # ── 1. Temel sayımlar — asla başarısız olmamalı ─────────────────────────
     try:
         with db_engine.connect() as conn:
             row = conn.execute(text("""
                 SELECT
-                    COUNT(*) AS toplam,
-                    SUM(CASE WHEN match_status='matched'  THEN 1 ELSE 0 END) AS eslendi,
-                    SUM(CASE WHEN match_status='review'   THEN 1 ELSE 0 END) AS inceleme,
-                    SUM(CASE WHEN match_status='rejected' THEN 1 ELSE 0 END) AS reddedildi,
-                    SUM(CASE WHEN match_status='pending'  THEN 1 ELSE 0 END) AS bekliyor,
-                    ROUND(AVG(CASE WHEN genel_puan IS NOT NULL
-                              THEN CAST(genel_puan AS NUMERIC) END), 2)       AS ort_puan,
-                    ROUND(AVG(CASE WHEN rehber_puani IS NOT NULL
-                              THEN CAST(rehber_puani AS NUMERIC) END), 2)     AS ort_rehber_puan,
-                    ROUND(AVG(CAST(match_confidence AS NUMERIC)), 1)           AS ort_confidence,
-                    -- Kategori puanları (puan_detay JSONB'den)
-                    ROUND(AVG(NULLIF(puan_detay->>'otobus', '')::numeric), 2)        AS ort_otobus,
-                    ROUND(AVG(NULLIF(puan_detay->>'sofor', '')::numeric), 2)         AS ort_sofor,
-                    ROUND(AVG(NULLIF(puan_detay->>'program', '')::numeric), 2)       AS ort_program,
-                    ROUND(AVG(NULLIF(puan_detay->>'operasyon', '')::numeric), 2)     AS ort_operasyon,
-                    ROUND(AVG(NULLIF(puan_detay->>'transfer', '')::numeric), 2)      AS ort_transfer,
-                    ROUND(AVG(NULLIF(puan_detay->>'ekstra_tur', '')::numeric), 2)    AS ort_ekstra_tur,
-                    ROUND(AVG(NULLIF(puan_detay->>'genel_memnuniyet', '')::numeric), 2) AS ort_genel_memnuniyet,
-                    -- Otel ortalaması: her satırdaki otel avg'larının ortalaması
-                    ROUND(AVG(
-                        (SELECT AVG(val::numeric)
-                         FROM jsonb_each_text(COALESCE(puan_detay->'oteller', '{}'))
-                         WHERE val ~ '^[0-9]+[.]?[0-9]*$')
-                    ), 2) AS ort_otel
+                    COUNT(*)                                                       AS toplam,
+                    SUM(CASE WHEN match_status='matched'  THEN 1 ELSE 0 END)      AS eslendi,
+                    SUM(CASE WHEN match_status='review'   THEN 1 ELSE 0 END)      AS inceleme,
+                    SUM(CASE WHEN match_status='rejected' THEN 1 ELSE 0 END)      AS reddedildi,
+                    SUM(CASE WHEN match_status='pending'  THEN 1 ELSE 0 END)      AS bekliyor,
+                    ROUND(AVG(CAST(genel_puan    AS NUMERIC)), 2)                  AS ort_puan,
+                    ROUND(AVG(CAST(rehber_puani  AS NUMERIC)), 2)                  AS ort_rehber_puan,
+                    ROUND(AVG(CAST(match_confidence AS NUMERIC)), 1)               AS ort_confidence
                 FROM historical_surveys
-                WHERE match_status != 'rejected'
             """)).fetchone()
+            if row:
+                for k, v in dict(row._mapping).items():
+                    stats[k] = None if v is None else (float(v) if v is not None else None)
+                stats["toplam"]     = int(stats.get("toplam") or 0)
+                stats["eslendi"]    = int(stats.get("eslendi") or 0)
+                stats["inceleme"]   = int(stats.get("inceleme") or 0)
+                stats["reddedildi"] = int(stats.get("reddedildi") or 0)
+                stats["bekliyor"]   = int(stats.get("bekliyor") or 0)
 
             top_guides = conn.execute(text("""
                 SELECT rehber_adi,
                        COUNT(*) AS anket_sayisi,
                        ROUND(AVG(CAST(genel_puan AS NUMERIC)), 2) AS ort_puan
                 FROM historical_surveys
-                WHERE rehber_adi <> '' AND match_status = 'matched'
+                WHERE rehber_adi <> ''
                 GROUP BY rehber_adi
                 ORDER BY anket_sayisi DESC
                 LIMIT 10
             """)).fetchall()
 
             top_dest = conn.execute(text("""
-                SELECT destinasyon,
+                SELECT COALESCE(NULLIF(destinasyon,''), 'Diğer') AS dest,
                        COUNT(*) AS anket_sayisi,
                        ROUND(AVG(CAST(genel_puan AS NUMERIC)), 2) AS ort_puan
                 FROM historical_surveys
-                WHERE destinasyon <> '' AND match_status = 'matched'
-                GROUP BY destinasyon
+                WHERE destinasyon <> ''
+                GROUP BY 1
                 ORDER BY anket_sayisi DESC
                 LIMIT 10
             """)).fetchall()
-
-        stats = {}
-        if row:
-            for k, v in dict(row._mapping).items():
-                # Sayısal alanlar float, None → None kalır (0 değil — 0'ı "veri yok"tan ayırt etmek için)
-                if v is None:
-                    stats[k] = None
-                else:
-                    try:
-                        stats[k] = float(v)
-                    except (TypeError, ValueError):
-                        stats[k] = v
-            # toplam'ı int göster
-            stats["toplam"]     = int(stats.get("toplam") or 0)
-            stats["eslendi"]    = int(stats.get("eslendi") or 0)
-            stats["inceleme"]   = int(stats.get("inceleme") or 0)
-            stats["reddedildi"] = int(stats.get("reddedildi") or 0)
-            stats["bekliyor"]   = int(stats.get("bekliyor") or 0)
-
-        return JSONResponse({
-            "ok":        True,
-            "stats":     stats,
-            "rehberler": [dict(r._mapping) for r in top_guides],
-            "destinasyonlar": [dict(r._mapping) for r in top_dest],
-        })
     except Exception as exc:
-        logger.warning("survey_stats hata: %s", exc)
-        return JSONResponse({
-            "ok": True,
-            "stats": {"toplam": 0, "eslendi": 0, "inceleme": 0, "reddedildi": 0, "bekliyor": 0,
-                      "ort_puan": 0, "ort_rehber_puan": 0, "ort_confidence": 0},
-            "rehberler": [],
-            "destinasyonlar": [],
-        })
+        logger.warning("survey_stats temel sorgu hata: %s", exc)
+        # En azından toplam kayıt sayısını basit sorguyla al
+        try:
+            with db_engine.connect() as conn:
+                stats["toplam"] = int(conn.execute(
+                    text("SELECT COUNT(*) FROM historical_surveys")
+                ).scalar() or 0)
+        except Exception:
+            stats["toplam"] = 0
+
+    # ── 2. puan_detay JSONB kategori ortalamaları — ayrı try/except ─────────
+    try:
+        with db_engine.connect() as conn:
+            # puan_detay kolonu var mı?
+            has_pd = conn.execute(text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name='historical_surveys' AND column_name='puan_detay'"
+            )).fetchone()
+
+            if has_pd:
+                kat_row = conn.execute(text("""
+                    SELECT
+                        ROUND(AVG(NULLIF(puan_detay->>'otobus','')::numeric), 2)        AS ort_otobus,
+                        ROUND(AVG(NULLIF(puan_detay->>'sofor','')::numeric), 2)         AS ort_sofor,
+                        ROUND(AVG(NULLIF(puan_detay->>'program','')::numeric), 2)       AS ort_program,
+                        ROUND(AVG(NULLIF(puan_detay->>'operasyon','')::numeric), 2)     AS ort_operasyon,
+                        ROUND(AVG(NULLIF(puan_detay->>'transfer','')::numeric), 2)      AS ort_transfer,
+                        ROUND(AVG(NULLIF(puan_detay->>'ekstra_tur','')::numeric), 2)    AS ort_ekstra_tur,
+                        ROUND(AVG(NULLIF(puan_detay->>'genel_memnuniyet','')::numeric), 2) AS ort_genel_memnuniyet
+                    FROM historical_surveys
+                    WHERE puan_detay IS NOT NULL
+                """)).fetchone()
+                if kat_row:
+                    for k, v in dict(kat_row._mapping).items():
+                        stats[k] = float(v) if v is not None else None
+
+            # Otel ortalaması — correlated subquery yerine lateral kullan
+            if has_pd:
+                otel_row = conn.execute(text("""
+                    SELECT ROUND(AVG(otel_avg), 2) AS ort_otel
+                    FROM (
+                        SELECT
+                            (SELECT AVG(val::numeric)
+                             FROM jsonb_each_text(COALESCE(puan_detay->'oteller', '{}'))
+                             WHERE val ~ '^[0-9]+[.]?[0-9]*$'
+                            ) AS otel_avg
+                        FROM historical_surveys
+                        WHERE puan_detay IS NOT NULL
+                          AND puan_detay->'oteller' IS NOT NULL
+                          AND puan_detay->'oteller' != '{}'::jsonb
+                    ) sub
+                    WHERE otel_avg IS NOT NULL
+                """)).fetchone()
+                if otel_row and otel_row[0] is not None:
+                    stats["ort_otel"] = float(otel_row[0])
+    except Exception as exc:
+        logger.warning("survey_stats JSONB kategori sorgu hata: %s", exc)
+
+    return JSONResponse({
+        "ok":        True,
+        "stats":     stats,
+        "rehberler": [dict(r._mapping) for r in top_guides],
+        "destinasyonlar": [dict(r._mapping) for r in top_dest],
+    })
+
 
 
 @app.post("/api/survey/match/{survey_id}")

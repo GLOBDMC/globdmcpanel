@@ -415,7 +415,7 @@ function showToast(msg, type = 'info') {
 }
 
 // ─── Stats ───────────────────────────────────────────────────────────────────
-function _fmt(v) { return (v != null && v !== 0) ? parseFloat(v).toFixed(2) : '—'; }
+function _fmt(v) { return (v != null) ? parseFloat(v).toFixed(2) : '—'; }
 
 async function loadStats() {
     const d = await fetch('/api/survey/stats').then(r=>r.json()).catch(()=>({}));
@@ -991,6 +991,19 @@ async function yukleAnketler() {
     if (!d.items.length) {
         liste.innerHTML = '<div class="text-center py-12 text-slate-600 text-sm">Sonuç bulunamadı</div>';
         return;
+    }
+
+    // Kaç kayıtta puan var?
+    const puanliCount = d.items.filter(x => x.genel_puan != null).length;
+    const porslineCount = d.items.filter(x => x.import_batch && x.import_batch.startsWith('porsline_')).length;
+    if (puanliCount === 0 && d.items.length > 0) {
+        const uyari = document.createElement('div');
+        uyari.className = 'rounded-lg px-4 py-3 mb-3 text-xs';
+        uyari.style.cssText = 'background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2);color:#fbbf24;';
+        uyari.innerHTML = porslineCount === 0
+            ? `⚠ Bu sayfadaki <strong>${d.items.length}</strong> kayıtta puan verisi yok. Bu kayıtlar eski import'tan geliyor. Porsline Sync yaparak güncel anket puanlarını çekin.`
+            : `⚠ Bu sayfadaki <strong>${d.items.length}</strong> kayıtta puan verisi hesaplanmamış. "Porsline Sync" ile yeniden çekmeyi deneyin.`;
+        liste.insertAdjacentElement('beforebegin', uyari);
     }
 
     liste.innerHTML = d.items.map(item => {
