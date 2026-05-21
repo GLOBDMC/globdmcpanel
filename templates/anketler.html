@@ -157,6 +157,17 @@
         <!-- Sonuç özeti -->
         <div id="porslineSyncResult" class="hidden mb-4"></div>
 
+        <!-- DB Tanı -->
+        <div id="dbDiagWrap" class="mb-3 hidden">
+            <div id="dbDiagContent" class="rounded-lg p-3 text-xs font-mono bg-slate-900/60 border border-slate-700/40 text-slate-400 whitespace-pre-wrap break-all"></div>
+        </div>
+        <div class="flex items-center gap-2 mb-4">
+            <button onclick="checkDbDiag()" class="text-xs px-2 py-1 rounded bg-slate-800 border border-slate-700 text-slate-400 hover:text-slate-200 transition-colors">
+                🔍 DB Durumu Kontrol Et
+            </button>
+            <span class="text-xs text-slate-600">Sync çalışmıyorsa buraya tıklayın</span>
+        </div>
+
         <!-- Anket listesi -->
         <div id="porslineSurveyList">
             <p class="text-center py-6 text-slate-600 text-sm">"Listele" butonuna basarak Porsline anketlerini çekin</p>
@@ -437,6 +448,59 @@ async function loadStats() {
     }
     const katWrap = document.getElementById('kategoriPuanlar');
     if (katWrap) katWrap.classList.toggle('hidden', !hasKat);
+}
+
+// ─── DB Tanı ─────────────────────────────────────────────────────────────────
+async function checkDbDiag() {
+    const wrap    = document.getElementById('dbDiagWrap');
+    const content = document.getElementById('dbDiagContent');
+    content.textContent = 'Kontrol ediliyor...';
+    wrap.classList.remove('hidden');
+
+    const d = await fetch('/api/survey/debug-data').then(r=>r.json()).catch(e=>({hata: e.toString()}));
+    if (d.hata && !d.toplam_satir) {
+        content.textContent = '⚠ Hata: ' + d.hata;
+        return;
+    }
+
+    const ozet = d.kolon_ozet || {};
+    const lines = [];
+    lines.push(`📊 Toplam satır: ${d.toplam_satir ?? '?'}`);
+    lines.push('');
+    lines.push('── Kolon durumu ──────────────');
+    for (const [col, info] of Object.entries(ozet)) {
+        if (!info.var) {
+            lines.push(`  ✗ ${col} — KOLON YOK (migration eksik!)`);
+        } else if (info.hata) {
+            lines.push(`  ⚠ ${col} — hata: ${info.hata}`);
+        } else {
+            lines.push(`  ✓ ${col} — ${info.dolu} dolu kayıt`);
+        }
+    }
+
+    if ((d.porsline_indexler || []).length) {
+        lines.push('');
+        lines.push('── Porsline index ────────────');
+        for (const idx of d.porsline_indexler) {
+            lines.push(`  ${idx.ad}: ${idx.tanim}`);
+        }
+    } else {
+        lines.push('');
+        lines.push('⚠ Porsline unique index YOK — insert ON CONFLICT çalışmaz!');
+    }
+
+    if ((d.son_kayitlar || []).length) {
+        lines.push('');
+        lines.push('── Son kayıtlar ──────────────');
+        for (const r of d.son_kayitlar) {
+            lines.push(`  #${r.id} | ${r.tur_adi_ham || '?'} | genel:${r.genel_puan ?? '—'} rehber:${r.rehber_puani ?? '—'} | ${r.match_status || '?'}`);
+            if (r.puan_detay && r.puan_detay !== '{}') {
+                lines.push(`    puan_detay: ${String(r.puan_detay).slice(0, 120)}`);
+            }
+        }
+    }
+
+    content.textContent = lines.join('\n');
 }
 
 // ─── Porsline Sync Paneli ────────────────────────────────────────────────────
@@ -910,7 +974,13 @@ async function yukleAnketler() {
     const d = await fetch('/api/survey/results?' + params).then(r=>r.json()).catch(()=>({}));
 
     if (!d.ok || !d.items) {
-        liste.innerHTML = '<div class="text-center py-12 text-slate-600 text-sm">Veri alınamadı</div>';
+        const errMsg = d.hata ? esc(d.hata) : 'API bağlantı hatası';
+        liste.innerHTML = `<div class="text-center py-12 text-slate-600 text-sm">
+            Veri alınamadı<br>
+            <span class="text-xs text-red-400/70 font-mono mt-1 block">${errMsg}</span>
+            <button onclick="checkDbDiag();document.getElementById('porslinePanel').classList.remove('hidden')"
+                    class="mt-3 text-xs text-slate-500 hover:text-slate-300 underline">🔍 DB durumunu kontrol et</button>
+        </div>`;
         return;
     }
 
