@@ -614,6 +614,19 @@ def tablo_olustur():
 
     logger.info("Tablolar hazir")
 
+def _row_dict(row) -> dict:
+    """SQLAlchemy Row → JSON-safe dict (Decimal → float)."""
+    out = {}
+    for k, v in dict(row._mapping).items():
+        if isinstance(v, decimal.Decimal):
+            out[k] = float(v)
+        elif v is None:
+            out[k] = None
+        else:
+            out[k] = v
+    return out
+
+
 def bitis_tarihi_hesapla(bitis_raw: str, tur_adi: str, kalkis: str) -> str:
     """Sheet'ten gelen bitiş tarihini döndürür.
     Boşsa tur adındaki gece sayısından hesaplar."""
@@ -1994,8 +2007,8 @@ def survey_stats(request: Request):
     return JSONResponse({
         "ok":        True,
         "stats":     stats,
-        "rehberler": [dict(r._mapping) for r in top_guides],
-        "destinasyonlar": [dict(r._mapping) for r in top_dest],
+        "rehberler": [_row_dict(r) for r in top_guides],
+        "destinasyonlar": [_row_dict(r) for r in top_dest],
     })
 
 
@@ -2447,28 +2460,31 @@ def survey_bolgeler(request: Request):
     if not kullanici or kullanici["rol"] != "admin":
         return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
 
-    with db_engine.connect() as conn:
-        rows = conn.execute(text("""
-            SELECT
-                COALESCE(NULLIF(bolge,''), 'Diğer') AS bolge,
-                COUNT(*)                                        AS adet,
-                ROUND(AVG(genel_puan)::numeric, 2)             AS ort_puan,
-                ROUND(AVG(rehber_puani)::numeric, 2)           AS ort_rehber,
-                COUNT(DISTINCT rehber_adi)
-                    FILTER (WHERE rehber_adi <> '')             AS rehber_sayisi,
-                MIN(kalkis_tarihi)                              AS ilk_kalkis,
-                MAX(kalkis_tarihi)                              AS son_kalkis
-            FROM historical_surveys
-            WHERE match_status != 'rejected'
-            GROUP BY COALESCE(NULLIF(bolge,''), 'Diğer')
-            ORDER BY adet DESC
-        """)).fetchall()
+    try:
+        with db_engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT
+                    COALESCE(NULLIF(bolge,''), 'Diğer') AS bolge,
+                    COUNT(*)                                        AS adet,
+                    ROUND(AVG(genel_puan)::numeric, 2)             AS ort_puan,
+                    ROUND(AVG(rehber_puani)::numeric, 2)           AS ort_rehber,
+                    COUNT(DISTINCT rehber_adi)
+                        FILTER (WHERE rehber_adi <> '')             AS rehber_sayisi,
+                    MIN(kalkis_tarihi)                              AS ilk_kalkis,
+                    MAX(kalkis_tarihi)                              AS son_kalkis
+                FROM historical_surveys
+                WHERE match_status != 'rejected'
+                GROUP BY COALESCE(NULLIF(bolge,''), 'Diğer')
+                ORDER BY adet DESC
+            """)).fetchall()
+        bolge_data = [_row_dict(r) for r in rows]
+    except Exception as exc:
+        logger.warning("survey_bolgeler sorgu hata: %s", exc)
+        bolge_data = []
 
-    bolge_data = [dict(r._mapping) for r in rows]
     return JSONResponse({
         "ok":        True,
         "bolge_list": bolge_data,
-        # Geriye dönük uyumluluk: sadece isim listesi
         "bolgeler":  [r["bolge"] for r in bolge_data if r["bolge"] != "Diğer"],
     })
 
