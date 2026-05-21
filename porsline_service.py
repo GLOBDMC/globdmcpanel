@@ -368,10 +368,12 @@ def parse_response_from_questions(questions: list, response: dict) -> dict:
                 elif in_title("tavsiye", "öneri", "önerir", "onerir",
                               "recommend", "would you recommend"):
                     tavsiye_puan = v
-                elif in_title("otel", "hotel", "accommodation", "konaklama"):
-                    short = _str_field(q.get("title"))[:60]
-                    if v is not None:
-                        otel_puanlari[short] = v
+                elif in_title("otel", "hotel", "accommodation", "konaklama",
+                             "otelinden memnun", "memnun kaldınız"):
+                    raw_t = _str_field(q.get("title"))
+                    _, _, display_key = _parse_hotel_label(raw_t)
+                    if v is not None and display_key:
+                        otel_puanlari[display_key] = v
             # qtype==2 veya 3 ama sayısal değer içerebilir — acente/ad kontrolü
             if qtype == 2:
                 if in_title("isim", "soyisim", "ad soyad", "adınız", "name", "müşteri", "musteri"):
@@ -584,6 +586,46 @@ def _safe_float(val) -> Optional[float]:
         return None
 
 
+def _parse_hotel_label(raw_title: str) -> tuple:
+    """
+    Otel sorusunu parse eder.
+
+    Desteklenen format:
+      "Osaka otelinden memnun kaldınız mı? APA Hotel Osaka"
+       ^^^^^^^^ city                        ^^^^^^^^^^^^^^^^ hotel_label
+
+    Döner: (city, hotel_label, display_key)
+      - city        : "Osaka"
+      - hotel_label : "APA Hotel Osaka"  (soru işaretinden sonraki kısım)
+      - display_key : hotel_label dolu ise hotel_label, değilse city adı
+
+    Eğer format eşleşmezse ham başlığı display_key olarak kullanır.
+    """
+    raw = (raw_title or "").strip()
+
+    # "X otelinden memnun kaldınız mı? Hotel Adı" — Türkçe ana format
+    m = re.match(
+        r'^(.+?)\s+otelinden\s+memnun\s+kaldınız\s+mı\??\s*(.*)',
+        raw, re.IGNORECASE
+    )
+    if m:
+        city       = m.group(1).strip()
+        hotel_lbl  = m.group(2).strip()
+        display    = hotel_lbl if hotel_lbl else city
+        return city, hotel_lbl, display[:80]
+
+    # Genel fallback: "?" varsa sonrası hotel adı, öncesi başlık
+    if "?" in raw:
+        parts      = raw.split("?", 1)
+        hotel_lbl  = parts[1].strip()
+        city       = re.sub(r'\s+otelinden.*$', '', parts[0], flags=re.IGNORECASE).strip()
+        display    = hotel_lbl if hotel_lbl else city
+        return city, hotel_lbl, display[:80]
+
+    # Son çare: ham başlığın ilk 60 karakteri
+    return "", "", raw[:60]
+
+
 def _extract_guide_name(header: list) -> Optional[str]:
     """
     Rehber sorusunun başlığından rehber adını çıkarır.
@@ -662,8 +704,10 @@ def parse_response_row(header: list, row) -> dict:
                 continue
             v = _safe_float(get(i))
             if v is not None:
-                label = _header_title(header[i]).split("?")[0].strip()[:60]
-                otel_puanlari[label] = v
+                raw_t = _header_title(header[i])
+                _, _, display_key = _parse_hotel_label(raw_t)
+                if display_key:
+                    otel_puanlari[display_key] = v
 
     # Rehber adı header'dan
     rehber_adi = _extract_guide_name(header)

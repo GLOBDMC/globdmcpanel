@@ -475,6 +475,29 @@ let _porslineAnketler = [];
 let _syncResumeIndex = 0;
 
 // ─── Yardımcılar ─────────────────────────────────────────────────────────────
+
+/**
+ * Otel key'ini temizler — eski format ile yeni format'a backwards-compat.
+ * Eski: "Osaka otelinden memnun kaldınız mı? APA Hotel Osaka" → "APA Hotel Osaka"
+ * Eski2: "Osaka otelinden memnun kaldınız mı" (? yok)         → "Osaka"
+ * Yeni:  "APA Hotel Osaka"                                    → "APA Hotel Osaka"
+ */
+function _cleanHotelKey(k) {
+    if (!k) return '';
+    // "otelinden memnun" pattern → soru işaretinden sonraki hotel adını al
+    const memnunIdx = k.toLowerCase().indexOf('otelinden memnun');
+    if (memnunIdx !== -1) {
+        const qIdx = k.indexOf('?');
+        if (qIdx !== -1 && qIdx < k.length - 1) {
+            return k.slice(qIdx + 1).trim();
+        }
+        // "?" yok — şehir adını döndür (keyword öncesi)
+        return k.slice(0, memnunIdx).trim();
+    }
+    // Temiz key zaten (yeni format)
+    return k.trim();
+}
+
 function esc(s) {
     return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
@@ -1318,7 +1341,7 @@ async function yukleAnketler() {
             const oteller = pd.oteller || {};
             const otelDetay = Object.entries(oteller)
                 .filter(([,v]) => v != null)
-                .map(([k,v]) => ({ sehir: k.split('?')[0].trim().slice(0,25), puan: parseFloat(v) }));
+                .map(([k,v]) => ({ sehir: _cleanHotelKey(k), puan: parseFloat(v) }));
             const subParts = [];
             if (item.otel_ort_puani != null) subParts.push(`🏨 <b>${parseFloat(item.otel_ort_puani).toFixed(1)}</b>`);
             if (pd.otobus  != null) subParts.push(`🚌 <b>${parseFloat(pd.otobus).toFixed(1)}</b>`);
@@ -1391,7 +1414,7 @@ function _turKartIcerigi(item) {
             const pct = Math.min(100, Math.round((v / 5) * 100));
             const fc  = v >= 4.5 ? 'skor-fill-high' : v >= 3.5 ? 'skor-fill-medium' : 'skor-fill-low';
             const tc  = v >= 4.5 ? '#4ade80' : v >= 3.5 ? '#facc15' : '#f87171';
-            const ad  = sehir.replace(/\?.*$/, '').trim();
+            const ad  = _cleanHotelKey(sehir);
             return `
             <div class="otel-satir">
                 <span class="otel-adi" title="${esc(ad)}">🏨 ${esc(ad)}</span>
@@ -1491,7 +1514,7 @@ async function yukleYanitlar(cacheIdx) {
         const otelChips = Object.entries(oteller)
             .filter(([,v]) => v != null)
             .map(([k,v]) => {
-                const ad = k.replace(/\?.*$/, '').trim().slice(0, 22);
+                const ad = _cleanHotelKey(k).slice(0, 28);
                 const vv = parseFloat(v);
                 const tc = vv >= 4.5 ? '#4ade80' : vv >= 3.5 ? '#facc15' : '#f87171';
                 return `<span class="tur-pill" style="color:${tc};border-color:rgba(255,255,255,.06);">🏨 ${esc(ad)} ${vv.toFixed(0)}</span>`;
