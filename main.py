@@ -4,6 +4,7 @@ import re
 import csv
 import json
 import time
+import decimal
 import secrets
 import logging
 import logging.handlers
@@ -459,21 +460,31 @@ def tablo_olustur():
             "ALTER TABLE historical_surveys ADD COLUMN IF NOT EXISTS "
             "puan_detay JSONB"
         ))
-        # unique: aynı yanıt iki kez girilmez
+        # Otel adı: puan_detay.oteller'den çıkarılan temiz şehir/otel isimleri
+        conn.execute(text(
+            "ALTER TABLE historical_surveys ADD COLUMN IF NOT EXISTS "
+            "otel_adi TEXT DEFAULT ''"
+        ))
+        # Mevcut satırlar için backfill (otel_adi boş, puan_detay dolu olanlar)
         conn.execute(text("""
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM pg_constraint
-                    WHERE conname = 'hs_porsline_response_uniq'
-                ) THEN
-                    ALTER TABLE historical_surveys
-                        ADD CONSTRAINT hs_porsline_response_uniq
-                        UNIQUE (porsline_response_id)
-                        DEFERRABLE INITIALLY DEFERRED;
-                END IF;
-            END $$;
+            UPDATE historical_surveys
+            SET otel_adi = (
+                SELECT string_agg(key, ' | ')
+                FROM jsonb_object_keys(
+                    COALESCE(puan_detay->'oteller', '{}'::jsonb)
+                ) AS key
+            )
+            WHERE otel_adi = ''
+              AND puan_detay IS NOT NULL
+              AND puan_detay->'oteller' IS NOT NULL
+              AND puan_detay->'oteller' != '{}'::jsonb
         """))
+        # Eski full-unique constraint'i düşür (varsa) — partial index ile değiştiriliyor
+        # NOT: CREATE INDEX ayrı transaction'da, aşağıda
+        conn.execute(text(
+            "ALTER TABLE historical_surveys "
+            "DROP CONSTRAINT IF EXISTS hs_porsline_response_uniq"
+        ))
 
         # ── Historical surveys tablosu ──────────────────────────────────
         conn.execute(text("""
@@ -587,6 +598,19 @@ def tablo_olustur():
         except Exception as e:
             logger.warning("tur_detaylar migration step %d: %s", _i, e)
     logger.info("tur_detaylar tablosu hazir")
+
+    # Porsline partial unique index — boş string'ler (eski veri) dışlanır
+    # Ayrı transaction: ana bloktan bağımsız, varolan duplikatlara toleranslı
+    try:
+        with db_engine.connect() as conn:
+            conn.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_hs_porsline_resp_uniq
+                ON historical_surveys(porsline_response_id)
+                WHERE porsline_response_id IS NOT NULL AND porsline_response_id != ''
+            """))
+            conn.commit()
+    except Exception as e:
+        logger.warning("idx_hs_porsline_resp_uniq migration: %s", e)
 
     logger.info("Tablolar hazir")
 
@@ -1547,6 +1571,20 @@ def _survey_load_tours():
     ]
 
 
+@app.get("/anketler")
+def anketler_sayfasi(request: Request):
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici:
+        return RedirectResponse("/login", status_code=302)
+    if kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+    return templates.TemplateResponse(
+        request=request,
+        name="anketler.html",
+        context={"kullanici": kullanici, "aktif_sayfa": "anketler"},
+    )
+
+
 @app.get("/survey-review")
 def survey_review_sayfasi(request: Request):
     kullanici = oturum_kullanicisi(request)
@@ -1813,65 +1851,121 @@ def survey_stats(request: Request):
     if not kullanici or kullanici["rol"] != "admin":
         return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
 
+    stats: dict = {}
+    top_guides = []
+    top_dest   = []
+
+    # ── 1. Temel sayımlar — asla başarısız olmamalı ─────────────────────────
     try:
         with db_engine.connect() as conn:
             row = conn.execute(text("""
                 SELECT
-                    COUNT(*) AS toplam,
-                    SUM(CASE WHEN match_status='matched'  THEN 1 ELSE 0 END) AS eslendi,
-                    SUM(CASE WHEN match_status='review'   THEN 1 ELSE 0 END) AS inceleme,
-                    SUM(CASE WHEN match_status='rejected' THEN 1 ELSE 0 END) AS reddedildi,
-                    SUM(CASE WHEN match_status='pending'  THEN 1 ELSE 0 END) AS bekliyor,
-                    ROUND(AVG(CASE WHEN genel_puan IS NOT NULL
-                              THEN CAST(genel_puan AS NUMERIC) END), 2)       AS ort_puan,
-                    ROUND(AVG(CASE WHEN rehber_puani IS NOT NULL
-                              THEN CAST(rehber_puani AS NUMERIC) END), 2)     AS ort_rehber_puan,
-                    ROUND(AVG(CAST(match_confidence AS NUMERIC)), 1)           AS ort_confidence
+                    COUNT(*)                                                       AS toplam,
+                    SUM(CASE WHEN match_status='matched'  THEN 1 ELSE 0 END)      AS eslendi,
+                    SUM(CASE WHEN match_status='review'   THEN 1 ELSE 0 END)      AS inceleme,
+                    SUM(CASE WHEN match_status='rejected' THEN 1 ELSE 0 END)      AS reddedildi,
+                    SUM(CASE WHEN match_status='pending'  THEN 1 ELSE 0 END)      AS bekliyor,
+                    ROUND(AVG(CAST(genel_puan    AS NUMERIC)), 2)                  AS ort_puan,
+                    ROUND(AVG(CAST(rehber_puani  AS NUMERIC)), 2)                  AS ort_rehber_puan,
+                    ROUND(AVG(CAST(match_confidence AS NUMERIC)), 1)               AS ort_confidence
                 FROM historical_surveys
             """)).fetchone()
+            if row:
+                for k, v in dict(row._mapping).items():
+                    stats[k] = None if v is None else (float(v) if v is not None else None)
+                stats["toplam"]     = int(stats.get("toplam") or 0)
+                stats["eslendi"]    = int(stats.get("eslendi") or 0)
+                stats["inceleme"]   = int(stats.get("inceleme") or 0)
+                stats["reddedildi"] = int(stats.get("reddedildi") or 0)
+                stats["bekliyor"]   = int(stats.get("bekliyor") or 0)
 
             top_guides = conn.execute(text("""
                 SELECT rehber_adi,
                        COUNT(*) AS anket_sayisi,
                        ROUND(AVG(CAST(genel_puan AS NUMERIC)), 2) AS ort_puan
                 FROM historical_surveys
-                WHERE rehber_adi <> '' AND match_status = 'matched'
+                WHERE rehber_adi <> ''
                 GROUP BY rehber_adi
                 ORDER BY anket_sayisi DESC
                 LIMIT 10
             """)).fetchall()
 
             top_dest = conn.execute(text("""
-                SELECT destinasyon,
+                SELECT COALESCE(NULLIF(destinasyon,''), 'Diğer') AS dest,
                        COUNT(*) AS anket_sayisi,
                        ROUND(AVG(CAST(genel_puan AS NUMERIC)), 2) AS ort_puan
                 FROM historical_surveys
-                WHERE destinasyon <> '' AND match_status = 'matched'
-                GROUP BY destinasyon
+                WHERE destinasyon <> ''
+                GROUP BY 1
                 ORDER BY anket_sayisi DESC
                 LIMIT 10
             """)).fetchall()
-
-        stats = {}
-        if row:
-            for k, v in dict(row._mapping).items():
-                stats[k] = float(v) if v is not None else 0
-
-        return JSONResponse({
-            "ok":        True,
-            "stats":     stats,
-            "rehberler": [dict(r._mapping) for r in top_guides],
-            "destinasyonlar": [dict(r._mapping) for r in top_dest],
-        })
     except Exception as exc:
-        logger.warning("survey_stats hata: %s", exc)
-        return JSONResponse({
-            "ok": True,
-            "stats": {"toplam": 0, "eslendi": 0, "inceleme": 0, "reddedildi": 0, "bekliyor": 0,
-                      "ort_puan": 0, "ort_rehber_puan": 0, "ort_confidence": 0},
-            "rehberler": [],
-            "destinasyonlar": [],
-        })
+        logger.warning("survey_stats temel sorgu hata: %s", exc)
+        # En azından toplam kayıt sayısını basit sorguyla al
+        try:
+            with db_engine.connect() as conn:
+                stats["toplam"] = int(conn.execute(
+                    text("SELECT COUNT(*) FROM historical_surveys")
+                ).scalar() or 0)
+        except Exception:
+            stats["toplam"] = 0
+
+    # ── 2. puan_detay JSONB kategori ortalamaları — ayrı try/except ─────────
+    try:
+        with db_engine.connect() as conn:
+            # puan_detay kolonu var mı?
+            has_pd = conn.execute(text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name='historical_surveys' AND column_name='puan_detay'"
+            )).fetchone()
+
+            if has_pd:
+                kat_row = conn.execute(text("""
+                    SELECT
+                        ROUND(AVG(NULLIF(puan_detay->>'otobus','')::numeric), 2)        AS ort_otobus,
+                        ROUND(AVG(NULLIF(puan_detay->>'sofor','')::numeric), 2)         AS ort_sofor,
+                        ROUND(AVG(NULLIF(puan_detay->>'program','')::numeric), 2)       AS ort_program,
+                        ROUND(AVG(NULLIF(puan_detay->>'operasyon','')::numeric), 2)     AS ort_operasyon,
+                        ROUND(AVG(NULLIF(puan_detay->>'transfer','')::numeric), 2)      AS ort_transfer,
+                        ROUND(AVG(NULLIF(puan_detay->>'ekstra_tur','')::numeric), 2)    AS ort_ekstra_tur,
+                        ROUND(AVG(NULLIF(puan_detay->>'genel_memnuniyet','')::numeric), 2) AS ort_genel_memnuniyet
+                    FROM historical_surveys
+                    WHERE puan_detay IS NOT NULL
+                """)).fetchone()
+                if kat_row:
+                    for k, v in dict(kat_row._mapping).items():
+                        stats[k] = float(v) if v is not None else None
+
+            # Otel ortalaması — correlated subquery yerine lateral kullan
+            if has_pd:
+                otel_row = conn.execute(text("""
+                    SELECT ROUND(AVG(otel_avg), 2) AS ort_otel
+                    FROM (
+                        SELECT
+                            (SELECT AVG(value::numeric)
+                             FROM jsonb_each_text(COALESCE(puan_detay->'oteller', '{}'))
+                             WHERE value ~ '^[0-9]+[.]?[0-9]*$'
+                            ) AS otel_avg
+                        FROM historical_surveys
+                        WHERE puan_detay IS NOT NULL
+                          AND puan_detay->'oteller' IS NOT NULL
+                          AND puan_detay->'oteller' != '{}'::jsonb
+                    ) sub
+                    WHERE otel_avg IS NOT NULL
+                """)).fetchone()
+                if otel_row and otel_row[0] is not None:
+                    stats["ort_otel"] = float(otel_row[0])
+    except Exception as exc:
+        logger.warning("survey_stats JSONB kategori sorgu hata: %s", exc)
+
+    return JSONResponse({
+        "ok":        True,
+        "stats":     stats,
+        "rehberler": [dict(r._mapping) for r in top_guides],
+        "destinasyonlar": [dict(r._mapping) for r in top_dest],
+    })
+
 
 
 @app.post("/api/survey/match/{survey_id}")
@@ -1981,110 +2075,292 @@ def survey_results(
     tur:       str = "",
     batch:     str = "",
     min_puan:  float = None,
-    siralama:  str = "yeni",   # yeni | puan_asc | puan_desc
+    siralama:  str = "yeni",   # yeni | puan_asc | puan_desc | kalkis
     bolge:     str = "",
+    otel:      str = "",
+    status:    str = "",       # matched | review | pending
+    grup:      bool = True,    # True → her anket bir kart; False → her yanıt bir satır
+    porsline_survey_id: str = "",  # Belirli bir Porsline anketi için filtre (detay modal)
 ):
-    """Tüm import edilmiş anket yanıtlarını döndürür (sayfalı, filtrelenebilir)."""
+    """
+    Anket sonuçlarını döndürür.
+    grup=True (varsayılan): survey bazında gruplandırılmış — her Porsline anketi tek kart.
+    grup=False: eski davranış — her yanıt ayrı satır.
+    """
     kullanici = oturum_kullanicisi(request)
     if not kullanici or kullanici["rol"] != "admin":
         return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
 
-    filters  = ["match_status != 'rejected'"]
+    filters  = ["hs.match_status != 'rejected'"]
     params: dict = {"limit": limit, "offset": sayfa * limit}
 
+    if status:
+        filters.append("hs.match_status = :status")
+        params["status"] = status
     if rehber:
-        filters.append("LOWER(rehber_adi) LIKE LOWER(:rehber)")
+        filters.append("LOWER(hs.rehber_adi) LIKE LOWER(:rehber)")
         params["rehber"] = f"%{rehber}%"
     if tur:
-        filters.append("(LOWER(tur_adi_ham) LIKE LOWER(:tur) OR LOWER(matched_jt_kodu) LIKE LOWER(:tur))")
+        filters.append("(LOWER(hs.tur_adi_ham) LIKE LOWER(:tur) OR LOWER(hs.matched_jt_kodu) LIKE LOWER(:tur))")
         params["tur"] = f"%{tur}%"
     if batch:
-        filters.append("import_batch = :batch")
+        filters.append("hs.import_batch = :batch")
         params["batch"] = batch
     if min_puan is not None:
-        filters.append("genel_puan >= :min_puan")
+        filters.append("hs.genel_puan >= :min_puan")
         params["min_puan"] = min_puan
     if bolge:
         filters.append("hs.bolge = :bolge")
         params["bolge"] = bolge
+    if otel:
+        filters.append("LOWER(hs.otel_adi) LIKE LOWER(:otel)")
+        params["otel"] = f"%{otel}%"
+    if porsline_survey_id:
+        filters.append("hs.porsline_survey_id = :porsline_survey_id")
+        params["porsline_survey_id"] = porsline_survey_id
 
-    where = "WHERE " + " AND ".join(filters) if filters else ""
+    # Mevcut kolonları kontrol et (DB migration henüz tamamlanmamış olabilir)
+    def _col_exists(conn, col: str) -> bool:
+        r = conn.execute(text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name='historical_surveys' AND column_name=:c"
+        ), {"c": col}).fetchone()
+        return r is not None
 
-    order_map = {
-        "yeni":      "hs.created_at DESC",
-        "puan_asc":  "hs.genel_puan ASC NULLS LAST",
-        "puan_desc": "hs.genel_puan DESC NULLS LAST",
-        "kalkis":    "hs.kalkis_tarihi DESC",
-    }
-    order = order_map.get(siralama, "hs.created_at DESC")
+    try:
+        with db_engine.connect() as conn:
+            has_bolge    = _col_exists(conn, "bolge")
+            has_otel_adi = _col_exists(conn, "otel_adi")
+            has_puan_det = _col_exists(conn, "puan_detay")
 
-    with db_engine.connect() as conn:
-        total = conn.execute(text(
-            f"SELECT COUNT(*) FROM historical_surveys hs {where}"
-        ), params).scalar()
+            # Kolon yoksa ilgili filtreyi kaldır
+            safe_filters = []
+            safe_params  = dict(params)
+            for f in filters:
+                if "hs.bolge" in f and not has_bolge:
+                    safe_params.pop("bolge", None); continue
+                if "hs.otel_adi" in f and not has_otel_adi:
+                    safe_params.pop("otel", None); continue
+                safe_filters.append(f)
+            safe_where = "WHERE " + " AND ".join(safe_filters) if safe_filters else ""
 
-        rows = conn.execute(text(f"""
-            SELECT
-                hs.id,
-                hs.tur_adi_ham,
-                hs.kalkis_tarihi,
-                hs.musteri_adi,
-                hs.rehber_adi,
-                hs.acente_adi,
-                hs.genel_puan,
-                hs.rehber_puani,
-                hs.puan_detay,
-                hs.yorum,
-                hs.match_status,
-                hs.match_confidence,
-                hs.matched_jt_kodu,
-                hs.import_batch,
-                hs.created_at::text,
-                t.tur_adi   AS eslesen_tur
-            FROM historical_surveys hs
-            LEFT JOIN turlar t ON t.id = hs.matched_tur_id
-            {where}
-            ORDER BY {order}
-            LIMIT :limit OFFSET :offset
-        """), params).fetchall()
+            bolge_expr    = "hs.bolge"    if has_bolge    else "''"
+            otel_adi_expr = "hs.otel_adi" if has_otel_adi else "''"
+            puan_det_expr = "hs.puan_detay" if has_puan_det else "NULL::jsonb"
 
-        # Rehber özeti (filtreye göre)
-        guide_rows = conn.execute(text(f"""
-            SELECT
-                rehber_adi,
-                COUNT(*) AS adet,
-                ROUND(AVG(genel_puan)::numeric,2)   AS ort_genel,
-                ROUND(AVG(rehber_puani)::numeric,2) AS ort_rehber,
-                MIN(kalkis_tarihi) AS ilk_kalkis,
-                MAX(kalkis_tarihi) AS son_kalkis
-            FROM historical_surveys hs
-            {where.replace('match_status !=', 'hs.match_status !=')}
-            GROUP BY rehber_adi
-            HAVING rehber_adi <> ''
-            ORDER BY adet DESC
-            LIMIT 20
-        """), params).fetchall()
+            if grup:
+                # ── Gruplandırılmış mod ─────────────────────────────────────
+                # Her (porsline_survey_id, tur_adi_ham, kalkis_tarihi, rehber_adi)
+                # kombinasyonu tek kart olarak gösterilir.
+                # ÖNEMLI: SELECT'teki ifadeler GROUP BY ile birebir aynı olmalı
+                # (PostgreSQL non-aggregated column kuralı).
+                # NULL/boş porsline_survey_id'ler (manuel import) '' olarak gruplanır.
+                group_key = """
+                    COALESCE(hs.porsline_survey_id, ''),
+                    COALESCE(hs.tur_adi_ham, ''),
+                    COALESCE(hs.kalkis_tarihi, ''),
+                    COALESCE(hs.rehber_adi, '')
+                """
+
+                order_map = {
+                    "yeni":      "MAX(hs.created_at) DESC",
+                    "puan_asc":  "AVG(hs.genel_puan) ASC NULLS LAST",
+                    "puan_desc": "AVG(hs.genel_puan) DESC NULLS LAST",
+                    "kalkis":    "MAX(hs.kalkis_tarihi) DESC NULLS LAST",
+                }
+                order = order_map.get(siralama, "MAX(hs.created_at) DESC")
+
+                # Toplam grup sayısı
+                total = conn.execute(text(f"""
+                    SELECT COUNT(*) FROM (
+                        SELECT 1 FROM historical_surveys hs
+                        {safe_where}
+                        GROUP BY {group_key}
+                    ) _cnt
+                """), safe_params).scalar() or 0
+
+                # Alt kategori ortalamaları (puan_detay JSONB)
+                # Otel: puan_detay.oteller dict'indeki şehir puanlarının ortalaması
+                if has_puan_det:
+                    sub_avg_expr = """
+                        ROUND(AVG(
+                            (SELECT AVG(value::numeric)
+                             FROM jsonb_each_text(COALESCE(hs.puan_detay->'oteller','{}'))
+                             WHERE value ~ '^[0-9]+[.]?[0-9]*$')
+                        )::numeric, 2) AS ort_otel,
+                        ROUND(AVG(NULLIF((hs.puan_detay->>'otobus'),  '')::numeric)::numeric, 2) AS ort_otobus,
+                        ROUND(AVG(NULLIF((hs.puan_detay->>'sofor'),   '')::numeric)::numeric, 2) AS ort_sofor,
+                        ROUND(AVG(NULLIF((hs.puan_detay->>'program'), '')::numeric)::numeric, 2) AS ort_program,
+                    """
+                else:
+                    sub_avg_expr = "NULL AS ort_otel, NULL AS ort_otobus, NULL AS ort_sofor, NULL AS ort_program,"
+
+                # İç sorgu: gruplama + kategori ortalamaları
+                inner_sql = f"""
+                    SELECT
+                        COALESCE(hs.porsline_survey_id, '')  AS porsline_survey_id,
+                        COALESCE(hs.tur_adi_ham, '')         AS tur_adi_ham,
+                        COALESCE(hs.kalkis_tarihi, '')       AS kalkis_tarihi,
+                        COALESCE(hs.rehber_adi, '')          AS rehber_adi,
+                        COUNT(*)                             AS yanit_sayisi,
+                        ROUND(AVG(hs.genel_puan)::numeric,   2) AS genel_puan,
+                        ROUND(AVG(hs.rehber_puani)::numeric, 2) AS rehber_puani,
+                        {sub_avg_expr}
+                        MAX(hs.matched_jt_kodu)
+                            FILTER (WHERE hs.matched_jt_kodu IS NOT NULL
+                                      AND hs.matched_jt_kodu != '')  AS matched_jt_kodu,
+                        MAX(hs.match_status)                         AS match_status,
+                        MAX({bolge_expr})
+                            FILTER (WHERE {bolge_expr} != '')        AS bolge,
+                        STRING_AGG(DISTINCT NULLIF({otel_adi_expr},''), ', ') AS otel_adi,
+                        MAX(hs.created_at)::text                     AS created_at
+                    FROM historical_surveys hs
+                    {safe_where}
+                    GROUP BY {group_key}
+                    ORDER BY {order}
+                    LIMIT :limit OFFSET :offset
+                """
+
+                # Dış sorgu: şehir bazlı otel ortalamalarını iç sorgu kolonlarıyla correlation yap
+                # (Correlated subquery outer GROUP BY kolonuna erişemez; iç sorgudan erişir)
+                if has_puan_det:
+                    outer_sql = f"""
+                    SELECT g.*,
+                        (SELECT jsonb_object_agg(k, ROUND(avg_val::numeric, 2))
+                         FROM (
+                             SELECT kv.key AS k, AVG(kv.value::numeric) AS avg_val
+                             FROM historical_surveys h2
+                             CROSS JOIN LATERAL jsonb_each_text(
+                                 COALESCE(h2.puan_detay->'oteller', '{{}}')
+                             ) kv
+                             WHERE kv.value ~ '^[0-9]+[.]?[0-9]*$'
+                               AND COALESCE(h2.porsline_survey_id,'') = g.porsline_survey_id
+                               AND COALESCE(h2.tur_adi_ham,'')        = g.tur_adi_ham
+                               AND COALESCE(h2.kalkis_tarihi,'')      = g.kalkis_tarihi
+                               AND COALESCE(h2.rehber_adi,'')         = g.rehber_adi
+                             GROUP BY kv.key
+                         ) _h
+                        ) AS oteller_ort
+                    FROM ({inner_sql}) g
+                    """
+                else:
+                    outer_sql = f"SELECT g.*, NULL AS oteller_ort FROM ({inner_sql}) g"
+
+                rows = conn.execute(text(outer_sql), safe_params).fetchall()
+
+            else:
+                # ── Bireysel yanıt modu (eski davranış) ────────────────────
+                order_map = {
+                    "yeni":      "hs.created_at DESC",
+                    "puan_asc":  "hs.genel_puan ASC NULLS LAST",
+                    "puan_desc": "hs.genel_puan DESC NULLS LAST",
+                    "kalkis":    "hs.kalkis_tarihi DESC",
+                }
+                order = order_map.get(siralama, "hs.created_at DESC")
+
+                total = conn.execute(text(
+                    f"SELECT COUNT(*) FROM historical_surveys hs {safe_where}"
+                ), safe_params).scalar() or 0
+
+                rows = conn.execute(text(f"""
+                    SELECT
+                        hs.id,
+                        hs.tur_adi_ham,
+                        hs.kalkis_tarihi,
+                        hs.musteri_adi,
+                        hs.rehber_adi,
+                        hs.acente_adi,
+                        hs.genel_puan,
+                        hs.rehber_puani,
+                        {puan_det_expr} AS puan_detay,
+                        hs.yorum,
+                        hs.match_status,
+                        hs.match_confidence,
+                        hs.matched_jt_kodu,
+                        hs.import_batch,
+                        hs.created_at::text  AS created_at,
+                        COALESCE(hs.kalkis_tarihi, hs.created_at::text) AS survey_date,
+                        {bolge_expr}    AS bolge,
+                        {otel_adi_expr} AS otel_adi,
+                        t.tur_adi       AS eslesen_tur,
+                        1               AS yanit_sayisi
+                    FROM historical_surveys hs
+                    LEFT JOIN turlar t ON t.id = hs.matched_tur_id
+                    {safe_where}
+                    ORDER BY {order}
+                    LIMIT :limit OFFSET :offset
+                """), safe_params).fetchall()
+
+            # Rehber özeti (filtreye göre, her zaman bireysel)
+            guide_rows = conn.execute(text(f"""
+                SELECT
+                    rehber_adi,
+                    COUNT(*) AS adet,
+                    ROUND(AVG(genel_puan)::numeric,2)   AS ort_genel,
+                    ROUND(AVG(rehber_puani)::numeric,2) AS ort_rehber,
+                    MIN(kalkis_tarihi) AS ilk_kalkis,
+                    MAX(kalkis_tarihi) AS son_kalkis
+                FROM historical_surveys hs
+                {safe_where}
+                GROUP BY rehber_adi
+                HAVING rehber_adi <> ''
+                ORDER BY adet DESC
+                LIMIT 20
+            """), safe_params).fetchall()
+
+    except Exception as exc:
+        logger.error("survey_results sorgu hatası: %s", exc, exc_info=True)
+        return JSONResponse({
+            "ok": False,
+            "hata": f"Sorgu hatası: {str(exc)[:200]}",
+            "items": [], "total": 0,
+        })
 
     def row_to_dict(r):
         d = dict(r._mapping)
-        if d.get("puan_detay") and isinstance(d["puan_detay"], str):
-            try:
-                d["puan_detay"] = json.loads(d["puan_detay"])
-            except Exception:
-                d["puan_detay"] = {}
-        for k, v in d.items():
+        # Bireysel modda puan_detay JSON parse
+        pd_raw = d.get("puan_detay")
+        if pd_raw and isinstance(pd_raw, str):
+            try: pd_raw = json.loads(pd_raw)
+            except Exception: pd_raw = {}
+        elif not pd_raw:
+            pd_raw = {}
+        d["puan_detay"] = pd_raw
+
+        # Bireysel modda otel ort puanını hesapla
+        if not grup:
+            oteller = pd_raw.get("oteller") or {}
+            otel_vals = [v for v in oteller.values() if isinstance(v, (int, float))]
+            d["otel_ort_puani"] = round(sum(otel_vals)/len(otel_vals), 2) if otel_vals else None
+
+        # Gruplu modda oteller_ort JSON parse (şehir bazlı ortalamalar)
+        if grup:
+            oo = d.get("oteller_ort")
+            if oo and isinstance(oo, str):
+                try: oo = json.loads(oo)
+                except Exception: oo = {}
+            d["oteller_ort"] = oo or {}
+
+        for k, v in list(d.items()):
             if hasattr(v, "isoformat"):
                 d[k] = v.isoformat()
-            elif v is None:
-                d[k] = None
+            elif isinstance(v, decimal.Decimal):
+                d[k] = float(v)
         return d
 
+    def _safe(v):
+        """Decimal ve datetime → JSON-safe Python tiplerine çevir."""
+        if isinstance(v, decimal.Decimal): return float(v)
+        if hasattr(v, "isoformat"):        return v.isoformat()
+        return v
+
     return JSONResponse({
-        "ok":       True,
-        "total":    total,
-        "sayfa":    sayfa,
-        "items":    [row_to_dict(r) for r in rows],
-        "rehberler": [dict(r._mapping) for r in guide_rows],
+        "ok":        True,
+        "total":     total,
+        "sayfa":     sayfa,
+        "grup":      grup,
+        "items":     [row_to_dict(r) for r in rows],
+        "rehberler": [{k: _safe(v) for k, v in r._mapping.items()} for r in guide_rows],
     })
 
 
@@ -2112,47 +2388,240 @@ def survey_bolgeler(request: Request):
             ORDER BY adet DESC
         """)).fetchall()
 
+    bolge_data = [dict(r._mapping) for r in rows]
     return JSONResponse({
-        "ok":     True,
-        "bolge_list": [dict(r._mapping) for r in rows],
+        "ok":        True,
+        "bolge_list": bolge_data,
+        # Geriye dönük uyumluluk: sadece isim listesi
+        "bolgeler":  [r["bolge"] for r in bolge_data if r["bolge"] != "Diğer"],
     })
 
 
-@app.get("/api/survey/debug-data")
-def survey_debug_data(request: Request):
-    """DB'deki mevcut durum + örnek kayıt puan_detay içeriği."""
+@app.get("/api/survey/oteller")
+def survey_oteller(request: Request, q: str = ""):
+    """DB'deki distinct otel/şehir isimleri listesi — autocomplete için adet + ort_puan dahil."""
     kullanici = oturum_kullanicisi(request)
     if not kullanici or kullanici["rol"] != "admin":
         return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
 
+    q_filter = f"%{q.lower()}%" if q else None
+
     with db_engine.connect() as conn:
-        ozet = conn.execute(text("""
-            SELECT
-                COUNT(*)                                           AS toplam,
-                COUNT(*) FILTER (WHERE genel_puan IS NOT NULL)    AS puan_dolu,
-                COUNT(*) FILTER (WHERE genel_puan IS NULL)        AS puan_bos,
-                COUNT(*) FILTER (WHERE puan_detay IS NOT NULL
-                                   AND puan_detay::text != '{}')  AS detay_dolu,
-                COUNT(*) FILTER (WHERE rehber_adi <> '')          AS rehber_dolu,
-                COUNT(*) FILTER (WHERE porsline_survey_id <> '')  AS porsline_kaynakli
-            FROM historical_surveys
-        """)).fetchone()
+        # Otel isimlerini JSONB oteller objesinden çek (daha doğru split)
+        try:
+            rows = conn.execute(text("""
+                SELECT
+                    t.otel_name                                          AS otel,
+                    COUNT(DISTINCT hs.id)                                AS adet,
+                    ROUND(AVG(
+                        CASE WHEN t.score ~ '^[0-9]+(\\.[0-9]+)?$'
+                             THEN t.score::numeric ELSE NULL END
+                    ), 2)                                                AS ort_puan
+                FROM historical_surveys hs
+                CROSS JOIN LATERAL jsonb_each_text(
+                    COALESCE(hs.puan_detay->'oteller', '{}')
+                ) AS t(otel_name, score)
+                WHERE hs.match_status != 'rejected'
+                  AND hs.puan_detay IS NOT NULL
+                  AND t.otel_name != ''
+                  AND (:q IS NULL OR LOWER(t.otel_name) LIKE :q)
+                GROUP BY t.otel_name
+                ORDER BY adet DESC
+                LIMIT 60
+            """), {"q": q_filter}).fetchall()
+        except Exception:
+            # Fallback: otel_adi sütununu kullan
+            rows = conn.execute(text("""
+                SELECT DISTINCT trim(otel) AS otel, COUNT(*) AS adet, NULL AS ort_puan
+                FROM historical_surveys,
+                     unnest(string_to_array(otel_adi, ' | ')) AS otel
+                WHERE otel_adi != ''
+                  AND trim(otel) != ''
+                  AND (:q IS NULL OR LOWER(trim(otel)) LIKE :q)
+                GROUP BY trim(otel)
+                ORDER BY adet DESC
+                LIMIT 60
+            """), {"q": q_filter}).fetchall()
 
-        # İlk 3 kayıt — ham veri
-        ornekler = conn.execute(text("""
-            SELECT id, tur_adi_ham, genel_puan, rehber_puani,
-                   puan_detay::text, rehber_adi, musteri_adi,
-                   porsline_survey_id
-            FROM historical_surveys
-            ORDER BY id DESC
-            LIMIT 3
-        """)).fetchall()
-
+    import decimal
     return JSONResponse({
-        "ok":    True,
-        "ozet":  dict(ozet._mapping),
-        "ornekler": [dict(r._mapping) for r in ornekler],
+        "ok":     True,
+        "oteller": [r[0] for r in rows],           # geriye dönük uyumluluk
+        "liste": [
+            {
+                "otel":     r[0],
+                "adet":     r[1],
+                "ort_puan": float(r[2]) if r[2] is not None else None,
+            }
+            for r in rows
+        ],
     })
+
+
+@app.get("/api/survey/otel-kart")
+def survey_otel_kart(request: Request, otel: str = ""):
+    """Tek bir otel için özet kart verisi: istatistik + bu oteli kullanan turlar."""
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    if not otel:
+        return JSONResponse({"hata": "otel parametresi gerekli"}, status_code=400)
+
+    otel_like = f"%{otel.lower()}%"
+
+    try:
+        with db_engine.connect() as conn:
+            # ── Otel bazlı ortalama (JSONB'den kesin hesap) ─────────────────
+            try:
+                stats_row = conn.execute(text("""
+                    SELECT
+                        COUNT(DISTINCT hs.id)                                AS anket_sayisi,
+                        ROUND(AVG(
+                            CASE WHEN t.score ~ '^[0-9]+(\\.[0-9]+)?$'
+                                 THEN t.score::numeric ELSE NULL END
+                        ), 2)                                                AS avg_puan
+                    FROM historical_surveys hs
+                    CROSS JOIN LATERAL jsonb_each_text(
+                        COALESCE(hs.puan_detay->'oteller', '{}')
+                    ) AS t(otel_name, score)
+                    WHERE hs.match_status != 'rejected'
+                      AND LOWER(t.otel_name) LIKE :like
+                """), {"like": otel_like}).fetchone()
+            except Exception:
+                stats_row = conn.execute(text("""
+                    SELECT COUNT(*) AS anket_sayisi, NULL AS avg_puan
+                    FROM historical_surveys
+                    WHERE match_status != 'rejected'
+                      AND LOWER(otel_adi) LIKE :like
+                """), {"like": otel_like}).fetchone()
+
+            anket_sayisi = stats_row[0] if stats_row else 0
+            avg_puan     = float(stats_row[1]) if stats_row and stats_row[1] else None
+
+            # ── Bu oteli kullanan turlar ─────────────────────────────────────
+            tur_rows = conn.execute(text("""
+                SELECT
+                    hs.matched_jt_kodu,
+                    COALESCE(t.tur_adi, hs.tur_adi_ham, hs.matched_jt_kodu) AS tur_adi,
+                    t.kalkis_tarihi,
+                    COUNT(DISTINCT hs.id)                                     AS yanit_sayisi,
+                    ROUND(AVG(hs.genel_puan)::numeric, 2)                     AS ort_puan
+                FROM historical_surveys hs
+                LEFT JOIN turlar t ON t.jt_kodu = hs.matched_jt_kodu
+                WHERE hs.match_status != 'rejected'
+                  AND hs.matched_jt_kodu != ''
+                  AND hs.matched_jt_kodu IS NOT NULL
+                  AND LOWER(hs.otel_adi) LIKE :like
+                GROUP BY hs.matched_jt_kodu, t.tur_adi, hs.tur_adi_ham, t.kalkis_tarihi
+                ORDER BY t.kalkis_tarihi DESC NULLS LAST
+                LIMIT 30
+            """), {"like": otel_like}).fetchall()
+
+            import decimal as _dec
+            def _s(v):
+                if isinstance(v, _dec.Decimal): return float(v)
+                if hasattr(v, "isoformat"): return v.isoformat()
+                return v
+
+            turlar = [
+                {k: _s(v) for k, v in r._mapping.items()}
+                for r in tur_rows
+            ]
+
+        return JSONResponse({
+            "ok":          True,
+            "otel":        otel,
+            "anket_sayisi": anket_sayisi,
+            "avg_puan":    avg_puan,
+            "turlar":      turlar,
+        })
+    except Exception as e:
+        logger.error("survey_otel_kart [%s]: %s", otel, e)
+        return JSONResponse({"hata": str(e)}, status_code=500)
+
+
+@app.get("/api/survey/debug-data")
+def survey_debug_data(request: Request):
+    """DB durum tanısı: kolon varlığı, satır sayısı, örnek kayıtlar."""
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    result: dict = {"ok": True}
+
+    try:
+        with db_engine.connect() as conn:
+            # 1. Mevcut kolon listesi
+            col_rows = conn.execute(text("""
+                SELECT column_name, data_type
+                FROM information_schema.columns
+                WHERE table_name = 'historical_surveys'
+                ORDER BY ordinal_position
+            """)).fetchall()
+            result["kolonlar"] = {r[0]: r[1] for r in col_rows}
+            mevcut_kolonlar = set(result["kolonlar"].keys())
+
+            # 2. Genel sayım (güvenli kolonlarla)
+            result["toplam_satir"] = conn.execute(
+                text("SELECT COUNT(*) FROM historical_surveys")
+            ).scalar()
+
+            # 3. Kolon bazlı dolu/boş sayımı — sadece var olan kolonlar için
+            ozet: dict = {}
+            for col in ["genel_puan", "rehber_puani", "puan_detay",
+                        "porsline_response_id", "porsline_survey_id",
+                        "bolge", "otel_adi", "rehber_adi"]:
+                if col in mevcut_kolonlar:
+                    try:
+                        if col in ("puan_detay",):
+                            n = conn.execute(text(
+                                f"SELECT COUNT(*) FROM historical_surveys "
+                                f"WHERE {col} IS NOT NULL AND {col}::text NOT IN ('null', '{{}}')"
+                            )).scalar()
+                        else:
+                            n = conn.execute(text(
+                                f"SELECT COUNT(*) FROM historical_surveys "
+                                f"WHERE {col} IS NOT NULL AND CAST({col} AS TEXT) != ''"
+                            )).scalar()
+                        ozet[col] = {"var": True, "dolu": int(n or 0)}
+                    except Exception as ce:
+                        ozet[col] = {"var": True, "hata": str(ce)[:100]}
+                else:
+                    ozet[col] = {"var": False}
+            result["kolon_ozet"] = ozet
+
+            # 4. Son 3 kayıt — sadece mevcut kolonlarla
+            safe_cols = [c for c in [
+                "id", "tur_adi_ham", "genel_puan", "rehber_puani",
+                "rehber_adi", "musteri_adi", "match_status",
+            ] if c in mevcut_kolonlar]
+            if "puan_detay" in mevcut_kolonlar:
+                safe_cols.append("puan_detay::text AS puan_detay")
+            if "porsline_survey_id" in mevcut_kolonlar:
+                safe_cols.append("porsline_survey_id")
+            if "porsline_response_id" in mevcut_kolonlar:
+                safe_cols.append("porsline_response_id")
+
+            if safe_cols:
+                ornekler = conn.execute(text(
+                    f"SELECT {', '.join(safe_cols)} FROM historical_surveys ORDER BY id DESC LIMIT 3"
+                )).fetchall()
+                result["son_kayitlar"] = [dict(r._mapping) for r in ornekler]
+
+            # 5. Index kontrolü
+            idx_rows = conn.execute(text("""
+                SELECT indexname, indexdef
+                FROM pg_indexes
+                WHERE tablename = 'historical_surveys'
+                  AND indexname LIKE '%porsline%'
+            """)).fetchall()
+            result["porsline_indexler"] = [{"ad": r[0], "tanim": r[1]} for r in idx_rows]
+
+    except Exception as exc:
+        result["hata"] = str(exc)
+
+    return JSONResponse(result)
 
 
 @app.get("/api/survey/search-tours")
@@ -2257,10 +2726,14 @@ def rehberler_listesi(request: Request):
                     COUNT(DISTINCT hs.matched_jt_kodu)
                         FILTER (WHERE hs.matched_jt_kodu != '')                      AS tur_sayisi
                 FROM rehberler r
-                LEFT JOIN historical_surveys hs ON hs.rehber_id = r.id
-                    AND hs.match_status = 'matched'
+                LEFT JOIN historical_surveys hs ON (
+                    -- FK ile bağlantı varsa kullan
+                    hs.rehber_id = r.id
+                    -- yoksa isim benzerliğiyle eşleştir (Porsline sync'ten gelen veriler için)
+                    OR (hs.rehber_id IS NULL AND LOWER(hs.rehber_adi) = LOWER(r.ad_soyad))
+                )
                 GROUP BY r.id
-                ORDER BY r.aktif DESC, r.ad_soyad
+                ORDER BY r.aktif DESC, anket_sayisi DESC, r.ad_soyad
             """)).fetchall()
         return JSONResponse({"ok": True, "rehberler": _build_rehber_rows(rows, True)})
     except Exception as exc:
@@ -2616,10 +3089,10 @@ def porsline_preview(survey_id: str, request: Request):
 
 
 @app.post("/api/porsline/survey/{survey_id}/sync")
-def porsline_sync_survey(survey_id: str, request: Request):
+def porsline_sync_survey(survey_id: str, request: Request, force: bool = False):
     """
     Tek bir Porsline anketini DB'ye çeker ve eşleştirir.
-    Daha önce girilmiş yanıtları atlar (porsline_response_id unique).
+    force=true: Mevcut kayıtları da yeniden parse edip günceller (puan_detay null olan kayıtlar için).
     """
     kullanici = oturum_kullanicisi(request)
     if not kullanici or kullanici["rol"] != "admin":
@@ -2662,8 +3135,13 @@ def porsline_sync_survey(survey_id: str, request: Request):
                     mesaj = f"Rate limit — {retry_after} sonra tekrar deneyin"
             else:
                 mesaj = "Rate limit — birkaç dakika bekleyip tekrar deneyin"
+            # retry_after'ı her zaman integer saniye olarak dön
+            try:
+                retry_secs = int(float(str(retry_after).strip())) if retry_after else 120
+            except (ValueError, TypeError):
+                retry_secs = 120
             return JSONResponse({"ok": False, "hata": 429, "mesaj": mesaj,
-                                 "retry_after": retry_after},
+                                 "retry_after": retry_secs},
                                 status_code=429)
         # 404 veya başka hata → responses/ endpoint'ini dene
         from porsline_service import _get
@@ -2674,11 +3152,32 @@ def porsline_sync_survey(survey_id: str, request: Request):
                                  "mesaj": "Yanıt endpoint'i bulunamadı"}, status_code=500)
         rows = (resp2.get("results") or resp2.get("responses") or
                 resp2.get("body") or [])
+        # Eğer questions listesi boşsa (folders cache'de questions yoksa) tam detayı çek
+        if not questions:
+            logger.info("PORSLINE_SYNC [%s] questions boş, tam survey detayı çekiliyor...", survey_id)
+            full_detail = _get(f"/api/v2/surveys/{survey_id}/")
+            if "error" not in full_detail:
+                questions = full_detail.get("questions") or []
+                logger.info("PORSLINE_SYNC [%s] tam detaydan %d soru alındı", survey_id, len(questions))
+            else:
+                logger.warning("PORSLINE_SYNC [%s] tam detay alınamadı: %s", survey_id, full_detail.get("error"))
         header = build_header_from_questions(questions)
         use_question_parse = True
     else:
         header = resp["header"]
         rows   = resp["body"]
+
+    logger.info(
+        "PORSLINE_SYNC [%s] rows=%d header_len=%d use_q=%s questions=%d endpoint=%s",
+        survey_id, len(rows), len(header) if header else 0,
+        use_question_parse, len(questions), resp.get("_endpoint", "n/a")
+    )
+    if rows:
+        logger.info("PORSLINE_SYNC [%s] ilk row tipi=%s örnek=%s",
+                    survey_id, type(rows[0]).__name__, str(rows[0])[:300])
+    if use_question_parse and questions:
+        logger.info("PORSLINE_SYNC [%s] soru başlıkları: %s",
+                    survey_id, str([q.get("title") for q in questions[:8]])[:400])
 
     # Turları yükle → matcher kur (yanıt olmasa bile match bilgisi response'da olsun)
     tours = _survey_load_tours()
@@ -2783,7 +3282,9 @@ def porsline_sync_survey(survey_id: str, request: Request):
 
     # Her yanıtı işle
     eklenen = 0
+    guncellenen = 0
     atlanan = 0
+    insert_hata_ornek = ""
 
     insert_sql = """
         INSERT INTO historical_surveys (
@@ -2792,21 +3293,44 @@ def porsline_sync_survey(survey_id: str, request: Request):
             tur_adi_ham, matched_tur_id, matched_jt_kodu,
             match_confidence, match_method, match_status,
             import_batch, porsline_response_id, porsline_survey_id,
-            bolge
+            bolge, otel_adi
         ) VALUES (
             :survey_date, :musteri, :rehber, :acente,
             :kalkis, :genel_puan, :rehber_puani, :puan_detay,
             :tur_adi, :tur_id, :jt,
             :conf, :method, :status,
             :batch, :resp_id, :survey_id,
-            :bolge
+            :bolge, :otel_adi
         )
-        ON CONFLICT (porsline_response_id) DO NOTHING
+        ON CONFLICT (porsline_response_id)
+        WHERE porsline_response_id IS NOT NULL AND porsline_response_id != ''
+        DO NOTHING
+    """
+
+    # force=True: mevcut kayıtları da güncelle (puan_detay null olanları)
+    # NOT: CAST(:puan_detay AS jsonb) kullan — ::jsonb SQLAlchemy :jsonb parametresi sanabilir
+    update_sql = """
+        UPDATE historical_surveys SET
+            genel_puan   = :genel_puan,
+            rehber_puani = :rehber_puani,
+            puan_detay   = CAST(:puan_detay AS jsonb),
+            otel_adi     = :otel_adi,
+            musteri_adi  = CASE WHEN musteri_adi = '' OR musteri_adi IS NULL THEN :musteri ELSE musteri_adi END,
+            rehber_adi   = CASE WHEN rehber_adi  = '' OR rehber_adi  IS NULL THEN :rehber  ELSE rehber_adi  END
+        WHERE porsline_response_id = :resp_id
+          AND (genel_puan IS NULL OR (puan_detay->>'otobus') IS NULL)
     """
 
     # Rehber adını header veya questions'dan çıkar
-    from porsline_service import _extract_guide_name
+    from porsline_service import _extract_guide_name, extract_otel_adi
     rehber_adi_header = _extract_guide_name(header) if header else (parsed.get("rehber_adi") or "")
+
+    # DB'de bu survey için mevcut kayıt sayısını önceden al
+    with db_engine.connect() as conn_pre:
+        zaten_var_count = conn_pre.execute(
+            text("SELECT COUNT(*) FROM historical_surveys WHERE porsline_survey_id = :sid"),
+            {"sid": survey_id}
+        ).scalar() or 0
 
     with db_engine.connect() as conn:
         for i, row in enumerate(rows):
@@ -2816,13 +3340,31 @@ def porsline_sync_survey(survey_id: str, request: Request):
             else:
                 parsed_row = parse_response_row(header, row)
 
-            resp_id = f"porsline_{survey_id}_{i}"
+            # İlk satırı logla — parse sonucunu doğrula
+            if i == 0:
+                logger.info("PORSLINE_SYNC [%s] row[0] parse sonucu: genel_puan=%s rehber=%s puan_detay=%s",
+                            survey_id, parsed_row.get("genel_puan"), parsed_row.get("rehber_puani"),
+                            str(parsed_row.get("puan_detay", {}))[:200])
+
+            # resp_id: Porsline'ın kendi response ID'sini kullan (varsa)
+            # results-table formatında row list[str], /responses/ formatında row dict
+            if isinstance(row, dict):
+                native_id = row.get("id") or row.get("response_id") or row.get("uuid")
+                resp_id = f"porsline_{survey_id}_{native_id}" if native_id else f"porsline_{survey_id}_{i}"
+            else:
+                # results-table: satırın hash'ini kullan (içerik değişmediği sürece aynı kalır)
+                import hashlib
+                row_hash = hashlib.md5(
+                    f"{survey_id}|{'|'.join(str(v) for v in row)}".encode()
+                ).hexdigest()[:16]
+                resp_id = f"porsline_{survey_id}_{row_hash}"
 
             # Rehber adı: header'dan → yanıttan → başlıktan
             rehber_adi = rehber_adi_header or parsed_row.get("rehber_adi") or parsed.get("rehber_adi") or ""
 
             try:
-                result = conn.execute(text(insert_sql), {
+                _puan_detay_dict = parsed_row.get("puan_detay") or {}
+                params = {
                     "survey_date": "",
                     "musteri":     parsed_row.get("musteri_adi") or "",
                     "rehber":      rehber_adi,
@@ -2830,7 +3372,7 @@ def porsline_sync_survey(survey_id: str, request: Request):
                     "kalkis":      parsed.get("kalkis_str") or "",
                     "genel_puan":  parsed_row.get("genel_puan"),
                     "rehber_puani":parsed_row.get("rehber_puani"),
-                    "puan_detay":  json.dumps(parsed_row.get("puan_detay") or {}, ensure_ascii=False),
+                    "puan_detay":  json.dumps(_puan_detay_dict, ensure_ascii=False),
                     "tur_adi":     parsed["tur_adi"],
                     "tur_id":      matched_tur_id,
                     "jt":          matched_jt_kodu,
@@ -2841,20 +3383,34 @@ def porsline_sync_survey(survey_id: str, request: Request):
                     "resp_id":     resp_id,
                     "survey_id":   survey_id,
                     "bolge":       bolge,
-                })
+                    "otel_adi":    extract_otel_adi(_puan_detay_dict),
+                }
+                result = conn.execute(text(insert_sql), params)
                 if result.rowcount > 0:
                     eklenen += 1
                 else:
-                    atlanan += 1
+                    # Kayıt zaten var — force modunda güncelle
+                    if force:
+                        upd = conn.execute(text(update_sql), params)
+                        if upd.rowcount > 0:
+                            guncellenen += 1
+                        else:
+                            atlanan += 1
+                    else:
+                        atlanan += 1
             except Exception as ex:
-                logger.warning("Porsline yanıt insert hatası: %s", ex)
+                hata_str = str(ex)
+                logger.error("Porsline yanıt insert hatası [%s] row=%d: %s", survey_id, i, hata_str)
+                if not insert_hata_ornek:
+                    insert_hata_ornek = hata_str[:300]
                 atlanan += 1
+                conn.rollback()  # bu satırı atla, devam et
 
         conn.commit()
 
     audit_logger.info(
-        "PORSLINE_SYNC | user=%s | survey=%s | eklenen=%d | atlanan=%d | match=%s(%d%%)",
-        kullanici["kullanici_adi"], survey_id, eklenen, atlanan, match_status, confidence,
+        "PORSLINE_SYNC | user=%s | survey=%s | eklenen=%d | guncellenen=%d | atlanan=%d | zaten_var=%d | match=%s(%d%%)",
+        kullanici["kullanici_adi"], survey_id, eklenen, guncellenen, atlanan, zaten_var_count, match_status, confidence,
     )
 
     return JSONResponse({
@@ -2866,7 +3422,10 @@ def porsline_sync_survey(survey_id: str, request: Request):
         "matched_jt":    matched_jt_kodu,
         "yanit_sayisi":  len(rows),
         "eklenen":       eklenen,
+        "guncellenen":   guncellenen,
         "atlanan":       atlanan,
+        "zaten_var":     zaten_var_count,
+        "insert_hata":   insert_hata_ornek or None,
     })
 
 
@@ -3001,7 +3560,9 @@ def porsline_sync_all(request: Request):
                                 (:musteri,:rehber,:acente,:kalkis,
                                  :genel,:rehber_p,:detay,:tur_adi,
                                  :tur_id,:jt,:conf,:method,:status,:batch,:resp_id,:survey_id)
-                            ON CONFLICT (porsline_response_id) DO NOTHING
+                            ON CONFLICT (porsline_response_id)
+                            WHERE porsline_response_id IS NOT NULL AND porsline_response_id != ''
+                            DO NOTHING
                         """), {
                             "musteri":  pr.get("musteri_adi") or "",
                             "rehber":   pr.get("rehber_adi") or parsed.get("rehber_adi") or "",
