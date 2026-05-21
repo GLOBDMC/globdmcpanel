@@ -898,16 +898,46 @@ async def lifespan(app: FastAPI):
         # Günlük snapshot job (02:00 TRT = 23:00 UTC)
         from snapshot_scheduler import setup_snapshot_scheduler
         setup_snapshot_scheduler(scheduler, db_engine)
-        # Günlük Gordios sync (03:00 TRT = 00:00 UTC)
+        # Gordios sync — günlük (03:00 TRT = 00:00 UTC) + startup bekleyenler
         try:
-            from tur_kart_routes import gordios_sync_all_tours
+            from tur_kart_routes import gordios_sync_all_tours, _gordios_sync_run, _gordios_executor as _gex
+
+            # Günlük tam sync
             scheduler.add_job(
                 gordios_sync_all_tours, 'cron',
                 hour=0, minute=0,
                 args=[db_engine],
                 id='gordios_daily_sync',
+                replace_existing=True,
+                misfire_grace_time=3600,
             )
-            logger.info("Gordios günlük sync job eklendi (00:00 UTC)")
+            logger.info("Gordios günlük sync job eklendi (00:00 UTC / 03:00 TRT)")
+
+            # Startup: sadece hiç sync edilmemiş + hatalı turlar (60s gecikme)
+            def _startup_sync():
+                import time
+                time.sleep(60)   # uygulama tamamen ayağa kalksın
+                try:
+                    from sqlalchemy import text as _text
+                    with db_engine.connect() as _conn:
+                        _rows = _conn.execute(_text("""
+                            SELECT t.jt_kodu FROM turlar t
+                            LEFT JOIN tur_detaylar d ON t.jt_kodu = d.jt_kodu
+                            WHERE t.jt_kodu IS NOT NULL AND t.jt_kodu != ''
+                              AND (d.jt_kodu IS NULL OR d.sync_status IN ('pending','error'))
+                            ORDER BY t.kalkis_tarihi
+                        """)).fetchall()
+                    jt_list = [r[0] for r in _rows]
+                    if jt_list:
+                        logger.info("Startup Gordios sync: %d bekleyen tur", len(jt_list))
+                        _gordios_sync_run(jt_list, db_engine, "startup")
+                    else:
+                        logger.info("Startup Gordios sync: bekleyen tur yok")
+                except Exception as _se:
+                    logger.warning("Startup Gordios sync hatasi: %s", _se)
+
+            _gex.submit(_startup_sync)
+            logger.info("Gordios startup sync 60s sonra başlayacak")
         except Exception as _ge:
             logger.warning("Gordios scheduler eklenemedi: %s", _ge)
         scheduler.start()
