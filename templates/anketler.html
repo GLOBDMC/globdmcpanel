@@ -1208,7 +1208,7 @@ async function otelAcGuncelle(val) {
         if (!_acListe.length) { drop.classList.add('hidden'); return; }
         drop.innerHTML = _acListe.map((item, i) => {
             const p = item.ort_puan != null ? `<span style="color:#4ade80;font-weight:700;">${item.ort_puan.toFixed(1)}</span>` : '';
-            return `<div class="ac-item" data-otel="${esc(item.otel)}" data-idx="${i}" onclick="otelSecClick(this)">
+            return `<div class="ac-item" data-otel="${esc(item.otel)}" data-idx="${i}">
                 <span class="ac-item-name">${esc(item.otel)}</span>
                 <span class="ac-item-meta">${p} <span>${item.adet} anket</span></span>
             </div>`;
@@ -1257,6 +1257,24 @@ function otelSecClick(el) {
         document.getElementById('otelKartWrap')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 150);
 }
+
+// Event delegation — anketListe içindeki tüm .otel-link tıklamalarını yakalar
+// (innerHTML ile üretilen elementlerde inline onclick güvenilmez olabileceğinden
+//  delegation kullanıyoruz: element DOM'a eklendiği anda çalışır)
+document.addEventListener('click', function(e) {
+    const el = e.target.closest('[data-otel]');
+    if (!el) return;
+    // Sadece anket listesi, otel kart veya autocomplete dropdown içindeki elementler
+    if (!el.closest('#anketListe') && !el.closest('#otelKartWrap') && !el.closest('#otelAcDropdown')) return;
+    e.stopPropagation();
+    const otelAdi = el.dataset.otel;
+    if (otelAdi) {
+        otelSec(otelAdi);
+        setTimeout(() => {
+            document.getElementById('otelKartWrap')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 150);
+    }
+});
 
 function otelTemizle() {
     const inp = document.getElementById('fOtel');
@@ -1558,7 +1576,7 @@ function _turKartIcerigi(item) {
             return `
             <div class="otel-satir">
                 <span class="otel-adi otel-link" data-otel="${esc(ad)}"
-                      onclick="otelSecClick(this)" title="Otel kartını aç">
+                      title="Otel kartını aç: ${esc(ad)}">
                     🏨 ${esc(ad)}
                 </span>
                 <div class="skor-bar-track" style="flex:1;max-width:120px;">
@@ -1584,21 +1602,7 @@ function _turKartIcerigi(item) {
             ${_skorBarHtml('🏨 Ort. Otel', parseFloat(item.ort_otel))}
         </div>` : '');
 
-    const yanit = parseInt(item.yanit_sayisi) || 1;
-    const yanitSecHtml = `
-        <div class="detay-sec">
-            <div class="detay-sec-title flex items-center justify-between" style="display:flex;align-items:center;justify-content:space-between;">
-                <span>Bireysel Yanıtlar <span style="color:#334155;">(${yanit})</span></span>
-                <button onclick="yukleYanitlar(${_anketDetayCache.indexOf(item)})"
-                        id="btn-y-${_anketDetayCache.indexOf(item)}"
-                        style="font-size:10px;padding:2px 8px;border-radius:6px;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.2);color:#60a5fa;cursor:pointer;">
-                    Yükle ▼
-                </button>
-            </div>
-            <div id="yanitlar-${_anketDetayCache.indexOf(item)}" class="mt-2"></div>
-        </div>`;
-
-    return katSecHtml + otelSecHtml + yanitSecHtml;
+    return katSecHtml + otelSecHtml;
 }
 
 function toggleTurKart(cacheIdx) {
@@ -1661,7 +1665,7 @@ async function yukleYanitlar(cacheIdx) {
                 const vv = parseFloat(v);
                 const tc = vv >= 4.5 ? '#4ade80' : vv >= 3.5 ? '#facc15' : '#f87171';
                 return `<span class="tur-pill otel-link" style="color:${tc};border-color:rgba(255,255,255,.06);"
-                              data-otel="${esc(ad)}" onclick="otelSecClick(this)" title="Otel kartını aç">
+                              data-otel="${esc(ad)}" title="Otel kartını aç: ${esc(ad)}">
                             🏨 ${esc(ad)} ${vv.toFixed(0)}
                         </span>`;
             });
