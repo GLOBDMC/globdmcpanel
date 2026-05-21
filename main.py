@@ -2398,28 +2398,147 @@ def survey_bolgeler(request: Request):
 
 
 @app.get("/api/survey/oteller")
-def survey_oteller(request: Request):
-    """DB'deki distinct otel/şehir isimleri listesi (otel_adi colonundan)."""
+def survey_oteller(request: Request, q: str = ""):
+    """DB'deki distinct otel/şehir isimleri listesi — autocomplete için adet + ort_puan dahil."""
     kullanici = oturum_kullanicisi(request)
     if not kullanici or kullanici["rol"] != "admin":
         return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
 
-    with db_engine.connect() as conn:
-        rows = conn.execute(text("""
-            SELECT DISTINCT trim(otel) AS otel, COUNT(*) AS adet
-            FROM historical_surveys,
-                 unnest(string_to_array(otel_adi, ', ')) AS otel
-            WHERE otel_adi != ''
-              AND trim(otel) != ''
-            GROUP BY trim(otel)
-            ORDER BY adet DESC
-            LIMIT 100
-        """)).fetchall()
+    q_filter = f"%{q.lower()}%" if q else None
 
+    with db_engine.connect() as conn:
+        # Otel isimlerini JSONB oteller objesinden çek (daha doğru split)
+        try:
+            rows = conn.execute(text("""
+                SELECT
+                    t.otel_name                                          AS otel,
+                    COUNT(DISTINCT hs.id)                                AS adet,
+                    ROUND(AVG(
+                        CASE WHEN t.score ~ '^[0-9]+(\\.[0-9]+)?$'
+                             THEN t.score::numeric ELSE NULL END
+                    ), 2)                                                AS ort_puan
+                FROM historical_surveys hs
+                CROSS JOIN LATERAL jsonb_each_text(
+                    COALESCE(hs.puan_detay->'oteller', '{}')
+                ) AS t(otel_name, score)
+                WHERE hs.match_status != 'rejected'
+                  AND hs.puan_detay IS NOT NULL
+                  AND t.otel_name != ''
+                  AND (:q IS NULL OR LOWER(t.otel_name) LIKE :q)
+                GROUP BY t.otel_name
+                ORDER BY adet DESC
+                LIMIT 60
+            """), {"q": q_filter}).fetchall()
+        except Exception:
+            # Fallback: otel_adi sütununu kullan
+            rows = conn.execute(text("""
+                SELECT DISTINCT trim(otel) AS otel, COUNT(*) AS adet, NULL AS ort_puan
+                FROM historical_surveys,
+                     unnest(string_to_array(otel_adi, ' | ')) AS otel
+                WHERE otel_adi != ''
+                  AND trim(otel) != ''
+                  AND (:q IS NULL OR LOWER(trim(otel)) LIKE :q)
+                GROUP BY trim(otel)
+                ORDER BY adet DESC
+                LIMIT 60
+            """), {"q": q_filter}).fetchall()
+
+    import decimal
     return JSONResponse({
         "ok":     True,
-        "oteller": [r[0] for r in rows],
+        "oteller": [r[0] for r in rows],           # geriye dönük uyumluluk
+        "liste": [
+            {
+                "otel":     r[0],
+                "adet":     r[1],
+                "ort_puan": float(r[2]) if r[2] is not None else None,
+            }
+            for r in rows
+        ],
     })
+
+
+@app.get("/api/survey/otel-kart")
+def survey_otel_kart(request: Request, otel: str = ""):
+    """Tek bir otel için özet kart verisi: istatistik + bu oteli kullanan turlar."""
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    if not otel:
+        return JSONResponse({"hata": "otel parametresi gerekli"}, status_code=400)
+
+    otel_like = f"%{otel.lower()}%"
+
+    try:
+        with db_engine.connect() as conn:
+            # ── Otel bazlı ortalama (JSONB'den kesin hesap) ─────────────────
+            try:
+                stats_row = conn.execute(text("""
+                    SELECT
+                        COUNT(DISTINCT hs.id)                                AS anket_sayisi,
+                        ROUND(AVG(
+                            CASE WHEN t.score ~ '^[0-9]+(\\.[0-9]+)?$'
+                                 THEN t.score::numeric ELSE NULL END
+                        ), 2)                                                AS avg_puan
+                    FROM historical_surveys hs
+                    CROSS JOIN LATERAL jsonb_each_text(
+                        COALESCE(hs.puan_detay->'oteller', '{}')
+                    ) AS t(otel_name, score)
+                    WHERE hs.match_status != 'rejected'
+                      AND LOWER(t.otel_name) LIKE :like
+                """), {"like": otel_like}).fetchone()
+            except Exception:
+                stats_row = conn.execute(text("""
+                    SELECT COUNT(*) AS anket_sayisi, NULL AS avg_puan
+                    FROM historical_surveys
+                    WHERE match_status != 'rejected'
+                      AND LOWER(otel_adi) LIKE :like
+                """), {"like": otel_like}).fetchone()
+
+            anket_sayisi = stats_row[0] if stats_row else 0
+            avg_puan     = float(stats_row[1]) if stats_row and stats_row[1] else None
+
+            # ── Bu oteli kullanan turlar ─────────────────────────────────────
+            tur_rows = conn.execute(text("""
+                SELECT
+                    hs.matched_jt_kodu,
+                    COALESCE(t.tur_adi, hs.tur_adi_ham, hs.matched_jt_kodu) AS tur_adi,
+                    t.kalkis_tarihi,
+                    COUNT(DISTINCT hs.id)                                     AS yanit_sayisi,
+                    ROUND(AVG(hs.genel_puan)::numeric, 2)                     AS ort_puan
+                FROM historical_surveys hs
+                LEFT JOIN turlar t ON t.jt_kodu = hs.matched_jt_kodu
+                WHERE hs.match_status != 'rejected'
+                  AND hs.matched_jt_kodu != ''
+                  AND hs.matched_jt_kodu IS NOT NULL
+                  AND LOWER(hs.otel_adi) LIKE :like
+                GROUP BY hs.matched_jt_kodu, t.tur_adi, hs.tur_adi_ham, t.kalkis_tarihi
+                ORDER BY t.kalkis_tarihi DESC NULLS LAST
+                LIMIT 30
+            """), {"like": otel_like}).fetchall()
+
+            import decimal as _dec
+            def _s(v):
+                if isinstance(v, _dec.Decimal): return float(v)
+                if hasattr(v, "isoformat"): return v.isoformat()
+                return v
+
+            turlar = [
+                {k: _s(v) for k, v in r._mapping.items()}
+                for r in tur_rows
+            ]
+
+        return JSONResponse({
+            "ok":          True,
+            "otel":        otel,
+            "anket_sayisi": anket_sayisi,
+            "avg_puan":    avg_puan,
+            "turlar":      turlar,
+        })
+    except Exception as e:
+        logger.error("survey_otel_kart [%s]: %s", otel, e)
+        return JSONResponse({"hata": str(e)}, status_code=500)
 
 
 @app.get("/api/survey/debug-data")

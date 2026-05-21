@@ -91,6 +91,31 @@
 @keyframes spin { to { transform: rotate(360deg); } }
 .spin { animation: spin .8s linear infinite; display: inline-block; }
 
+/* ── Otel Kartı ──────────────────────────── */
+.otel-kart {
+    background: rgba(15,23,41,.85);
+    border: 1px solid rgba(59,130,246,.2);
+    border-radius: 12px;
+    padding: 16px 18px;
+}
+.otel-kart-tur-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 10px; border-radius: 8px; cursor: pointer;
+    transition: background .12s; text-decoration: none;
+}
+.otel-kart-tur-row:hover { background: rgba(255,255,255,.04); }
+
+/* ── Autocomplete dropdown item ─────────── */
+.ac-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 9px 12px; cursor: pointer; transition: background .1s;
+    border-bottom: 1px solid rgba(255,255,255,.04);
+}
+.ac-item:last-child { border-bottom: none; }
+.ac-item:hover, .ac-item.ac-focused { background: rgba(59,130,246,.12); }
+.ac-item-name { font-size: 12px; color: #cbd5e1; }
+.ac-item-meta { font-size: 11px; color: #475569; display: flex; gap: 8px; align-items: center; }
+
 /* ── Tur Deneyimi Kartı ──────────────────── */
 .tur-card {
     background: rgba(15,23,41,.7);
@@ -331,31 +356,30 @@
         <span id="anketSayac" class="text-xs text-slate-600"></span>
     </div>
 
-    <!-- Bölge chip filtreleri -->
-    <div class="mb-1">
-        <div class="text-xs text-slate-600 mb-1.5 uppercase tracking-wide font-medium">Bölge</div>
-        <div id="bolgeChips" class="flex flex-wrap gap-2 mb-4">
-            <button class="bolge-chip active" onclick="bolgeFiltrele('')" data-bolge="">Tümü</button>
-        </div>
-    </div>
-
-    <!-- Otel chip filtreleri -->
-    <div id="otelChipsWrap" class="hidden mb-4">
-        <div class="text-xs text-slate-600 mb-1.5 uppercase tracking-wide font-medium">Otel / Şehir</div>
-        <div id="otelChips" class="flex flex-wrap gap-2">
-            <button class="bolge-chip active" onclick="otelFiltrele('')" data-otel="">Tümü</button>
-        </div>
-    </div>
-
     <!-- Filtre çubuğu -->
     <div class="card card-sm mb-4">
         <div class="flex flex-wrap items-center gap-2">
             <input type="text" id="fArama" placeholder="Başlık / tur ara…" autocomplete="off"
                    class="f-sel flex-1 min-w-[160px]" oninput="debounceAnket()" />
             <input type="text" id="fRehber" placeholder="Rehber adı…" autocomplete="off"
-                   class="f-sel w-40" oninput="debounceAnket()" />
-            <input type="text" id="fOtel" placeholder="🏨 Otel / şehir ara…" autocomplete="off"
-                   class="f-sel w-44" oninput="debounceAnket()" />
+                   class="f-sel w-36" oninput="debounceAnket()" />
+            <!-- Otel autocomplete sarmalayıcı -->
+            <div class="relative" id="otelAcWrap">
+                <input type="text" id="fOtel" placeholder="🏨 Otel ara…" autocomplete="off"
+                       class="f-sel w-44"
+                       oninput="otelAcGuncelle(this.value)"
+                       onfocus="otelAcGuncelle(this.value)"
+                       onkeydown="otelAcKeyDown(event)" />
+                <!-- Autocomplete dropdown -->
+                <div id="otelAcDropdown"
+                     class="hidden absolute left-0 top-full mt-1 w-64 z-50 rounded-xl overflow-hidden shadow-2xl"
+                     style="background:#0d1526;border:1px solid rgba(255,255,255,.1);">
+                </div>
+            </div>
+            <!-- Bölge dropdown -->
+            <select id="fBolge" class="f-sel w-32" onchange="bolgeFiltrele(this.value)">
+                <option value="">Tüm Bölgeler</option>
+            </select>
             <select id="fDurum" class="f-sel w-36" onchange="yukleAnketler()">
                 <option value="">Tüm Durumlar</option>
                 <option value="matched">✓ Tur Eşleşti</option>
@@ -375,6 +399,9 @@
             </button>
         </div>
     </div>
+
+    <!-- Otel Kartı -->
+    <div id="otelKartWrap" class="hidden mb-4"></div>
 
     <!-- Anket listesi -->
     <div id="anketListe" class="space-y-2">
@@ -1141,50 +1168,154 @@ function debounceAnket() {
 function bolgeFiltrele(bolge) {
     _anketBolge = bolge;
     _anketSayfa = 0;
-    document.querySelectorAll('#bolgeChips .bolge-chip').forEach(c =>
-        c.classList.toggle('active', c.dataset.bolge === bolge));
     yukleAnketler();
 }
 
-function otelFiltrele(otel) {
-    _anketOtel = otel;
-    _anketSayfa = 0;
-    document.querySelectorAll('#otelChips .bolge-chip').forEach(c =>
-        c.classList.toggle('active', c.dataset.otel === otel));
-    // Input'u da güncelle
-    const inp = document.getElementById('fOtel');
-    if (inp) inp.value = otel;
-    yukleAnketler();
-}
-
-async function yukleBolgeChips() {
+// ── Bölge select doldur ───────────────────────────────────────────────────────
+async function yukleBolgeSelect() {
     const d = await fetch('/api/survey/bolgeler').then(r=>r.json()).catch(()=>({}));
     if (!d.ok || !d.bolgeler?.length) return;
-    const cont = document.getElementById('bolgeChips');
+    const sel = document.getElementById('fBolge');
     d.bolgeler.forEach(b => {
-        const btn = document.createElement('button');
-        btn.className = 'bolge-chip';
-        btn.dataset.bolge = b;
-        btn.textContent = b;
-        btn.onclick = () => bolgeFiltrele(b);
-        cont.appendChild(btn);
+        const opt = document.createElement('option');
+        opt.value = b; opt.textContent = b;
+        sel.appendChild(opt);
     });
 }
 
-async function yukleOtelChips() {
-    const d = await fetch('/api/survey/oteller').then(r=>r.json()).catch(()=>({}));
-    if (!d.ok || !d.oteller?.length) return;
-    const cont  = document.getElementById('otelChips');
-    const wrap  = document.getElementById('otelChipsWrap');
-    d.oteller.slice(0, 20).forEach(o => {  // En fazla 20 chip göster
-        const btn = document.createElement('button');
-        btn.className = 'bolge-chip';
-        btn.dataset.otel = o;
-        btn.textContent = o;
-        btn.onclick = () => otelFiltrele(o);
-        cont.appendChild(btn);
-    });
-    if (d.oteller.length) wrap.classList.remove('hidden');
+// ── Otel Autocomplete ─────────────────────────────────────────────────────────
+let _acDebounce = null;
+let _acFocusIdx = -1;
+let _acListe    = [];   // son yüklenen öneri listesi
+
+async function otelAcGuncelle(val) {
+    clearTimeout(_acDebounce);
+    const drop = document.getElementById('otelAcDropdown');
+    if (!val.trim()) {
+        drop.classList.add('hidden');
+        if (_anketOtel) { _anketOtel = ''; _anketSayfa = 0; yukleAnketler(); gizleOtelKart(); }
+        return;
+    }
+    _acDebounce = setTimeout(async () => {
+        const d = await fetch(`/api/survey/oteller?q=${encodeURIComponent(val)}`).then(r=>r.json()).catch(()=>({}));
+        _acListe = d.liste || [];
+        _acFocusIdx = -1;
+        if (!_acListe.length) { drop.classList.add('hidden'); return; }
+        drop.innerHTML = _acListe.map((item, i) => {
+            const p = item.ort_puan != null ? `<span style="color:#4ade80;font-weight:700;">${item.ort_puan.toFixed(1)}</span>` : '';
+            return `<div class="ac-item" data-idx="${i}" onclick="otelSec('${esc(item.otel)}')">
+                <span class="ac-item-name">${esc(item.otel)}</span>
+                <span class="ac-item-meta">${p} <span>${item.adet} anket</span></span>
+            </div>`;
+        }).join('');
+        drop.classList.remove('hidden');
+    }, 200);
+}
+
+function otelAcKeyDown(e) {
+    const drop = document.getElementById('otelAcDropdown');
+    if (drop.classList.contains('hidden')) return;
+    const items = drop.querySelectorAll('.ac-item');
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        _acFocusIdx = Math.min(_acFocusIdx + 1, items.length - 1);
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        _acFocusIdx = Math.max(_acFocusIdx - 1, 0);
+    } else if (e.key === 'Enter' && _acFocusIdx >= 0) {
+        e.preventDefault();
+        const item = _acListe[_acFocusIdx];
+        if (item) otelSec(item.otel);
+        return;
+    } else if (e.key === 'Escape') {
+        drop.classList.add('hidden'); return;
+    }
+    items.forEach((el, i) => el.classList.toggle('ac-focused', i === _acFocusIdx));
+}
+
+function otelSec(otelAdi) {
+    const inp = document.getElementById('fOtel');
+    if (inp) inp.value = otelAdi;
+    document.getElementById('otelAcDropdown').classList.add('hidden');
+    _anketOtel  = otelAdi;
+    _anketSayfa = 0;
+    yukleAnketler();
+    yukleOtelKart(otelAdi);
+}
+
+function otelTemizle() {
+    const inp = document.getElementById('fOtel');
+    if (inp) inp.value = '';
+    _anketOtel  = '';
+    _anketSayfa = 0;
+    document.getElementById('otelAcDropdown').classList.add('hidden');
+    gizleOtelKart();
+    yukleAnketler();
+}
+
+// Dışarı tıklayınca dropdown kapat
+document.addEventListener('click', e => {
+    if (!document.getElementById('otelAcWrap')?.contains(e.target)) {
+        document.getElementById('otelAcDropdown')?.classList.add('hidden');
+    }
+});
+
+// ── Otel Kartı ────────────────────────────────────────────────────────────────
+function gizleOtelKart() {
+    const w = document.getElementById('otelKartWrap');
+    w.classList.add('hidden'); w.innerHTML = '';
+}
+
+async function yukleOtelKart(otelAdi) {
+    const wrap = document.getElementById('otelKartWrap');
+    wrap.innerHTML = '<div class="otel-kart"><div class="text-xs text-slate-500 text-center py-2">Yükleniyor…</div></div>';
+    wrap.classList.remove('hidden');
+
+    const d = await fetch(`/api/survey/otel-kart?otel=${encodeURIComponent(otelAdi)}`).then(r=>r.json()).catch(()=>({}));
+    if (!d.ok) { wrap.classList.add('hidden'); return; }
+
+    const puan   = d.avg_puan != null ? d.avg_puan.toFixed(1) : '—';
+    const pColor = d.avg_puan >= 4.5 ? '#4ade80' : d.avg_puan >= 3.5 ? '#facc15' : '#f87171';
+
+    const turlarHtml = d.turlar?.length
+        ? d.turlar.map(t => {
+            const tarih = t.kalkis_tarihi ? t.kalkis_tarihi.split('T')[0] : '';
+            const tp    = t.ort_puan != null ? t.ort_puan.toFixed(1) : null;
+            const tpHtml = tp ? `<span class="tur-pill" style="color:#4ade80;border-color:rgba(74,222,128,.15);">★ ${tp}</span>` : '';
+            return `<a href="/turlar/${esc(t.matched_jt_kodu)}" target="_blank" class="otel-kart-tur-row">
+                <span class="text-xs font-mono text-blue-400/80 flex-shrink-0">${esc(t.matched_jt_kodu)}</span>
+                <span class="text-xs text-slate-300 flex-1 min-w-0 truncate">${esc(t.tur_adi || '')}</span>
+                ${tpHtml}
+                <span class="text-xs text-slate-600 flex-shrink-0">${tarih}</span>
+                <span class="text-xs text-slate-600 flex-shrink-0">${t.yanit_sayisi} yanıt</span>
+            </a>`;
+          }).join('')
+        : '<div class="text-xs text-slate-600 text-center py-3">Eşleşmiş tur kaydı bulunamadı</div>';
+
+    wrap.innerHTML = `<div class="otel-kart">
+        <div class="flex items-start justify-between gap-4 mb-3">
+            <div class="flex items-center gap-3">
+                <div class="flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center text-lg"
+                     style="background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.2);">🏨</div>
+                <div>
+                    <div class="text-sm font-semibold text-slate-100">${esc(d.otel)}</div>
+                    <div class="text-xs text-slate-500 mt-0.5">${d.anket_sayisi} anket kaydında geçiyor</div>
+                </div>
+            </div>
+            <div class="flex items-center gap-3 flex-shrink-0">
+                <div class="text-center">
+                    <div class="text-xl font-bold" style="color:${pColor};">${puan}</div>
+                    <div class="text-xs text-slate-600">ort. puan</div>
+                </div>
+                <button onclick="otelTemizle()"
+                        class="text-xs px-2 py-1 rounded-lg transition-colors"
+                        style="background:rgba(100,116,139,.1);border:1px solid rgba(100,116,139,.2);color:#64748b;"
+                        title="Filtreyi temizle">✕</button>
+            </div>
+        </div>
+        ${d.turlar?.length ? `<div class="text-xs text-slate-600 uppercase tracking-wide font-medium mb-2">Bu oteli kullanan turlar</div>` : ''}
+        <div>${turlarHtml}</div>
+    </div>`;
 }
 
 function toggleGrup() {
@@ -1212,19 +1343,13 @@ async function yukleAnketler() {
     pag.classList.add('hidden');
     _anketDetayCache = [];  // Sayfa değişince cache sıfırla
 
-    const otelInput = document.getElementById('fOtel').value.trim();
-    if (otelInput !== _anketOtel && otelInput !== '') {
-        _anketOtel = otelInput;
-        document.querySelectorAll('#otelChips .bolge-chip').forEach(c =>
-            c.classList.toggle('active', c.dataset.otel === ''));
-    }
     const params = new URLSearchParams({
         sayfa:    _anketSayfa,
         limit:    30,
         tur:      document.getElementById('fArama').value.trim(),
         rehber:   document.getElementById('fRehber').value.trim(),
         bolge:    _anketBolge,
-        otel:     _anketOtel || otelInput,
+        otel:     _anketOtel,
         siralama: document.getElementById('fSiralama').value,
         grup:     _anketGrup ? 'true' : 'false',
     });
@@ -1551,8 +1676,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadStats();
     loadRehberler();
     yukleAnketler();
-    yukleBolgeChips();
-    yukleOtelChips();
+    yukleBolgeSelect();
 });
 </script>
 {% endblock %}
