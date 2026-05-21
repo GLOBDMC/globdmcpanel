@@ -492,14 +492,64 @@ async function checkDbDiag() {
     if ((d.son_kayitlar || []).length) {
         lines.push('');
         lines.push('── Son kayıtlar ──────────────');
+        const surveyIds = new Set();
         for (const r of d.son_kayitlar) {
             lines.push(`  #${r.id} | ${r.tur_adi_ham || '?'} | genel:${r.genel_puan ?? '—'} rehber:${r.rehber_puani ?? '—'} | ${r.match_status || '?'}`);
+            if (r.porsline_survey_id) { lines.push(`    survey_id: ${r.porsline_survey_id}`); surveyIds.add(r.porsline_survey_id); }
+            if (r.porsline_response_id) lines.push(`    resp_id: ${r.porsline_response_id}`);
             if (r.puan_detay && r.puan_detay !== '{}') {
-                lines.push(`    puan_detay: ${String(r.puan_detay).slice(0, 120)}`);
+                lines.push(`    puan_detay: ${String(r.puan_detay).slice(0, 150)}`);
             }
+        }
+        // Preview butonları
+        if (surveyIds.size) {
+            content.textContent = lines.join('\n');
+            const btnWrap = document.createElement('div');
+            btnWrap.className = 'flex flex-wrap gap-2 mt-3';
+            for (const sid of surveyIds) {
+                const btn = document.createElement('button');
+                btn.className = 'text-xs px-2 py-1 rounded bg-purple-900/40 border border-purple-700/40 text-purple-300 hover:bg-purple-900/60';
+                btn.textContent = `📋 Header/Row gör: ${sid}`;
+                btn.onclick = () => previewSurveyHeader(sid);
+                btnWrap.appendChild(btn);
+            }
+            wrap.appendChild(btnWrap);
+            return;
         }
     }
 
+    content.textContent = lines.join('\n');
+}
+
+async function previewSurveyHeader(sid) {
+    const wrap    = document.getElementById('dbDiagWrap');
+    const content = document.getElementById('dbDiagContent');
+    content.textContent = `Porsline'dan çekiliyor: ${sid} ...`;
+
+    const d = await fetch(`/api/porsline/survey/${sid}/preview`).then(r=>r.json()).catch(e=>({ok:false, hata:e.toString()}));
+    if (!d.ok) { content.textContent += `\n⚠ Hata: ${d.hata}`; return; }
+
+    const lines = [];
+    lines.push(`Anket: ${d.title}`);
+    lines.push(`Yanıt sayısı: ${d.count}`);
+    lines.push('');
+    lines.push('── HEADER (Porsline sütun isimleri) ──────────────────');
+    (d.header || []).forEach((h, i) => {
+        const hs = typeof h === 'object' ? JSON.stringify(h) : String(h);
+        lines.push(`  [${i}] ${hs.slice(0, 120)}`);
+    });
+    lines.push('');
+    lines.push('── İLK SATIR ─────────────────────────────────────────');
+    const firstRow = (d.rows || [])[0];
+    if (firstRow) {
+        if (Array.isArray(firstRow)) {
+            firstRow.forEach((v, i) => lines.push(`  [${i}] = ${JSON.stringify(v)}`));
+        } else {
+            lines.push(JSON.stringify(firstRow, null, 2).slice(0, 800));
+        }
+    } else {
+        lines.push('  (yanıt yok)');
+    }
     content.textContent = lines.join('\n');
 }
 
