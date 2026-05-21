@@ -1711,6 +1711,7 @@ _AKTOR_TUR = {
     "9f1gkAaOUjDoDkus3": "kontenjan",   # Kontenjan
     "BEQyfYEUwdedFLakn": "fiyat",       # Fiyat
     "wW7rOFuH1bVMMMQ8h": "jolly",       # Jolly Matcher
+    "bFwJR4fa0AMHxUtqW": "kontenjan",   # Yeni Tur (turlar tablosuna upsert)
 }
 
 def _apify_dataset_items(dataset_id: str, limit: int = 5000) -> list:
