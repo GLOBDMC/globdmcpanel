@@ -148,14 +148,19 @@
       class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-xs font-medium text-gray-400 hover:text-white hover:border-slate-500/50 hover:bg-slate-500/10 transition-all">
       🔍 Sync Durum
     </button>
-    <button id="syncAllBtn" onclick="gordiosSyncAll()"
-      class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-xs font-medium text-gray-400 hover:text-white hover:border-blue-500/50 hover:bg-blue-500/10 transition-all">
-      <svg id="syncAllIcon" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-      </svg>
-      <span id="syncAllText">Gordios Tümünü Sync Et</span>
-    </button>
+    <div class="flex flex-col gap-1">
+      <button id="syncAllBtn" onclick="gordiosSyncAll()"
+        class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-xs font-medium text-gray-400 hover:text-white hover:border-blue-500/50 hover:bg-blue-500/10 transition-all">
+        <svg id="syncAllIcon" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+        </svg>
+        <span id="syncAllText">Gordios Tümünü Sync Et</span>
+      </button>
+      <div id="syncProgressBar" class="hidden w-full h-1 rounded-full bg-white/5 overflow-hidden">
+        <div id="syncProgressFill" class="h-full bg-blue-500 transition-all duration-500" style="width:0%"></div>
+      </div>
+    </div>
     {% endif %}
 </div>
 
@@ -723,6 +728,49 @@
         content.textContent = lines.join('\n');
     }
 
+    let _syncPollTimer = null;
+
+    function _syncPollStop() {
+        if (_syncPollTimer) { clearInterval(_syncPollTimer); _syncPollTimer = null; }
+    }
+
+    async function _syncPoll() {
+        const btn  = document.getElementById('syncAllBtn');
+        const icon = document.getElementById('syncAllIcon');
+        const txt  = document.getElementById('syncAllText');
+        const bar  = document.getElementById('syncProgressBar');
+        const barW = document.getElementById('syncProgressFill');
+        try {
+            const d = await fetch('/api/gordios/sync-progress').then(r => r.json());
+            if (d.running) {
+                const pct  = d.pct || 0;
+                const done = d.done || 0;
+                const total = d.total || 0;
+                const err  = d.errors || 0;
+                txt.textContent = `${done}/${total} tamamlandı${err > 0 ? ' · ' + err + ' hata' : ''}`;
+                if (bar)  bar.classList.remove('hidden');
+                if (barW) barW.style.width = pct + '%';
+                icon.classList.add('animate-spin');
+                btn.disabled = true;
+            } else {
+                // Bitti
+                _syncPollStop();
+                icon.classList.remove('animate-spin');
+                btn.disabled = false;
+                if (bar) bar.classList.add('hidden');
+                if (d.finished_at) {
+                    const bas = d.basarili || 0;
+                    const err = d.errors || 0;
+                    const total = d.total || 0;
+                    txt.textContent = `✓ ${bas}/${total} başarılı${err > 0 ? ' · ' + err + ' hata' : ''}`;
+                    setTimeout(() => { txt.textContent = 'Gordios Tümünü Sync Et'; }, 6000);
+                } else {
+                    txt.textContent = 'Gordios Tümünü Sync Et';
+                }
+            }
+        } catch(e) { /* sessizce devam */ }
+    }
+
     async function gordiosSyncAll() {
         const btn  = document.getElementById('syncAllBtn');
         const icon = document.getElementById('syncAllIcon');
@@ -733,15 +781,22 @@
         txt.textContent = 'Başlatılıyor…';
 
         try {
-            const res = await fetch('/api/gordios/sync-all', { method: 'POST' });
+            const res  = await fetch('/api/gordios/sync-all', { method: 'POST' });
             const data = await res.json();
             if (data.ok) {
-                txt.textContent = `Sync başladı (${data.toplam} tur) — arka planda devam ediyor`;
-                icon.classList.remove('animate-spin');
-                setTimeout(() => {
+                if (data.zaten_calisiyor) {
+                    txt.textContent = 'Zaten çalışıyor — izleniyor…';
+                } else if (data.toplam === 0) {
+                    txt.textContent = 'Tüm turlar güncel ✓';
+                    icon.classList.remove('animate-spin');
                     btn.disabled = false;
-                    txt.textContent = 'Gordios Tümünü Sync Et';
-                }, 8000);
+                    setTimeout(() => { txt.textContent = 'Gordios Tümünü Sync Et'; }, 4000);
+                    return;
+                }
+                // Progress poll başlat
+                _syncPollStop();
+                _syncPollTimer = setInterval(_syncPoll, 3000);
+                _syncPoll();
             } else {
                 txt.textContent = 'Hata: ' + (data.hata || 'bilinmiyor');
                 icon.classList.remove('animate-spin');
@@ -753,5 +808,16 @@
             btn.disabled = false;
         }
     }
+
+    // Sayfa açılınca zaten sync çalışıyor mu kontrol et
+    (async () => {
+        try {
+            const d = await fetch('/api/gordios/sync-progress').then(r => r.json());
+            if (d.running) {
+                _syncPollTimer = setInterval(_syncPoll, 3000);
+                _syncPoll();
+            }
+        } catch(e) {}
+    })();
 </script>
 {% endblock %}

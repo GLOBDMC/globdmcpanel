@@ -7,7 +7,9 @@ APIRouter kullanır — main.py'de modül seviyesinde include_router ile eklenir
 import json as _json
 import logging
 import os
+import threading as _threading
 import concurrent.futures as _futures
+from datetime import datetime as _dt
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import text
@@ -15,6 +17,20 @@ from sqlalchemy import text
 logger = logging.getLogger("globdmc.turkart")
 
 _gordios_executor = _futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="gordios")
+
+# ── Sync ilerleme durumu (process-global, thread-safe okuma) ─────────────────
+_sync_lock: _threading.Lock = _threading.Lock()
+_sync_state: dict = {
+    "running":     False,
+    "total":       0,
+    "done":        0,
+    "basarili":    0,
+    "errors":      0,
+    "current":     "",
+    "started_at":  None,
+    "finished_at": None,
+    "mode":        "",   # "manual" | "auto"
+}
 
 
 def create_tur_kart_router(db_engine, templates) -> APIRouter:
@@ -101,18 +117,32 @@ def create_tur_kart_router(db_engine, templates) -> APIRouter:
     # ── API: Toplu Gordios Sync ───────────────────────────────────────────────
 
     @router.post("/api/gordios/sync-all")
-    async def api_gordios_sync_all(request: Request):
-        """Tüm turları arka planda Gordios'tan senkronize eder (admin)."""
+    def api_gordios_sync_all(request: Request):
+        """Bekleyen/hatalı turları arka planda Gordios'tan senkronize eder (admin)."""
         from main import oturum_kullanicisi
         kullanici = oturum_kullanicisi(request)
         if not kullanici or kullanici["rol"] != "admin":
             return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
 
+        # Halihazırda çalışıyor mu?
+        with _sync_lock:
+            if _sync_state["running"]:
+                return JSONResponse({
+                    "ok": True, "zaten_calisiyor": True,
+                    "mesaj": "Sync zaten devam ediyor",
+                    "toplam": _sync_state["total"],
+                })
+
+        # Bekleyen + hatalı + hiç sync edilmemiş turlar
         try:
             with db_engine.connect() as conn:
                 rows = conn.execute(text("""
                     SELECT t.jt_kodu FROM turlar t
+                    LEFT JOIN tur_detaylar d ON t.jt_kodu = d.jt_kodu
                     WHERE t.jt_kodu IS NOT NULL AND t.jt_kodu != ''
+                      AND (d.jt_kodu IS NULL
+                           OR d.sync_status IN ('pending', 'error')
+                           OR d.gordios_sync_at < NOW() - INTERVAL '7 days')
                     ORDER BY t.kalkis_tarihi
                 """)).fetchall()
             jt_kodlari = [r[0] for r in rows]
@@ -122,37 +152,28 @@ def create_tur_kart_router(db_engine, templates) -> APIRouter:
         if not jt_kodlari:
             return JSONResponse({"ok": True, "mesaj": "Sync edilecek tur yok", "toplam": 0})
 
-        import asyncio
+        # Thread'de başlat — ana event loop'u bloklamaz
+        _gordios_executor.submit(_gordios_sync_run, jt_kodlari, db_engine, "manual")
 
-        async def _do_sync_all():
-            loop = asyncio.get_event_loop()
-            basarili = hata = 0
-            for jt_kodu in jt_kodlari:
-                try:
-                    _upsert_tur_detay(db_engine, jt_kodu, {}, "syncing")
-                    data = await loop.run_in_executor(
-                        _gordios_executor, _run_gordios_sync, jt_kodu
-                    )
-                    status = "error" if data.get("hata") else "ok"
-                    _upsert_tur_detay(db_engine, jt_kodu, data, status)
-                    if status == "ok":
-                        basarili += 1
-                        logger.info("[gordios-all] OK: %s", jt_kodu)
-                    else:
-                        hata += 1
-                        logger.warning("[gordios-all] hata: %s -> %s", jt_kodu, data.get("hata"))
-                except Exception as e:
-                    hata += 1
-                    logger.error("[gordios-all] exception [%s]: %s", jt_kodu, e)
-                    _upsert_tur_detay(db_engine, jt_kodu, {"hata": str(e)}, "error")
-            logger.info("[gordios-all] tamamlandi: %d basarili, %d hata", basarili, hata)
-
-        asyncio.create_task(_do_sync_all())
         return JSONResponse({
-            "ok": True,
+            "ok": True, "zaten_calisiyor": False,
             "mesaj": f"{len(jt_kodlari)} tur için sync başlatıldı",
             "toplam": len(jt_kodlari),
         })
+
+    # ── API: Sync İlerlemesi ──────────────────────────────────────────────────
+
+    @router.get("/api/gordios/sync-progress")
+    def api_gordios_sync_progress(request: Request):
+        """Anlık sync ilerleme durumunu döndürür. UI tarafından her 3s poll edilir."""
+        from main import oturum_kullanicisi
+        kullanici = oturum_kullanicisi(request)
+        if not kullanici:
+            return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+        with _sync_lock:
+            state = dict(_sync_state)
+        pct = int(state["done"] / state["total"] * 100) if state["total"] > 0 else 0
+        return JSONResponse({**state, "pct": pct})
 
     # ── Gordios Sync Status ───────────────────────────────────────────────────
 
@@ -503,12 +524,67 @@ def _upsert_tur_detay(db_engine, jt_kodu: str, data: dict, status: str):
         logger.error("_upsert_tur_detay [%s]: %s", jt_kodu, e)
 
 
+def _gordios_sync_run(jt_kodlari: list, db_engine, mode: str = "auto") -> None:
+    """
+    Verilen JT kodları listesini sırayla sync eder.
+    İlerlemeyi _sync_state'e yazar — API ve UI tarafından okunabilir.
+    Thread-safe, yeniden girişe karşı korumalı.
+    """
+    global _sync_state
+    with _sync_lock:
+        if _sync_state["running"]:
+            logger.warning("[gordios-sync] zaten çalışıyor, atlanıyor")
+            return
+        _sync_state.update({
+            "running": True, "total": len(jt_kodlari),
+            "done": 0, "basarili": 0, "errors": 0,
+            "current": "", "started_at": _dt.now().isoformat(),
+            "finished_at": None, "mode": mode,
+        })
+
+    logger.info("[gordios-%s] başlıyor: %d tur", mode, len(jt_kodlari))
+    try:
+        for jt_kodu in jt_kodlari:
+            with _sync_lock:
+                _sync_state["current"] = jt_kodu
+            try:
+                _upsert_tur_detay(db_engine, jt_kodu, {}, "syncing")
+                data = _run_gordios_sync(jt_kodu)
+                status = "error" if data.get("hata") else "ok"
+                _upsert_tur_detay(db_engine, jt_kodu, data, status)
+                with _sync_lock:
+                    _sync_state["done"] += 1
+                    if status == "ok":
+                        _sync_state["basarili"] += 1
+                        logger.info("[gordios-%s] OK: %s", mode, jt_kodu)
+                    else:
+                        _sync_state["errors"] += 1
+                        logger.warning("[gordios-%s] hata: %s → %s", mode, jt_kodu, data.get("hata"))
+            except Exception as e:
+                with _sync_lock:
+                    _sync_state["done"]   += 1
+                    _sync_state["errors"] += 1
+                logger.error("[gordios-%s] exception [%s]: %s", mode, jt_kodu, e)
+                _upsert_tur_detay(db_engine, jt_kodu, {"hata": str(e)}, "error")
+    finally:
+        with _sync_lock:
+            _sync_state["running"]     = False
+            _sync_state["current"]     = ""
+            _sync_state["finished_at"] = _dt.now().isoformat()
+        logger.info("[gordios-%s] tamamlandı: %d/%d başarılı, %d hata",
+                    mode, _sync_state["basarili"], _sync_state["total"], _sync_state["errors"])
+
+
 def gordios_sync_all_tours(db_engine):
     """
-    Tüm aktif turları Gordios'tan senkronize eder.
-    Scheduler tarafından günlük çalıştırılır.
-    Son 24 saatte sync edilmişleri atlar.
+    Scheduler tarafından günlük çağrılır (03:00 TRT).
+    Son 23 saatte sync edilmemiş tüm turları senkronize eder.
     """
+    global _sync_state
+    with _sync_lock:
+        if _sync_state["running"]:
+            logger.info("[gordios-auto] manuel sync devam ediyor, otomatik atlandi")
+            return
     try:
         with db_engine.connect() as conn:
             rows = conn.execute(text("""
@@ -518,20 +594,17 @@ def gordios_sync_all_tours(db_engine):
                   AND (d.gordios_sync_at IS NULL
                        OR d.gordios_sync_at < NOW() - INTERVAL '23 hours')
                 ORDER BY t.kalkis_tarihi
-                LIMIT 50
             """)).fetchall()
         jt_kodlari = [r[0] for r in rows]
-        logger.info("[gordios-auto] %d tur sync edilecek", len(jt_kodlari))
-        for jt_kodu in jt_kodlari:
-            try:
-                data = _run_gordios_sync(jt_kodu)
-                status = "error" if data.get("hata") else "ok"
-                _upsert_tur_detay(db_engine, jt_kodu, data, status)
-                logger.info("[gordios-auto] %s → %s", jt_kodu, status)
-            except Exception as e:
-                logger.error("[gordios-auto] %s hata: %s", jt_kodu, e)
     except Exception as e:
-        logger.error("[gordios-auto] genel hata: %s", e)
+        logger.error("[gordios-auto] tur listesi alinamadi: %s", e)
+        return
+
+    if not jt_kodlari:
+        logger.info("[gordios-auto] sync edilecek tur yok")
+        return
+
+    _gordios_sync_run(jt_kodlari, db_engine, mode="auto")
 
 
 def _check_playwright() -> str:
