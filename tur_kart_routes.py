@@ -578,7 +578,9 @@ def _gordios_sync_run(jt_kodlari: list, db_engine, mode: str = "auto") -> None:
 def gordios_sync_all_tours(db_engine):
     """
     Scheduler tarafından günlük çağrılır (03:00 TRT).
-    Son 23 saatte sync edilmemiş tüm turları senkronize eder.
+    Sadece 11+ gün sonraki turları sync eder:
+      - Tarihi geçmiş turlar → Gordios'ta değişmez, gereksiz
+      - Önümüzdeki 10 gün içindeki turlar → artık son halinde, dokunma
     """
     global _sync_state
     with _sync_lock:
@@ -591,6 +593,7 @@ def gordios_sync_all_tours(db_engine):
                 SELECT t.jt_kodu FROM turlar t
                 LEFT JOIN tur_detaylar d ON t.jt_kodu = d.jt_kodu
                 WHERE t.jt_kodu IS NOT NULL AND t.jt_kodu != ''
+                  AND t.kalkis_tarihi > CURRENT_DATE + INTERVAL '10 days'
                   AND (d.gordios_sync_at IS NULL
                        OR d.gordios_sync_at < NOW() - INTERVAL '23 hours')
                 ORDER BY t.kalkis_tarihi
@@ -601,9 +604,10 @@ def gordios_sync_all_tours(db_engine):
         return
 
     if not jt_kodlari:
-        logger.info("[gordios-auto] sync edilecek tur yok")
+        logger.info("[gordios-auto] sync edilecek tur yok (tarih filtresi uygulandı)")
         return
 
+    logger.info("[gordios-auto] %d tur sync edilecek (10+ gün sonrası)", len(jt_kodlari))
     _gordios_sync_run(jt_kodlari, db_engine, mode="auto")
 
 

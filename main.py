@@ -968,6 +968,7 @@ async def lifespan(app: FastAPI):
                             SELECT t.jt_kodu FROM turlar t
                             LEFT JOIN tur_detaylar d ON t.jt_kodu = d.jt_kodu
                             WHERE t.jt_kodu IS NOT NULL AND t.jt_kodu != ''
+                              AND t.kalkis_tarihi > CURRENT_DATE + INTERVAL '10 days'
                               AND (d.jt_kodu IS NULL OR d.sync_status IN ('pending','error'))
                             ORDER BY t.kalkis_tarihi
                         """)).fetchall()
