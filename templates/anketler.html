@@ -840,103 +840,113 @@ async function syncAllPorsline() {
 }
 
 /**
- * Backend /api/porsline/sync-all endpoint'ini çağırır.
- * force=false → incremental (yanıt sayısı değişmemişse atla)
- * force=true  → tümünü yeniden çek
+ * Polling helper — sayfa yenilenince sessionStorage task_id ile devam eder.
+ */
+function _syncUiRefs() {
+    return {
+        progress: document.getElementById("porslineSyncProgress"),
+        resultEl: document.getElementById("porslineSyncResult"),
+        msgEl:    document.getElementById("porslineSyncMsg"),
+        pctEl:    document.getElementById("porslineSyncPct"),
+        barEl:    document.getElementById("porslineSyncBar"),
+        btn:      document.getElementById("btnSyncAll"),
+        btnForce: document.getElementById("btnForceResync"),
+    };
+}
+
+let _activePollInterval = null;
+
+function _startPolling(taskId) {
+    if (_activePollInterval) clearInterval(_activePollInterval);
+    sessionStorage.setItem("porsline_task_id", taskId);
+
+    const { progress, resultEl, msgEl, pctEl, barEl, btn, btnForce } = _syncUiRefs();
+    const panel = document.getElementById("porslinePanel");
+    if (panel) panel.classList.remove("hidden");
+    if (progress) progress.classList.remove("hidden");
+    if (barEl) { barEl.style.background = ""; barEl.style.width = "10%"; }
+    if (btn)      { btn.disabled = true; btn.textContent = "⏳ Çalışıyor..."; }
+    if (btnForce) btnForce.disabled = true;
+
+    _activePollInterval = setInterval(async () => {
+        try {
+            const s = await fetch("/api/porsline/sync-status/" + taskId)
+                          .then(r => r.json()).catch(() => null);
+            if (!s || !s.ok) return;
+
+            const prog = s.progress || {};
+            if (msgEl) msgEl.textContent = prog.current || "⏳ Çalışıyor…";
+            const done  = prog.done  || 0;
+            const total = prog.total || 0;
+            if (total > 0 && barEl && pctEl) {
+                const pct = Math.min(95, Math.round(done / total * 100));
+                barEl.style.width = pct + "%";
+                pctEl.textContent = pct + "%";
+            }
+
+            if (s.status === "done" || s.status === "error") {
+                clearInterval(_activePollInterval);
+                _activePollInterval = null;
+                sessionStorage.removeItem("porsline_task_id");
+                if (barEl) barEl.style.width = "100%";
+
+                if (s.status === "done" && s.result) {
+                    const r = s.result;
+                    if (resultEl) {
+                        resultEl.classList.remove("hidden");
+                        resultEl.innerHTML = "<div class=\"rounded-lg p-3 text-xs bg-green-900/20 border border-green-700/30 text-green-300\">" +
+                            "✓ Tamamlandı · " + (r.anket_sayisi || 0) + " anket · " +
+                            (r.islenen || 0) + " işlendi · " + (r.atlandi || 0) + " atlandı · " +
+                            "<strong>+" + (r.toplam_eklenen || 0) + "</strong> yeni yanıt</div>";
+                    }
+                    if (msgEl) msgEl.textContent = "✓ Tamamlandı";
+                    loadStats();
+                    yukleAnketler();
+                    if ((r.toplam_eklenen || 0) > 0)
+                        setTimeout(() => { var el = document.getElementById("anketListeSection"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); }, 400);
+                } else {
+                    if (msgEl) msgEl.textContent = "⚠ Hata: " + ((s.progress && s.progress.current) || "bilinmiyor");
+                    if (barEl) barEl.style.background = "#f87171";
+                }
+
+                if (btn)      { btn.disabled = false; btn.textContent = btn.dataset.label || "Tümünü Güncelle"; btn.onclick = function(){ syncAllPorsline(); }; }
+                if (btnForce) btnForce.disabled = false;
+                setTimeout(() => { if (progress) progress.classList.add("hidden"); }, 4000);
+            }
+        } catch(e) { /* poll hatası — devam et */ }
+    }, 2000);
+}
+
+/**
+ * Backend /api/porsline/sync-all endpoint cagirir.
+ * force=false: incremental; force=true: tumunu yeniden yukle
  */
 async function _runBackendSyncAll(force = false) {
-    const progress = document.getElementById('porslineSyncProgress');
-    const resultEl = document.getElementById('porslineSyncResult');
-    const msgEl    = document.getElementById('porslineSyncMsg');
-    const pctEl    = document.getElementById('porslineSyncPct');
-    const barEl    = document.getElementById('porslineSyncBar');
-    const btn      = document.getElementById('btnSyncAll');
-    const btnForce = document.getElementById('btnForceResync');
-    const forceResEl = document.getElementById('forceResyncResult');
+    const { msgEl, pctEl, barEl, resultEl } = _syncUiRefs();
+    const forceResEl = document.getElementById("forceResyncResult");
+    if (forceResEl) forceResEl.classList.add("hidden");
+    if (resultEl) resultEl.classList.add("hidden");
+    if (msgEl) {
+        msgEl.textContent = force
+            ? "⏳ Tüm anketler yeniden yükleniyor…"
+            : "⏳ Güncellenecek anketler kontrol ediliyor…";
+    }
+    if (pctEl) pctEl.textContent = "";
 
-    progress.classList.remove('hidden');
-    resultEl.classList.add('hidden');
-    if (forceResEl) forceResEl.classList.add('hidden');
-    if (btn)      { btn.disabled = true;      btn.textContent = '⏳ Çalışıyor...'; }
-    if (btnForce) { btnForce.disabled = true; }
+    const url  = "/api/porsline/sync-all" + (force ? "?force=true" : "");
+    const init = await fetch(url, { method: "POST" }).then(r => r.json())
+                     .catch(e => ({ ok: false, hata: e.message }));
 
-    msgEl.textContent = force
-        ? '⏳ Tüm anketler yeniden yükleniyor…'
-        : '⏳ Güncellenecek anketler kontrol ediliyor…';
-    pctEl.textContent = '';
-    barEl.style.width = '10%';
-
-    try {
-        // 1) Sync'i başlat — hemen task_id döner (background)
-        const url  = '/api/porsline/sync-all' + (force ? '?force=true' : '');
-        const init = await fetch(url, { method: 'POST' }).then(r => r.json())
-                         .catch(e => ({ ok: false, hata: e.message }));
-
-        if (!init.ok) {
-            msgEl.textContent = `⚠ Başlatılamadı: ${init.hata || 'hata'}`;
-            barEl.style.background = '#f87171';
-            if (btn)      { btn.disabled = false; btn.textContent = btn.dataset.label || 'Tümünü Güncelle'; }
-            if (btnForce) btnForce.disabled = false;
-            return;
-        }
-
-        const taskId = init.task_id;
-
-        // 2) Durumu 2 saniyede bir poll et
-        await new Promise(resolve => {
-            const poll = setInterval(async () => {
-                try {
-                    const s = await fetch(`/api/porsline/sync-status/${taskId}`)
-                                  .then(r => r.json()).catch(() => null);
-                    if (!s) return;
-
-                    const prog = s.progress || {};
-                    msgEl.textContent = prog.current || '⏳ Çalışıyor…';
-                    const done  = prog.done  || 0;
-                    const total = prog.total || 0;
-                    if (total > 0) {
-                        const pct = Math.min(95, Math.round(done / total * 100));
-                        barEl.style.width = pct + '%';
-                        pctEl.textContent = pct + '%';
-                    }
-
-                    if (s.status === 'done' || s.status === 'error') {
-                        clearInterval(poll);
-                        barEl.style.width = '100%';
-
-                        if (s.status === 'done' && s.result) {
-                            const r = s.result;
-                            resultEl.classList.remove('hidden');
-                            resultEl.innerHTML = `
-                                <div class="rounded-lg p-3 text-xs bg-green-900/20 border border-green-700/30 text-green-300">
-                                    ✓ Tamamlandı · ${r.anket_sayisi || 0} anket ·
-                                    ${r.islenen || 0} işlendi · ${r.atlandi || 0} atlandı ·
-                                    <strong>+${r.toplam_eklenen || 0}</strong> yeni yanıt
-                                </div>`;
-                            msgEl.textContent = '✓ Tamamlandı';
-                            loadStats();
-                            yukleAnketler();
-                            if ((r.toplam_eklenen || 0) > 0)
-                                setTimeout(() => document.getElementById('anketListeSection')
-                                    ?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 400);
-                        } else {
-                            msgEl.textContent = `⚠ Hata: ${s.progress?.current || 'bilinmiyor'}`;
-                            barEl.style.background = '#f87171';
-                        }
-                        resolve();
-                    }
-                } catch(e) { /* poll hatası — devam et */ }
-            }, 2000);
-        });
-
-    } catch(e) {
-        msgEl.textContent = `⚠ ${e.message}`;
-        barEl.style.background = '#f87171';
+    if (!init.ok) {
+        const { btn, btnForce } = _syncUiRefs();
+        if (msgEl) msgEl.textContent = "⚠ Başlatılamadı: " + (init.hata || "hata");
+        if (barEl) barEl.style.background = "#f87171";
+        if (btn)      { btn.disabled = false; btn.textContent = btn.dataset.label || "Tümünü Güncelle"; }
+        if (btnForce) btnForce.disabled = false;
+        return;
     }
 
-    if (btn)      { btn.disabled = false; btn.textContent = 'Tümünü Sync Et'; btn.onclick = () => syncAllPorsline(); }
-    if (btnForce) { btnForce.disabled = false; }
-    setTimeout(() => { progress.classList.add('hidden'); }, 4000);
+    _startPolling(init.task_id);
 }
 
 // ─── Rehber Kartları ─────────────────────────────────────────────────────────
@@ -1661,6 +1671,20 @@ document.addEventListener('DOMContentLoaded', () => {
     loadRehberler();
     yukleAnketler();
     yukleBolgeSelect();
+
+    // Sayfa yenilendiyse arka planda devam eden sync varsa bağlantıyı geri al
+    const savedTask = sessionStorage.getItem('porsline_task_id');
+    if (savedTask) {
+        fetch('/api/porsline/sync-status/' + savedTask)
+            .then(r => r.json())
+            .then(s => {
+                if (s && s.ok && s.status === 'running') {
+                    _startPolling(savedTask);
+                } else {
+                    sessionStorage.removeItem('porsline_task_id');
+                }
+            }).catch(() => sessionStorage.removeItem('porsline_task_id'));
+    }
 });
 </script>
 {% endblock %}

@@ -10,6 +10,7 @@ import secrets
 import logging
 import logging.handlers
 import threading
+import concurrent.futures
 import urllib.request
 import urllib.error
 from collections import defaultdict
@@ -3811,7 +3812,15 @@ def _porsline_sync_worker(task_id: str, force: bool, username: str):
                 parsed = parse_survey_title(title, created_date)
 
                 _upd(f"[{idx+1}/{len(all_surveys)}] yanıtlar çekiliyor: {title[:40]}", done=idx)
-                resp = get_all_responses(sid, fast=True)
+                # Per-survey timeout: 45 sn içinde bitmezse atla
+                try:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _ex:
+                        _fut = _ex.submit(get_all_responses, sid, True)
+                        resp = _fut.result(timeout=45)
+                except concurrent.futures.TimeoutError:
+                    logger.warning("sync_worker timeout | %s | %s", sid, title[:50])
+                    results.append({"survey_id": sid, "ok": False, "hata": "timeout (45s)"})
+                    continue
                 if not resp["ok"]:
                     results.append({"survey_id": sid, "ok": False, "hata": resp.get("hata")})
                     continue
