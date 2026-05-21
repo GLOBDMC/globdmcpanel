@@ -126,12 +126,13 @@
         {% if detay.plan_id %} · Plan ID: {{ detay.plan_id }}{% endif %}
       </div>
       <div class="flex items-center gap-2">
-        {% if detay.pdf_url %}
-        <a href="{{ detay.pdf_url }}" target="_blank"
-           class="text-xs text-accent-blue hover:underline flex items-center gap-1">
+        {% if detay.program_gunler or detay.ucus_listesi %}
+        <a href="/api/tur/{{ tur.jt_kodu }}/export-pdf" download
+           id="exportPdfBtn"
+           class="flex items-center gap-1.5 text-xs text-white bg-accent-blue hover:bg-blue-600 px-3 py-1.5 rounded-lg transition font-medium">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>
+              d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
           </svg>
           Tur Planı PDF
         </a>
@@ -211,9 +212,15 @@
             d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
         </svg>
         Günlük Program
-        {% if detay and detay.pdf_url %}
-        <a href="{{ detay.pdf_url }}" target="_blank"
-           class="ml-auto text-xs text-accent-blue hover:underline">PDF</a>
+        {% if detay and (detay.program_gunler or detay.ucus_listesi) %}
+        <a href="/api/tur/{{ tur.jt_kodu }}/export-pdf" download
+           class="ml-auto text-xs text-accent-blue hover:underline flex items-center gap-1">
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+          </svg>
+          PDF
+        </a>
         {% endif %}
       </h2>
 
