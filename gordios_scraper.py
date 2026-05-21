@@ -49,6 +49,7 @@ def scrape_tour_detail(jt_kodu: str) -> dict:
         "jt_kodu":        jt_kodu,
         "plan_id":        None,
         "pdf_url":        None,
+        "pdf_bytes":      None,   # ham PDF — DB'de saklanır, Gordios auth gerektirmez
         "ucus_listesi":   [],
         "program_gunler": [],
         "program_baslik": "",
@@ -220,6 +221,7 @@ def scrape_tour_detail(jt_kodu: str) -> dict:
 
             if pdf_bytes:
                 logger.info("[gordios] PDF indirildi: %d bytes, parse ediliyor…", len(pdf_bytes))
+                result["pdf_bytes"] = pdf_bytes   # ham bytes — DB'ye kaydedilecek
                 parsed = _parse_pdf(pdf_bytes)
                 result["ucus_listesi"]   = parsed["ucus_listesi"]
                 result["program_gunler"] = parsed["program_gunler"]

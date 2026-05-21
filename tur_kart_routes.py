@@ -324,14 +324,14 @@ def create_tur_kart_router(db_engine, templates) -> APIRouter:
         if not kullanici:
             return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
 
-        # Tur temel bilgileri
+        # Tur temel bilgileri + ham PDF bytes
         try:
             with db_engine.connect() as conn:
                 tur_row = conn.execute(text(
                     "SELECT tur_adi, kalkis_tarihi, havayolu FROM turlar WHERE jt_kodu = :jt"
                 ), {"jt": jt_kodu}).fetchone()
                 detay_row = conn.execute(text(
-                    "SELECT program_json, ucus_json FROM tur_detaylar WHERE jt_kodu = :jt"
+                    "SELECT pdf_data, program_json, ucus_json FROM tur_detaylar WHERE jt_kodu = :jt"
                 ), {"jt": jt_kodu}).fetchone()
         except Exception as e:
             return JSONResponse({"hata": str(e)}, status_code=500)
@@ -339,8 +339,20 @@ def create_tur_kart_router(db_engine, templates) -> APIRouter:
         if not detay_row:
             return JSONResponse({"hata": "Tur programı bulunamadı — önce Gordios sync yapın"}, status_code=404)
 
-        program_gunler = _json.loads(detay_row[0] or "[]")
-        ucus_listesi   = _json.loads(detay_row[1] or "[]")
+        safe_ad = "".join(c if c.isalnum() or c in "-_" else "_" for c in jt_kodu)
+
+        # ── Önce: Gordios'tan kaydedilen orijinal PDF ────────────────────────
+        raw_pdf = bytes(detay_row[0]) if detay_row[0] is not None else None
+        if raw_pdf and raw_pdf[:4] == b"%PDF":
+            return Response(
+                content=raw_pdf,
+                media_type="application/pdf",
+                headers={"Content-Disposition": f'attachment; filename="tur-programi-{safe_ad}.pdf"'},
+            )
+
+        # ── Fallback: reportlab ile DB verisinden üret ───────────────────────
+        program_gunler = _json.loads(detay_row[1] or "[]")
+        ucus_listesi   = _json.loads(detay_row[2] or "[]")
 
         if not program_gunler and not ucus_listesi:
             return JSONResponse({"hata": "Program verisi henüz çekilmemiş"}, status_code=404)
@@ -358,7 +370,6 @@ def create_tur_kart_router(db_engine, templates) -> APIRouter:
             logger.error("export-pdf [%s]: %s", jt_kodu, e, exc_info=True)
             return JSONResponse({"hata": f"PDF oluşturulamadı: {e}"}, status_code=500)
 
-        safe_ad = "".join(c if c.isalnum() or c in "-_" else "_" for c in jt_kodu)
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
@@ -407,6 +418,8 @@ def _ensure_tur_detaylar_table(db_engine):
             updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""",
         "CREATE INDEX IF NOT EXISTS idx_tur_detaylar_jt ON tur_detaylar(jt_kodu)",
+        # ham PDF bytes — sync sırasında Gordios'tan çekilir, sonra auth gerektirmeden sunulur
+        "ALTER TABLE tur_detaylar ADD COLUMN IF NOT EXISTS pdf_data BYTEA",
     ]
     for i, ddl in enumerate(ddl_steps):
         try:
@@ -454,17 +467,19 @@ def _get_detay(db_engine, jt_kodu: str):
 
 def _upsert_tur_detay(db_engine, jt_kodu: str, data: dict, status: str):
     try:
+        pdf_data = data.get("pdf_bytes")   # bytes | None — scraper'dan gelen ham PDF
         with db_engine.connect() as conn:
             conn.execute(text("""
                 INSERT INTO tur_detaylar
-                    (jt_kodu, plan_id, pdf_url, ucus_json, program_json,
+                    (jt_kodu, plan_id, pdf_url, pdf_data, ucus_json, program_json,
                      program_baslik, sync_status, hata_mesaj, gordios_sync_at, updated_at)
                 VALUES
-                    (:jt, :pid, :purl, :ucus, :prog, :pbaslik,
+                    (:jt, :pid, :purl, :pdata, :ucus, :prog, :pbaslik,
                      :status, :hata, NOW(), NOW())
                 ON CONFLICT (jt_kodu) DO UPDATE SET
                     plan_id         = EXCLUDED.plan_id,
                     pdf_url         = EXCLUDED.pdf_url,
+                    pdf_data        = COALESCE(EXCLUDED.pdf_data, tur_detaylar.pdf_data),
                     ucus_json       = EXCLUDED.ucus_json,
                     program_json    = EXCLUDED.program_json,
                     program_baslik  = EXCLUDED.program_baslik,
@@ -476,6 +491,7 @@ def _upsert_tur_detay(db_engine, jt_kodu: str, data: dict, status: str):
                 "jt":      jt_kodu,
                 "pid":     data.get("plan_id"),
                 "purl":    data.get("pdf_url"),
+                "pdata":   pdf_data,
                 "ucus":    data.get("ucus_json", "[]"),
                 "prog":    data.get("program_json", "[]"),
                 "pbaslik": data.get("program_baslik", ""),
@@ -537,6 +553,7 @@ def _run_gordios_sync(jt_kodu: str) -> dict:
     return {
         "plan_id":        raw.get("plan_id"),
         "pdf_url":        raw.get("pdf_url"),
+        "pdf_bytes":      raw.get("pdf_bytes"),   # ham bytes — DB'ye BYTEA olarak kaydedilir
         "ucus_json":      _json.dumps(raw.get("ucus_listesi", []), ensure_ascii=False),
         "program_json":   _json.dumps(raw.get("program_gunler", []), ensure_ascii=False),
         "program_baslik": raw.get("program_baslik", ""),
