@@ -1911,7 +1911,35 @@ def survey_stats(request: Request):
         except Exception:
             stats["toplam"] = 0
 
-    # ── 2. puan_detay JSONB kategori ortalamaları — ayrı try/except ─────────
+    # ── 2. Comfort / Serüven tur tipi ortalamaları ──────────────────────────
+    try:
+        with db_engine.connect() as conn:
+            tur_tip_row = conn.execute(text("""
+                SELECT
+                    ROUND(AVG(CASE WHEN LOWER(COALESCE(t.tur_adi, hs.tur_adi_ham)) LIKE '%comfort%'
+                                   THEN hs.genel_puan END)::numeric, 2)  AS comfort_puan,
+                    COUNT(CASE WHEN LOWER(COALESCE(t.tur_adi, hs.tur_adi_ham)) LIKE '%comfort%'
+                               THEN 1 END)                               AS comfort_sayi,
+                    ROUND(AVG(CASE WHEN LOWER(COALESCE(t.tur_adi, hs.tur_adi_ham)) LIKE '%serüven%'
+                                    OR LOWER(COALESCE(t.tur_adi, hs.tur_adi_ham)) LIKE '%seruven%'
+                                   THEN hs.genel_puan END)::numeric, 2)  AS seruven_puan,
+                    COUNT(CASE WHEN LOWER(COALESCE(t.tur_adi, hs.tur_adi_ham)) LIKE '%serüven%'
+                                OR LOWER(COALESCE(t.tur_adi, hs.tur_adi_ham)) LIKE '%seruven%'
+                               THEN 1 END)                               AS seruven_sayi
+                FROM historical_surveys hs
+                LEFT JOIN turlar t ON t.jt_kodu = hs.matched_jt_kodu
+                WHERE hs.match_status != 'rejected'
+            """)).fetchone()
+            if tur_tip_row:
+                import decimal as _dec
+                for k, v in dict(tur_tip_row._mapping).items():
+                    if isinstance(v, _dec.Decimal): stats[k] = float(v)
+                    elif v is None: stats[k] = None
+                    else: stats[k] = int(v) if k.endswith('_sayi') else float(v)
+    except Exception as exc:
+        logger.warning("survey_stats tur_tip sorgu hata: %s", exc)
+
+    # ── 3. puan_detay JSONB kategori ortalamaları — ayrı try/except ─────────
     try:
         with db_engine.connect() as conn:
             # puan_detay kolonu var mı?
