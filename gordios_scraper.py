@@ -161,23 +161,46 @@ def scrape_tour_detail(jt_kodu: str) -> dict:
             page.wait_for_load_state("networkidle", timeout=15_000)
 
             # ── 5. SONUÇTAN TUR LİNKİNE TIK ────────────────────────────────
-            # BlockUI overlay kaybolana kadar bekle
+            # blockUI: önce 500ms bekle (overlay henüz gelmemiş olabilir),
+            # sonra görünmesini ve kaybolmasını sıraylı bekle.
+            page.wait_for_timeout(500)
             try:
-                page.wait_for_selector('.blockUI', state='hidden', timeout=15_000)
+                page.wait_for_selector('.blockUI', state='attached', timeout=4_000)
+                page.wait_for_selector('.blockUI', state='hidden',   timeout=20_000)
                 logger.info("[gordios] blockUI overlay kalktı")
             except Exception:
-                logger.warning("[gordios] blockUI timeout — 2s beklenecek")
-                page.wait_for_timeout(2_000)
+                # blockUI hiç gelmedi veya zaten kalktı — ekstra 1.5s ver
+                page.wait_for_timeout(1_500)
 
-            link_locator = page.locator(f'a:has-text("{jt_kodu}")')
-            if link_locator.count() == 0:
-                link_locator = page.locator("table tbody tr td a").first
-            if link_locator.count() == 0:
-                result["hata"] = f"Sonuç tablosunda tur linki bulunamadı: {jt_kodu}"
+            # Önce JT kodunu içeren linki DOM'a gelene kadar bekle
+            link_locator = None
+            try:
+                page.wait_for_selector(f'a:has-text("{jt_kodu}")', timeout=12_000)
+                link_locator = page.locator(f'a:has-text("{jt_kodu}")')
+                logger.info("[gordios] JT linki bulundu (has-text)")
+            except Exception:
+                # Fallback: tablo satırındaki herhangi bir link bekle
+                try:
+                    page.wait_for_selector('table tbody tr td a', timeout=8_000)
+                    all_links = page.locator('table tbody tr td a')
+                    if all_links.count() > 0:
+                        link_locator = all_links.first
+                        logger.info("[gordios] Fallback: tablo linki kullanılıyor")
+                except Exception:
+                    pass
+
+            if link_locator is None:
+                # Gerçekten sonuç yok — page text logla
+                try:
+                    page_text = page.inner_text("body")[:300]
+                except Exception:
+                    page_text = "(okunamadı)"
+                logger.warning("[gordios] sonuç bulunamadı [%s] page=%s", jt_kodu, page_text[:150])
+                result["hata"] = f"Gordios'ta tur bulunamadı: {jt_kodu}"
                 return result
 
             link_locator.click()
-            page.wait_for_load_state("networkidle", timeout=15_000)
+            page.wait_for_load_state("networkidle", timeout=20_000)
             logger.info("[gordios] detail URL: %s", page.url)
 
             # ── 6. PLAN ID ──────────────────────────────────────────────────
