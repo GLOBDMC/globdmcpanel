@@ -927,18 +927,9 @@ async def lifespan(app: FastAPI):
     scheduler = None
     try:
         scheduler = BackgroundScheduler()
-        # İlk sync'i 10 saniye gecikmeyle yap — uygulama ayağa kalksın
         from datetime import datetime, timedelta
-        ilk_sync = datetime.now() + timedelta(seconds=10)
-        scheduler.add_job(sheets_den_postgresql_kopyala, 'date', run_date=ilk_sync,
-                          id='ilk_sheets_sync')
-        scheduler.add_job(jolly_sonuc_kopyala, 'date', run_date=ilk_sync,
-                          id='ilk_jolly_sync')
-        # Saatlik periyodik job'lar
-        scheduler.add_job(sheets_den_postgresql_kopyala, 'interval', hours=1,
-                          id='sheets_interval')
-        scheduler.add_job(jolly_sonuc_kopyala, 'interval', hours=1,
-                          id='jolly_interval')
+        # NOT: Google Sheets saatlik sync job'ları kaldırıldı.
+        # Veriler artık Apify webhook (/api/apify/webhook) üzerinden anlık olarak PostgreSQL'e yazılıyor.
         # Günlük snapshot job (02:00 TRT = 23:00 UTC)
         from snapshot_scheduler import setup_snapshot_scheduler
         setup_snapshot_scheduler(scheduler, db_engine)
@@ -1128,7 +1119,7 @@ async def lifespan(app: FastAPI):
             logger.warning("Porsline scheduler eklenemedi: %s", _pe)
 
         scheduler.start()
-        logger.info("Scheduler baslatildi — ilk sync 10s sonra")
+        logger.info("Scheduler baslatildi — veri akışı: Apify webhook → PostgreSQL (Sheets yok)")
     except Exception as e:
         logger.error(f"Scheduler baslatılamadi: {e}")
 
@@ -1711,6 +1702,347 @@ def apify_run(actor_id: str, request: Request):
     audit_logger.info("APIFY_RUN | user=%s | actor=%s | run=%s",
                       kullanici["kullanici_adi"], actor_id, run_id)
     return JSONResponse({"ok": True, "runId": run_id})
+
+
+# ── Apify Dataset → PostgreSQL (Sheets'siz akış) ─────────────────────────────
+
+# Actor ID → tablo türü eşleştirmesi
+_AKTOR_TUR = {
+    "9f1gkAaOUjDoDkus3": "kontenjan",   # Kontenjan
+    "BEQyfYEUwdedFLakn": "fiyat",       # Fiyat
+    "wW7rOFuH1bVMMMQ8h": "jolly",       # Jolly Matcher
+    "bFwJR4fa0AMHxUtqW": "kontenjan",   # Yeni Tur (turlar tablosuna upsert)
+}
+
+def _apify_dataset_items(dataset_id: str, limit: int = 5000) -> list:
+    """Apify dataset'inden tüm item'ları çeker."""
+    result = _apify_get(f"/datasets/{dataset_id}/items?limit={limit}&clean=true")
+    # Apify bu endpoint için list döner (dict değil)
+    if isinstance(result, list):
+        return result
+    # Bazen {"data": {"items": [...]}} formatında gelir
+    if isinstance(result, dict):
+        data = result.get("data") or {}
+        return data.get("items", [])
+    return []
+
+
+def _apify_run_dataset_id(run_id: str) -> str:
+    """Bir run'ın defaultDatasetId'sini döndürür."""
+    data = (_apify_get(f"/actor-runs/{run_id}")).get("data") or {}
+    return data.get("defaultDatasetId", "")
+
+
+def _upsert_kontenjan_fiyat(items: list, kaynak: str = "webhook") -> dict:
+    """
+    Apify dataset item'larını turlar tablosuna upsert eder.
+    Alan adı eşleştirmesi esnek — birden fazla olası ismi dener.
+    """
+    def _get(item: dict, *keys, default=""):
+        for k in keys:
+            v = item.get(k)
+            if v is not None and str(v).strip():
+                return str(v).strip()
+        return default
+
+    insert_sql = """
+        INSERT INTO turlar (jt_kodu, tur_adi, kalkis_tarihi, bitis_tarihi, havayolu,
+                            pax, satilan, kalan, guncel_fiyat)
+        VALUES (:jt, :tur_adi, :kalkis, :bitis, :havayolu,
+                :pax, :satilan, :kalan, :fiyat)
+        ON CONFLICT (jt_kodu) DO UPDATE SET
+            tur_adi           = EXCLUDED.tur_adi,
+            kalkis_tarihi     = EXCLUDED.kalkis_tarihi,
+            bitis_tarihi      = EXCLUDED.bitis_tarihi,
+            havayolu          = EXCLUDED.havayolu,
+            pax               = EXCLUDED.pax,
+            satilan           = EXCLUDED.satilan,
+            kalan             = EXCLUDED.kalan,
+            guncel_fiyat      = EXCLUDED.guncel_fiyat,
+            guncelleme_zamani = CURRENT_TIMESTAMP
+        RETURNING (xmax = 0) AS yeni_mi
+    """
+
+    eklenen = guncellenen = atlanan = 0
+    with db_engine.connect() as conn:
+        for item in items:
+            jt = _get(item, "jt_kodu", "jtKodu", "jt", "code", "JT Kodu")
+            if not jt:
+                atlanan += 1
+                continue
+            tur_adi  = _get(item, "tur_adi", "turAdi", "tur_adi", "name", "Tur Adı", "tur")
+            kalkis   = _get(item, "kalkis_tarihi", "kalkisTarihi", "kalkis", "departure", "Kalkış Tarihi")
+            bitis    = _get(item, "bitis_tarihi", "bitisTarihi", "bitis", "return", "Dönüş Tarihi")
+            havayolu = _get(item, "havayolu", "airline", "Havayolu")
+            try:
+                pax = int(_get(item, "pax", "kapasite", "capacity", "Kapasite") or 0)
+            except (ValueError, TypeError):
+                pax = 0
+            try:
+                satilan = int(_get(item, "satilan", "satilanKisi", "sold", "Satılan") or 0)
+            except (ValueError, TypeError):
+                satilan = 0
+            try:
+                kalan = int(_get(item, "kalan", "kalanKontenjan", "remaining", "Kalan") or 0)
+            except (ValueError, TypeError):
+                kalan = 0
+            fiyat = _get(item, "guncel_fiyat", "fiyat", "guncelFiyat", "price", "Fiyat", "Güncel Fiyat")
+
+            sonuc = conn.execute(text(insert_sql), {
+                "jt": jt, "tur_adi": tur_adi, "kalkis": kalkis, "bitis": bitis,
+                "havayolu": havayolu, "pax": pax, "satilan": satilan,
+                "kalan": kalan, "fiyat": fiyat
+            })
+            if sonuc.scalar():
+                eklenen += 1
+            else:
+                guncellenen += 1
+        conn.commit()
+
+    logger.info("Apify dataset upsert | kaynak=%s | eklenen=%d guncellenen=%d atlanan=%d",
+                kaynak, eklenen, guncellenen, atlanan)
+    return {"eklenen": eklenen, "guncellenen": guncellenen, "atlanan": atlanan}
+
+
+def _upsert_jolly_sonuc(items: list, kaynak: str = "webhook") -> dict:
+    """
+    Apify Jolly Matcher dataset item'larını jolly_sonuc tablosuna upsert eder.
+    """
+    def _get(item: dict, *keys, default=""):
+        for k in keys:
+            v = item.get(k)
+            if v is not None and str(v).strip():
+                return str(v).strip()
+        return default
+
+    simdi = datetime.now().strftime("%Y-%m-%d %H:%M")
+    eklenen = guncellenen = atlanan = 0
+
+    with db_engine.connect() as conn:
+        # Önce değişim tespiti için mevcut durumu al
+        mevcut = {}
+        for r in conn.execute(text(
+            "SELECT grup_adi, kalkis_tarihi, platform, vitrinde, onceki_vitrinde, degisim_tarihi "
+            "FROM jolly_sonuc"
+        )).fetchall():
+            mevcut[(r[0], r[1], r[2])] = {
+                "vitrinde": r[3], "onceki": r[4], "degisim": r[5]
+            }
+
+        islenen_keyler = set()
+        for item in items:
+            grup_adi = _get(item, "grup_adi", "grupAdi", "Grup Adı", "group_name", "name")
+            if not grup_adi:
+                atlanan += 1
+                continue
+            kalkis    = _get(item, "kalkis_tarihi", "kalkisTarihi", "Gidiş Tarihi", "departure")
+            vitrinde  = _get(item, "vitrinde", "Vitrinde", "in_window")
+            eslesen   = _get(item, "eslesen_jolly_tur", "eslesenJollyTur", "Eşleşen Jolly Tur", "matched_tour")
+            jt_kodu   = _get(item, "jt_kodu", "jtKodu", "JT Kodu", "jt_kodu_jolly")
+            skor      = _get(item, "skor", "Skor", "score")
+            kontrol   = _get(item, "kontrol_tarihi", "kontrolTarihi", "Kontrol Tarihi", "check_date")
+
+            key = (grup_adi, kalkis, "jolly")
+            islenen_keyler.add(key)
+            eski = mevcut.get(key)
+
+            if eski and eski["vitrinde"] and eski["vitrinde"] != vitrinde:
+                yeni_onceki  = eski["vitrinde"]
+                yeni_degisim = simdi
+            elif eski:
+                yeni_onceki  = eski["onceki"]
+                yeni_degisim = eski["degisim"]
+            else:
+                yeni_onceki  = None
+                yeni_degisim = None
+
+            sonuc = conn.execute(text("""
+                INSERT INTO jolly_sonuc
+                    (grup_adi, kalkis_tarihi, platform, vitrinde, eslesen_jolly_tur,
+                     jt_kodu_jolly, skor, kontrol_tarihi, onceki_vitrinde, degisim_tarihi)
+                VALUES (:g, :kt, 'jolly', :v, :e, :j, :s, :k, :ov, :dt)
+                ON CONFLICT (grup_adi, kalkis_tarihi, platform) DO UPDATE SET
+                    onceki_vitrinde   = EXCLUDED.onceki_vitrinde,
+                    degisim_tarihi    = EXCLUDED.degisim_tarihi,
+                    vitrinde          = EXCLUDED.vitrinde,
+                    eslesen_jolly_tur = EXCLUDED.eslesen_jolly_tur,
+                    jt_kodu_jolly     = EXCLUDED.jt_kodu_jolly,
+                    skor              = EXCLUDED.skor,
+                    kontrol_tarihi    = EXCLUDED.kontrol_tarihi
+                RETURNING (xmax = 0) AS yeni_mi
+            """), {
+                "g": grup_adi, "kt": kalkis,
+                "v": vitrinde, "e": eslesen, "j": jt_kodu,
+                "s": skor, "k": kontrol,
+                "ov": yeni_onceki, "dt": yeni_degisim,
+            })
+            if sonuc.scalar():
+                eklenen += 1
+            else:
+                guncellenen += 1
+
+        conn.commit()
+
+    logger.info("Jolly dataset upsert | kaynak=%s | eklenen=%d guncellened=%d atlanan=%d",
+                kaynak, eklenen, guncellenen, atlanan)
+    return {"eklenen": eklenen, "guncellenen": guncellenen, "atlanan": atlanan}
+
+
+@app.post("/api/apify/webhook")
+async def apify_webhook(request: Request):
+    """
+    Apify'den gelen 'actor run succeeded' webhook'unu işler.
+    Apify konsolunda her aktör için bu URL'i webhook olarak ekle:
+      https://DOMAIN/api/apify/webhook
+    Secret header: X-Apify-Webhook-Secret → APIFY_WEBHOOK_SECRET env değişkeni
+    """
+    # İsteğe bağlı secret doğrulaması
+    webhook_secret = os.environ.get("APIFY_WEBHOOK_SECRET", "")
+    if webhook_secret:
+        gelen_secret = request.headers.get("X-Apify-Webhook-Secret", "")
+        if gelen_secret != webhook_secret:
+            logger.warning("Apify webhook: geçersiz secret")
+            return JSONResponse({"ok": False, "hata": "Geçersiz secret"}, status_code=401)
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "hata": "JSON parse hatası"}, status_code=400)
+
+    event_type   = payload.get("eventType", "")
+    resource     = payload.get("resource") or {}
+    act_id       = resource.get("actId", "")
+    run_id       = resource.get("id", "")
+    dataset_id   = resource.get("defaultDatasetId", "")
+    status       = resource.get("status", "")
+
+    logger.info("Apify webhook | event=%s | actId=%s | runId=%s | status=%s",
+                event_type, act_id, run_id, status)
+
+    # Sadece başarılı run'ları işle
+    if status not in ("SUCCEEDED",) and event_type != "ACTOR.RUN.SUCCEEDED":
+        return JSONResponse({"ok": True, "atlandi": True, "sebep": f"status={status}"})
+
+    aktor_tur = _AKTOR_TUR.get(act_id)
+    if not aktor_tur:
+        logger.info("Apify webhook: bilinmeyen actId=%s, atlandı", act_id)
+        return JSONResponse({"ok": True, "atlandi": True, "sebep": "bilinmeyen aktör"})
+
+    if not dataset_id:
+        dataset_id = _apify_run_dataset_id(run_id)
+    if not dataset_id:
+        logger.error("Apify webhook: dataset_id alınamadı | runId=%s", run_id)
+        return JSONResponse({"ok": False, "hata": "dataset_id yok"}, status_code=500)
+
+    items = _apify_dataset_items(dataset_id)
+    logger.info("Apify webhook | aktör=%s | item_sayisi=%d | örnek_anahtarlar=%s",
+                aktor_tur, len(items),
+                list(items[0].keys()) if items else [])
+
+    if not items:
+        return JSONResponse({"ok": True, "mesaj": "dataset boş", "item_sayisi": 0})
+
+    try:
+        if aktor_tur in ("kontenjan", "fiyat"):
+            sonuc = _upsert_kontenjan_fiyat(items, kaynak=f"webhook/{aktor_tur}")
+        elif aktor_tur == "jolly":
+            sonuc = _upsert_jolly_sonuc(items, kaynak="webhook/jolly")
+        else:
+            sonuc = {}
+    except Exception as exc:
+        logger.exception("Apify webhook upsert hatası | aktör=%s", aktor_tur)
+        return JSONResponse({"ok": False, "hata": str(exc)}, status_code=500)
+
+    return JSONResponse({"ok": True, "aktör": aktor_tur, "item_sayisi": len(items), **sonuc})
+
+
+@app.get("/api/apify/dataset-preview/{actor_id}")
+def apify_dataset_preview(actor_id: str, request: Request, limit: int = 3):
+    """
+    Bir aktörün son başarılı run'ından örnek dataset item'ları gösterir.
+    Alan adlarını keşfetmek için kullanılır. Sadece admin.
+    """
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    # Son run'ı bul
+    run_data = (_apify_get(f"/acts/{actor_id}/runs/last")).get("data") or {}
+    run_id = run_data.get("id")
+    dataset_id = run_data.get("defaultDatasetId")
+
+    if not run_id:
+        # Task olarak dene
+        run_data = (_apify_get(f"/actor-tasks/{actor_id}/runs/last")).get("data") or {}
+        run_id   = run_data.get("id")
+        dataset_id = run_data.get("defaultDatasetId")
+
+    if not dataset_id:
+        return JSONResponse({"hata": "Son run bulunamadı veya dataset yok"}, status_code=404)
+
+    items = _apify_dataset_items(dataset_id, limit=limit)
+    anahtarlar = list(items[0].keys()) if items else []
+
+    return JSONResponse({
+        "ok": True,
+        "aktor_id":   actor_id,
+        "run_id":     run_id,
+        "dataset_id": dataset_id,
+        "item_sayisi_preview": len(items),
+        "alan_adlari": anahtarlar,
+        "ornekler":    items[:limit],
+    })
+
+
+@app.post("/api/apify/dataset-import/{actor_id}")
+def apify_dataset_import(actor_id: str, request: Request):
+    """
+    Bir aktörün son başarılı run'ını manuel olarak PostgreSQL'e aktarır.
+    Google Sheets'ten geçiş döneminde ve test için kullanılır. Sadece admin.
+    """
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    aktor_tur = _AKTOR_TUR.get(actor_id)
+    if not aktor_tur:
+        return JSONResponse({"hata": "Bilinmeyen aktör ID"}, status_code=400)
+
+    run_data   = (_apify_get(f"/acts/{actor_id}/runs/last")).get("data") or {}
+    dataset_id = run_data.get("defaultDatasetId")
+    run_id     = run_data.get("id")
+
+    if not dataset_id:
+        run_data   = (_apify_get(f"/actor-tasks/{actor_id}/runs/last")).get("data") or {}
+        dataset_id = run_data.get("defaultDatasetId")
+        run_id     = run_data.get("id")
+
+    if not dataset_id:
+        return JSONResponse({"hata": "Dataset bulunamadı"}, status_code=404)
+
+    items = _apify_dataset_items(dataset_id)
+    if not items:
+        return JSONResponse({"ok": True, "mesaj": "Dataset boş", "item_sayisi": 0})
+
+    alan_adlari = list(items[0].keys()) if items else []
+    logger.info("Manuel dataset import | aktor=%s | run=%s | item=%d | alanlar=%s",
+                aktor_tur, run_id, len(items), alan_adlari)
+
+    try:
+        if aktor_tur in ("kontenjan", "fiyat"):
+            sonuc = _upsert_kontenjan_fiyat(items, kaynak=f"manuel/{aktor_tur}")
+        else:
+            sonuc = _upsert_jolly_sonuc(items, kaynak="manuel/jolly")
+    except Exception as exc:
+        logger.exception("Manuel dataset import hatası | aktor=%s", aktor_tur)
+        return JSONResponse({"ok": False, "hata": str(exc)}, status_code=500)
+
+    audit_logger.info("APIFY_IMPORT | user=%s | aktor=%s | run=%s | sonuc=%s",
+                      kullanici["kullanici_adi"], aktor_tur, run_id, sonuc)
+    return JSONResponse({
+        "ok": True, "aktor": aktor_tur, "run_id": run_id,
+        "item_sayisi": len(items), "alan_adlari": alan_adlari, **sonuc
+    })
 
 
 # ── Historical Survey sistemi ────────────────────────────────────────────────
@@ -3893,12 +4225,22 @@ def robots_txt():
 
 @app.get("/api/sync")
 def manuel_sync(request: Request):
+    """Manuel kontenjan/fiyat sync: Apify Kontenjan ve Fiyat aktörlerinin son dataset'ini içe aktarır."""
     kullanici = oturum_kullanicisi(request)
     if not kullanici:
         return JSONResponse({"hata": "Yetkisiz"}, status_code=401)
     try:
-        sheets_den_postgresql_kopyala()
-        return JSONResponse({"ok": True, "mesaj": "Sync tamamlandi"})
+        toplam_sonuc = {}
+        for act_id, tur in [("9f1gkAaOUjDoDkus3", "kontenjan"), ("BEQyfYEUwdedFLakn", "fiyat")]:
+            run_data   = (_apify_get(f"/acts/{act_id}/runs/last")).get("data") or {}
+            dataset_id = run_data.get("defaultDatasetId")
+            if not dataset_id:
+                continue
+            items = _apify_dataset_items(dataset_id)
+            if items:
+                sonuc = _upsert_kontenjan_fiyat(items, kaynak=f"manuel/{tur}")
+                toplam_sonuc[tur] = sonuc
+        return JSONResponse({"ok": True, "mesaj": "Import tamamlandı", "detay": toplam_sonuc})
     except Exception as e:
         return JSONResponse({"ok": False, "hata": str(e)}, status_code=500)
 
@@ -4271,12 +4613,21 @@ def vitrin_takibi_sayfasi(request: Request):
 
 @app.get("/api/vitrin-sync")
 def vitrin_sync(request: Request):
+    """Manuel Jolly Matcher sync: son dataset'i PostgreSQL'e aktarır."""
     kullanici = oturum_kullanicisi(request)
     if not kullanici:
         return JSONResponse({"hata": "Yetkisiz"}, status_code=401)
     try:
-        jolly_sonuc_kopyala()
-        return JSONResponse({"ok": True, "mesaj": "Jolly Sonuc sync tamamlandi"})
+        act_id     = "wW7rOFuH1bVMMMQ8h"  # Jolly Matcher
+        run_data   = (_apify_get(f"/acts/{act_id}/runs/last")).get("data") or {}
+        dataset_id = run_data.get("defaultDatasetId")
+        if not dataset_id:
+            return JSONResponse({"ok": False, "hata": "Jolly Matcher son run bulunamadı"}, status_code=404)
+        items = _apify_dataset_items(dataset_id)
+        if not items:
+            return JSONResponse({"ok": True, "mesaj": "Dataset boş", "item_sayisi": 0})
+        sonuc = _upsert_jolly_sonuc(items, kaynak="manuel/jolly")
+        return JSONResponse({"ok": True, "mesaj": "Jolly sync tamamlandı", "item_sayisi": len(items), **sonuc})
     except Exception as e:
         return JSONResponse({"ok": False, "hata": str(e)}, status_code=500)
 
