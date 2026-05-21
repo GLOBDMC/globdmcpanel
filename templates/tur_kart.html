@@ -98,22 +98,22 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
             d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
         </svg>
-        Gordios verisi henüz çekilmedi.
+        Tur detay bilgileri henüz yüklenmedi.
       </div>
       <button onclick="startSync()" id="syncBtn"
         class="text-xs bg-accent-blue hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg transition font-medium">
-        Gordios'tan Çek
+        Bilgileri Yükle
       </button>
     </div>
     {% elif detay.sync_status == 'syncing' %}
     <div class="flex items-center gap-2 bg-surface-2 border border-yellow-500/30 rounded-xl px-4 py-3 text-sm text-yellow-300">
       <div class="w-3 h-3 border-2 border-yellow-300 border-t-transparent rounded-full animate-spin"></div>
-      Gordios'tan veri çekiliyor…
+      Tur bilgileri güncelleniyor…
     </div>
     {% elif detay.sync_status == 'error' %}
     <div class="flex items-center justify-between bg-surface-2 border border-red-500/30 rounded-xl px-4 py-3">
       <div class="text-sm text-red-400">
-        Gordios hatası: {{ detay.hata_mesaj or 'bilinmiyor' }}
+        Yüklenirken hata oluştu: {{ detay.hata_mesaj or 'bilinmiyor' }}
       </div>
       <button onclick="startSync()" class="text-xs bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-lg transition">
         Tekrar Dene
@@ -122,8 +122,7 @@
     {% else %}
     <div class="flex items-center justify-between bg-surface-2 border border-green-500/20 rounded-xl px-4 py-3">
       <div class="text-xs text-gray-500">
-        Son Gordios sync: {{ detay.gordios_sync_at or '—' }}
-        {% if detay.plan_id %} · Plan ID: {{ detay.plan_id }}{% endif %}
+        Son güncelleme: {{ detay.gordios_sync_at or '—' }}
       </div>
       <div class="flex items-center gap-2">
         {% if detay.program_gunler or detay.ucus_listesi %}
@@ -199,7 +198,7 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
               d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
           </svg>
-          Gordios'tan henüz çekilmedi
+          Henüz yüklenmedi
         </div>
       {% endif %}
     </div>
@@ -257,7 +256,7 @@
             PDF indirilen programdan çıkarılacak —
             <a href="{{ detay.pdf_url }}" target="_blank" class="text-accent-blue hover:underline">PDF'i görüntüle</a>
           {% else %}
-            Gordios'tan henüz çekilmedi
+            Henüz yüklenmedi
           {% endif %}
         </div>
       {% endif %}
@@ -302,7 +301,7 @@ function toggleGun(i) {
 /* ── Gordios Sync ──────────────────────────────────────────────────── */
 async function startSync() {
     const btn = document.getElementById('syncBtn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Çekiliyor…'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Yükleniyor…'; }
     try {
         const res = await fetch(`/api/tur/${JT_KODU}/sync`, { method: 'POST' });
         const d   = await res.json();
@@ -310,8 +309,8 @@ async function startSync() {
             // Poll 3 sn sonra sayfayı yenile
             setTimeout(() => location.reload(), 3000);
         } else {
-            alert(d.hata || 'Sync başlatılamadı');
-            if (btn) { btn.disabled = false; btn.textContent = 'Gordios\'tan Çek'; }
+            alert(d.hata || 'Güncelleme başlatılamadı');
+            if (btn) { btn.disabled = false; btn.textContent = 'Bilgileri Yükle'; }
         }
     } catch(e) {
         alert('Bağlantı hatası: ' + e.message);

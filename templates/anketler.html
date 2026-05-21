@@ -212,7 +212,7 @@ span.tur-pill.otel-link:hover { color: #60a5fa !important; border-color: rgba(96
                 <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
                 <polyline points="22,6 12,13 2,6"/>
             </svg>
-            Porsline Sync
+            {% if kullanici and kullanici.rol == 'admin' %}Porsline Sync{% else %}Anketleri Güncelle{% endif %}
         </button>
     </div>
 </div>
@@ -227,9 +227,9 @@ span.tur-pill.otel-link:hover { color: #60a5fa !important; border-color: rgba(96
                         <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
                         <polyline points="22,6 12,13 2,6"/>
                     </svg>
-                    Porsline Senkronizasyonu
+                    {% if kullanici and kullanici.rol == 'admin' %}Porsline Senkronizasyonu{% else %}Anket Güncellemesi{% endif %}
                 </h2>
-                <p class="text-xs text-slate-600 mt-0.5">Porsline anketlerini DB'ye çek ve kaydet</p>
+                <p class="text-xs text-slate-600 mt-0.5">{% if kullanici and kullanici.rol == 'admin' %}Porsline anketlerini DB'ye çek ve kaydet{% else %}Memnuniyet anketlerini sisteme aktar ve kaydet{% endif %}</p>
             </div>
             <div class="flex items-center gap-2">
                 <button onclick="loadPorslineSurveys()" id="btnPorslineList" class="btn-sec text-xs">
@@ -240,12 +240,13 @@ span.tur-pill.otel-link:hover { color: #60a5fa !important; border-color: rgba(96
                     Listele
                 </button>
                 <button onclick="syncAllPorsline()" id="btnSyncAll"
+                        data-label="{% if kullanici and kullanici.rol == 'admin' %}Tümünü Sync Et{% else %}Tümünü Güncelle{% endif %}"
                         class="text-xs px-3 py-1.5 rounded-lg font-medium bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-600/30 transition-colors flex items-center gap-1.5">
                     <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
                         <path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
                     </svg>
-                    Tümünü Sync Et
+                    {% if kullanici and kullanici.rol == 'admin' %}Tümünü Sync Et{% else %}Tümünü Güncelle{% endif %}
                 </button>
             </div>
         </div>
@@ -270,18 +271,18 @@ span.tur-pill.otel-link:hover { color: #60a5fa !important; border-color: rgba(96
         </div>
         <div class="flex items-center gap-2 mb-4 flex-wrap">
             <button onclick="checkDbDiag()" class="text-xs px-2 py-1 rounded bg-slate-800 border border-slate-700 text-slate-400 hover:text-slate-200 transition-colors">
-                🔍 DB Durumu Kontrol Et
+                🔍 {% if kullanici and kullanici.rol == 'admin' %}DB Durumu Kontrol Et{% else %}Sistem Durumunu Kontrol Et{% endif %}
             </button>
             <button onclick="forceResyncAll()" id="btnForceResync" class="text-xs px-2 py-1 rounded bg-amber-900/30 border border-amber-700/40 text-amber-400 hover:bg-amber-900/50 transition-colors">
                 🔄 Puanları Yeniden Hesapla
             </button>
-            <span class="text-xs text-slate-600">Sync çalışmıyorsa veya puanlar null geliyorsa kullanın</span>
+            <span class="text-xs text-slate-600">Güncelleme çalışmıyorsa veya puanlar görünmüyorsa kullanın</span>
         </div>
         <div id="forceResyncResult" class="hidden mb-3 text-xs text-amber-300 rounded-lg p-2 bg-amber-900/20 border border-amber-700/30"></div>
 
         <!-- Anket listesi -->
         <div id="porslineSurveyList">
-            <p class="text-center py-6 text-slate-600 text-sm">"Listele" butonuna basarak Porsline anketlerini çekin</p>
+            <p class="text-center py-6 text-slate-600 text-sm">Anket listesini görüntülemek için "Listele" butonuna tıklayın</p>
         </div>
     </div>
 </div>
@@ -762,8 +763,8 @@ async function loadPorslineSurveys() {
                 <div class="text-xs text-slate-600 mt-0.5">${yanit} yanıt · ${s.created_date || s.created_at || ''}</div>
             </div>
             <span id="ps-status-${sid}" class="text-xs text-slate-600 hidden"></span>
-            <button id="ps-btn-${sid}" class="sync-btn" onclick="syncTekPorsline('${sid}')">Sync</button>
-            <button class="sync-btn" style="background:rgba(251,146,60,.15);color:#fb923c;border-color:rgba(251,146,60,.3)" title="Force: mevcut kayıtları da yeniden parse et" onclick="syncTekPorsline('${sid}', true)">🔄</button>
+            <button id="ps-btn-${sid}" class="sync-btn" onclick="syncTekPorsline('${sid}')">Güncelle</button>
+            <button class="sync-btn" style="background:rgba(251,146,60,.15);color:#fb923c;border-color:rgba(251,146,60,.3)" title="Tüm puanları yeniden hesapla" onclick="syncTekPorsline('${sid}', true)">🔄</button>
         </div>`;
     }).join('');
 }
@@ -818,7 +819,7 @@ async function syncTekPorsline(sid, force = false) {
             if (kalan <= 0) {
                 clearInterval(tick);
                 st.textContent = '— tekrar deneyin';
-                btn.textContent = 'Sync'; btn.disabled = false;
+                btn.textContent = 'Güncelle'; btn.disabled = false;
             }
         }, 1000);
         st.classList.remove('hidden');
@@ -860,8 +861,8 @@ async function _runBackendSyncAll(force = false) {
     if (btnForce) { btnForce.disabled = true; }
 
     msgEl.textContent = force
-        ? '⏳ Tüm anketler yeniden çekiliyor (force)…'
-        : '⏳ Değişen anketler kontrol ediliyor…';
+        ? '⏳ Tüm anketler yeniden yükleniyor…'
+        : '⏳ Güncellenecek anketler kontrol ediliyor…';
     pctEl.textContent = '';
     barEl.style.width = '10%';
 
@@ -874,7 +875,7 @@ async function _runBackendSyncAll(force = false) {
         if (!init.ok) {
             msgEl.textContent = `⚠ Başlatılamadı: ${init.hata || 'hata'}`;
             barEl.style.background = '#f87171';
-            if (btn)      { btn.disabled = false; btn.textContent = 'Tümünü Sync Et'; }
+            if (btn)      { btn.disabled = false; btn.textContent = btn.dataset.label || 'Tümünü Güncelle'; }
             if (btnForce) btnForce.disabled = false;
             return;
         }
@@ -1378,7 +1379,7 @@ async function yukleAnketler() {
         const uyari = document.createElement('div');
         uyari.className = 'rounded-lg px-4 py-3 mb-3 text-xs text-amber-400';
         uyari.style.cssText = 'background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2);';
-        uyari.innerHTML = `⚠ Bu sayfadaki <strong>${d.items.length}</strong> kayıtta puan verisi hesaplanmamış. "Porsline Sync" ile yeniden çekmeyi deneyin.`;
+        uyari.innerHTML = `⚠ Bu sayfadaki <strong>${d.items.length}</strong> kayıtta puan verisi hesaplanmamış. "Anketleri Güncelle" butonu ile yeniden deneyin.`;
         liste.insertAdjacentElement('beforebegin', uyari);
     }
 
