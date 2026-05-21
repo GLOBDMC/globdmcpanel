@@ -3027,18 +3027,17 @@ def porsline_sync_survey(survey_id: str, request: Request, force: bool = False):
     """
 
     # force=True: mevcut kayıtları da güncelle (puan_detay null olanları)
+    # NOT: CAST(:puan_detay AS jsonb) kullan — ::jsonb SQLAlchemy :jsonb parametresi sanabilir
     update_sql = """
         UPDATE historical_surveys SET
             genel_puan   = :genel_puan,
             rehber_puani = :rehber_puani,
-            puan_detay   = :puan_detay::jsonb,
+            puan_detay   = CAST(:puan_detay AS jsonb),
             otel_adi     = :otel_adi,
             musteri_adi  = CASE WHEN musteri_adi = '' OR musteri_adi IS NULL THEN :musteri ELSE musteri_adi END,
             rehber_adi   = CASE WHEN rehber_adi  = '' OR rehber_adi  IS NULL THEN :rehber  ELSE rehber_adi  END
         WHERE porsline_response_id = :resp_id
-          AND (genel_puan IS NULL OR puan_detay IS NULL
-               OR (puan_detay->>'otobus') IS NULL
-               OR (puan_detay->>'rehber_puani') IS NULL)
+          AND (genel_puan IS NULL OR (puan_detay->>'otobus') IS NULL)
     """
 
     # Rehber adını header veya questions'dan çıkar
@@ -3059,6 +3058,12 @@ def porsline_sync_survey(survey_id: str, request: Request, force: bool = False):
                 parsed_row = parse_response_from_questions(questions, row)
             else:
                 parsed_row = parse_response_row(header, row)
+
+            # İlk satırı logla — parse sonucunu doğrula
+            if i == 0:
+                logger.info("PORSLINE_SYNC [%s] row[0] parse sonucu: genel_puan=%s rehber=%s puan_detay=%s",
+                            survey_id, parsed_row.get("genel_puan"), parsed_row.get("rehber_puani"),
+                            str(parsed_row.get("puan_detay", {}))[:200])
 
             # resp_id: Porsline'ın kendi response ID'sini kullan (varsa)
             # results-table formatında row list[str], /responses/ formatında row dict

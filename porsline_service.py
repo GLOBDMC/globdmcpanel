@@ -549,11 +549,28 @@ def parse_survey_title(title: str, created_date: str = "") -> dict:
 
 # ── Yanıt parse ───────────────────────────────────────────────────────────────
 
+def _header_title(h) -> str:
+    """
+    Porsline header objesinden görünen başlık metnini çıkarır.
+
+    Results-table header item formatı:
+      {"id":3185441, "title":"Tur rehberimizin...", "col_type":1, "cell_type":"int", ...}
+    Plain string header da desteklenir (geriye dönük uyumluluk).
+
+    DİKKAT: _str_field() direkt dict üzerinde çağrılırsa dict'in ilk değerini
+    (genellikle sayısal id'yi) döndürür — bu fonksiyon bunun önüne geçer.
+    """
+    if isinstance(h, dict):
+        raw = h.get("title") or h.get("label") or h.get("name") or ""
+        return _str_field(raw)
+    return _str_field(h)
+
+
 def _find_col(header: list, keywords: list[str]) -> Optional[int]:
     """Header listesinde anahtar kelime içeren ilk sütun indeksini döndürür."""
     for kw in keywords:
         for i, h in enumerate(header):
-            if kw.lower() in _str_field(h).lower():
+            if kw.lower() in _header_title(h).lower():
                 return i
     return None
 
@@ -574,7 +591,7 @@ def _extract_guide_name(header: list) -> Optional[str]:
     → "Derya Iberi"
     """
     for h in header:
-        h_str = _str_field(h)
+        h_str = _header_title(h)
         if "rehber" in h_str.lower():
             m = re.search(r'\(([^)]+)\)', h_str)
             if m:
@@ -582,15 +599,24 @@ def _extract_guide_name(header: list) -> Optional[str]:
     return None
 
 
-def parse_response_row(header: list[str], row: list) -> dict:
+def parse_response_row(header: list, row) -> dict:
     """
     Tek bir yanıt satırını alanlarına göre parse eder.
-    Header ile row aynı uzunlukta olmak zorunda.
+    Porsline results-table'dan gelen iki formatı destekler:
+      - Liste formatı: ["val1", "val2", ...]
+      - Dict formatı: {"responder_id": 123, "responder_code": "abc", "data": ["val1", ...]}
+    Header item'lar plain string veya {"id":...,"title":"...","col_type":...} dict olabilir.
     """
+    # Dict formatında data listesini çıkar
+    if isinstance(row, dict):
+        actual_row = row.get("data") or []
+    else:
+        actual_row = list(row) if row else []
+
     def get(idx):
-        if idx is None or idx >= len(row):
+        if idx is None or idx >= len(actual_row):
             return None
-        return row[idx]
+        return actual_row[idx]
 
     # Sütun indeksleri
     i_musteri     = _find_col(header, ["isim", "ad soyad", "ad-soyad", "name"])
@@ -629,14 +655,14 @@ def parse_response_row(header: list[str], row: list) -> dict:
         "istanbul", "ankara", "bodrum", "antalya", "kapadokya",
     ]
     for i, h in enumerate(header):
-        h_str = _str_field(h).lower()
+        h_str = _header_title(h).lower()
         if any(kw in h_str for kw in otel_keywords):
             # rehber, program, operasyon sütunlarıyla çakışmayı önle
             if any(kw in h_str for kw in ["rehber", "program", "operasyon", "transfer"]):
                 continue
             v = _safe_float(get(i))
             if v is not None:
-                label = _str_field(header[i]).split("?")[0].strip()[:60]
+                label = _header_title(header[i]).split("?")[0].strip()[:60]
                 otel_puanlari[label] = v
 
     # Rehber adı header'dan
