@@ -2145,17 +2145,20 @@ def survey_results(
                 """), safe_params).scalar() or 0
 
                 # Alt kategori ortalamaları (puan_detay JSONB)
+                # Otel: puan_detay.oteller dict'indeki şehir puanlarının ortalaması
                 if has_puan_det:
                     sub_avg_expr = """
-                        ROUND(AVG(NULLIF((hs.puan_detay->>'otobus'),   '')::numeric)::numeric, 2) AS ort_otobus,
-                        ROUND(AVG(NULLIF((hs.puan_detay->>'sofor'),    '')::numeric)::numeric, 2) AS ort_sofor,
-                        ROUND(AVG(NULLIF((hs.puan_detay->>'program'),  '')::numeric)::numeric, 2) AS ort_program,
-                        ROUND(AVG(NULLIF((hs.puan_detay->>'operasyon'),'')::numeric)::numeric, 2) AS ort_operasyon,
-                        ROUND(AVG(NULLIF((hs.puan_detay->>'transfer'), '')::numeric)::numeric, 2) AS ort_transfer,
-                        ROUND(AVG(NULLIF((hs.puan_detay->>'ekstra_tur'),'')::numeric)::numeric, 2) AS ort_ekstra_tur,
+                        ROUND(AVG(
+                            (SELECT AVG(v::numeric)
+                             FROM jsonb_each_text(COALESCE(hs.puan_detay->'oteller','{}'))
+                             WHERE v ~ '^[0-9]+[.]?[0-9]*$')
+                        )::numeric, 2) AS ort_otel,
+                        ROUND(AVG(NULLIF((hs.puan_detay->>'otobus'),  '')::numeric)::numeric, 2) AS ort_otobus,
+                        ROUND(AVG(NULLIF((hs.puan_detay->>'sofor'),   '')::numeric)::numeric, 2) AS ort_sofor,
+                        ROUND(AVG(NULLIF((hs.puan_detay->>'program'), '')::numeric)::numeric, 2) AS ort_program,
                     """
                 else:
-                    sub_avg_expr = "NULL AS ort_otobus, NULL AS ort_sofor, NULL AS ort_program, NULL AS ort_operasyon, NULL AS ort_transfer, NULL AS ort_ekstra_tur,"
+                    sub_avg_expr = "NULL AS ort_otel, NULL AS ort_otobus, NULL AS ort_sofor, NULL AS ort_program,"
 
                 rows = conn.execute(text(f"""
                     SELECT

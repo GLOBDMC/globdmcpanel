@@ -217,18 +217,6 @@
         <div class="text-sm font-semibold text-purple-300" id="stProgram">—</div>
         <div class="text-xs text-slate-600 mt-0.5">🗺 Program</div>
     </div>
-    <div class="rounded-lg px-3 py-2 text-center" style="background:rgba(15,23,41,.6);border:1px solid rgba(255,255,255,.05);min-width:80px">
-        <div class="text-sm font-semibold text-teal-300" id="stOperasyon">—</div>
-        <div class="text-xs text-slate-600 mt-0.5">⚙️ Operasyon</div>
-    </div>
-    <div class="rounded-lg px-3 py-2 text-center" style="background:rgba(15,23,41,.6);border:1px solid rgba(255,255,255,.05);min-width:80px">
-        <div class="text-sm font-semibold text-sky-300" id="stTransfer">—</div>
-        <div class="text-xs text-slate-600 mt-0.5">🚐 Transfer</div>
-    </div>
-    <div class="rounded-lg px-3 py-2 text-center" style="background:rgba(15,23,41,.6);border:1px solid rgba(255,255,255,.05);min-width:80px">
-        <div class="text-sm font-semibold text-pink-300" id="stEkstraTur">—</div>
-        <div class="text-xs text-slate-600 mt-0.5">✨ Ekstra Tur</div>
-    </div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════════════
@@ -439,15 +427,12 @@ async function loadStats() {
     const pct = s.toplam ? Math.round((s.eslendi || 0) / s.toplam * 100) : 0;
     document.getElementById('stEslesen').textContent    = s.toplam ? pct + '%' : '—';
 
-    // Kategori puanları — en az bir değer varsa satırı göster
+    // Kategori puanları — Otel / Otobüs / Şoför / Program
     const katMap = {
-        stOtel:      s.ort_otel,
-        stOtobus:    s.ort_otobus,
-        stSofor:     s.ort_sofor,
-        stProgram:   s.ort_program,
-        stOperasyon: s.ort_operasyon,
-        stTransfer:  s.ort_transfer,
-        stEkstraTur: s.ort_ekstra_tur,
+        stOtel:   s.ort_otel,
+        stOtobus: s.ort_otobus,
+        stSofor:  s.ort_sofor,
+        stProgram:s.ort_program,
     };
     let hasKat = false;
     for (const [id, val] of Object.entries(katMap)) {
@@ -1182,35 +1167,44 @@ async function yukleAnketler() {
             ? `<span style="font-size:10px;padding:2px 8px;border-radius:999px;background:rgba(16,185,129,.12);color:#34D399;border:1px solid rgba(16,185,129,.2);">✓ ${esc(item.matched_jt_kodu)}</span>`
             : `<span style="font-size:10px;padding:2px 8px;border-radius:999px;background:rgba(100,116,139,.1);color:#64748B;border:1px solid rgba(100,116,139,.15);">Arşiv</span>`;
 
-        // Alt kategori puanları — gruplu: ort_* alanları; bireysel: puan_detay içinden
+        // Alt kategori puanları — Otel / Otobüs / Şoför / Program
         let subScores = [];
+        let otelDetay = [];  // şehir bazlı otel puanları (sadece bireysel mod)
+
         if (_anketGrup) {
+            const otelVal = item.ort_otel != null ? parseFloat(item.ort_otel) : null;
             subScores = [
-                { icon: '🚌', label: 'Otobüs',    val: item.ort_otobus    != null ? parseFloat(item.ort_otobus)    : null },
-                { icon: '🧑‍✈️', label: 'Şoför',     val: item.ort_sofor     != null ? parseFloat(item.ort_sofor)     : null },
-                { icon: '🗺', label: 'Program',   val: item.ort_program   != null ? parseFloat(item.ort_program)   : null },
-                { icon: '⚙️', label: 'Operasyon', val: item.ort_operasyon != null ? parseFloat(item.ort_operasyon) : null },
-                { icon: '🚐', label: 'Transfer',  val: item.ort_transfer  != null ? parseFloat(item.ort_transfer)  : null },
-                { icon: '✨', label: 'Ekstra',    val: item.ort_ekstra_tur!= null ? parseFloat(item.ort_ekstra_tur): null },
+                { icon: '🏨', label: 'Otel',    val: otelVal },
+                { icon: '🚌', label: 'Otobüs',  val: item.ort_otobus  != null ? parseFloat(item.ort_otobus)  : null },
+                { icon: '🧑‍✈️', label: 'Şoför',   val: item.ort_sofor   != null ? parseFloat(item.ort_sofor)   : null },
+                { icon: '🗺', label: 'Program', val: item.ort_program != null ? parseFloat(item.ort_program) : null },
             ].filter(s => s.val != null);
         } else {
             const pd = item.puan_detay || {};
             const op = item.otel_ort_puani != null ? parseFloat(item.otel_ort_puani) : null;
             subScores = [
-                { icon: '🏨', label: 'Otel',      val: op },
-                { icon: '🚌', label: 'Otobüs',    val: pd.otobus    != null ? parseFloat(pd.otobus)    : null },
-                { icon: '🗺', label: 'Program',   val: pd.program   != null ? parseFloat(pd.program)   : null },
-                { icon: '⚙️', label: 'Operasyon', val: pd.operasyon != null ? parseFloat(pd.operasyon) : null },
-                { icon: '🚐', label: 'Transfer',  val: pd.transfer  != null ? parseFloat(pd.transfer)  : null },
-                { icon: '✨', label: 'Ekstra',    val: pd.ekstra_tur!= null ? parseFloat(pd.ekstra_tur): null },
+                { icon: '🏨', label: 'Otel',    val: op },
+                { icon: '🚌', label: 'Otobüs',  val: pd.otobus  != null ? parseFloat(pd.otobus)  : null },
+                { icon: '🧑‍✈️', label: 'Şoför',   val: pd.sofor   != null ? parseFloat(pd.sofor)   : null },
+                { icon: '🗺', label: 'Program', val: pd.program != null ? parseFloat(pd.program) : null },
             ].filter(s => s.val != null);
+            // Şehir bazlı otel puanları
+            const oteller = pd.oteller || {};
+            otelDetay = Object.entries(oteller)
+                .filter(([,v]) => v != null)
+                .map(([k,v]) => ({ sehir: k.split('?')[0].trim().slice(0,30), puan: parseFloat(v) }));
         }
 
-        const subLine = subScores.length
+        const subLine = subScores.length || otelDetay.length
             ? `<div class="flex items-center gap-3 mt-1.5 flex-wrap">
                 ${subScores.map(s => `
                     <span style="font-size:10px;color:#64748b;" title="${s.label}">
                         ${s.icon} <span style="color:#94a3b8;font-weight:600;">${s.val.toFixed(1)}</span>
+                    </span>`).join('')}
+                ${otelDetay.map(o => `
+                    <span style="font-size:10px;color:#64748b;" title="${esc(o.sehir)}">
+                        🏙 <span style="color:#94a3b8;font-weight:600;">${o.puan.toFixed(1)}</span>
+                        <span style="color:#475569;">${esc(o.sehir)}</span>
                     </span>`).join('')}
                </div>`
             : '';
