@@ -1916,20 +1916,24 @@ def survey_stats(request: Request):
         with db_engine.connect() as conn:
             tur_tip_row = conn.execute(text("""
                 SELECT
-                    ROUND(AVG(CASE WHEN LOWER(COALESCE(t.tur_adi, hs.tur_adi_ham)) LIKE '%comfort%'
+                    ROUND(AVG(CASE WHEN LOWER(COALESCE(t.tur_adi, hs.tur_adi_ham)) LIKE :p_comfort
                                    THEN hs.genel_puan END)::numeric, 2)  AS comfort_puan,
-                    COUNT(CASE WHEN LOWER(COALESCE(t.tur_adi, hs.tur_adi_ham)) LIKE '%comfort%'
+                    COUNT(CASE WHEN LOWER(COALESCE(t.tur_adi, hs.tur_adi_ham)) LIKE :p_comfort
                                THEN 1 END)                               AS comfort_sayi,
-                    ROUND(AVG(CASE WHEN LOWER(COALESCE(t.tur_adi, hs.tur_adi_ham)) LIKE '%serüven%'
-                                    OR LOWER(COALESCE(t.tur_adi, hs.tur_adi_ham)) LIKE '%seruven%'
+                    ROUND(AVG(CASE WHEN LOWER(COALESCE(t.tur_adi, hs.tur_adi_ham)) LIKE :p_seruven
+                                    OR LOWER(COALESCE(t.tur_adi, hs.tur_adi_ham)) LIKE :p_seruven2
                                    THEN hs.genel_puan END)::numeric, 2)  AS seruven_puan,
-                    COUNT(CASE WHEN LOWER(COALESCE(t.tur_adi, hs.tur_adi_ham)) LIKE '%serüven%'
-                                OR LOWER(COALESCE(t.tur_adi, hs.tur_adi_ham)) LIKE '%seruven%'
+                    COUNT(CASE WHEN LOWER(COALESCE(t.tur_adi, hs.tur_adi_ham)) LIKE :p_seruven
+                                OR LOWER(COALESCE(t.tur_adi, hs.tur_adi_ham)) LIKE :p_seruven2
                                THEN 1 END)                               AS seruven_sayi
                 FROM historical_surveys hs
                 LEFT JOIN turlar t ON t.jt_kodu = hs.matched_jt_kodu
                 WHERE hs.match_status != 'rejected'
-            """)).fetchone()
+            """), {
+                "p_comfort":  "%comfort%",
+                "p_seruven":  "%serüven%",
+                "p_seruven2": "%seruven%",
+            }).fetchone()
             if tur_tip_row:
                 import decimal as _dec
                 for k, v in dict(tur_tip_row._mapping).items():
