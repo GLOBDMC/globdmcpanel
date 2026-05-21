@@ -2117,11 +2117,14 @@ def survey_results(
                 # ── Gruplandırılmış mod ─────────────────────────────────────
                 # Her (porsline_survey_id, tur_adi_ham, kalkis_tarihi, rehber_adi)
                 # kombinasyonu tek kart olarak gösterilir.
+                # ÖNEMLI: SELECT'teki ifadeler GROUP BY ile birebir aynı olmalı
+                # (PostgreSQL non-aggregated column kuralı).
+                # NULL/boş porsline_survey_id'ler (manuel import) '' olarak gruplanır.
                 group_key = """
-                    COALESCE(NULLIF(hs.porsline_survey_id,''), 'manual_' || hs.tur_adi_ham || '_' || COALESCE(hs.kalkis_tarihi,'')),
-                    hs.tur_adi_ham,
-                    hs.kalkis_tarihi,
-                    hs.rehber_adi
+                    COALESCE(hs.porsline_survey_id, ''),
+                    COALESCE(hs.tur_adi_ham, ''),
+                    COALESCE(hs.kalkis_tarihi, ''),
+                    COALESCE(hs.rehber_adi, '')
                 """
 
                 order_map = {
@@ -2141,38 +2144,37 @@ def survey_results(
                     ) _cnt
                 """), safe_params).scalar() or 0
 
-                # Otel ortalama — JSONB aggregate
+                # Alt kategori ortalamaları (puan_detay JSONB)
                 if has_puan_det:
-                    otel_avg_expr = """
-                        ROUND(AVG(NULLIF(puan_detay->>'otel_ort','')::numeric)::numeric, 2) AS ort_otel,
-                        ROUND(AVG(NULLIF(puan_detay->>'otobus','')::numeric)::numeric, 2) AS ort_otobus,
-                        ROUND(AVG(NULLIF(puan_detay->>'sofor','')::numeric)::numeric, 2) AS ort_sofor,
-                        ROUND(AVG(NULLIF(puan_detay->>'program','')::numeric)::numeric, 2) AS ort_program,
-                        ROUND(AVG(NULLIF(puan_detay->>'operasyon','')::numeric)::numeric, 2) AS ort_operasyon,
-                        ROUND(AVG(NULLIF(puan_detay->>'transfer','')::numeric)::numeric, 2) AS ort_transfer,
-                        ROUND(AVG(NULLIF(puan_detay->>'ekstra_tur','')::numeric)::numeric, 2) AS ort_ekstra_tur,
+                    sub_avg_expr = """
+                        ROUND(AVG(NULLIF((hs.puan_detay->>'otobus'),   '')::numeric)::numeric, 2) AS ort_otobus,
+                        ROUND(AVG(NULLIF((hs.puan_detay->>'sofor'),    '')::numeric)::numeric, 2) AS ort_sofor,
+                        ROUND(AVG(NULLIF((hs.puan_detay->>'program'),  '')::numeric)::numeric, 2) AS ort_program,
+                        ROUND(AVG(NULLIF((hs.puan_detay->>'operasyon'),'')::numeric)::numeric, 2) AS ort_operasyon,
+                        ROUND(AVG(NULLIF((hs.puan_detay->>'transfer'), '')::numeric)::numeric, 2) AS ort_transfer,
+                        ROUND(AVG(NULLIF((hs.puan_detay->>'ekstra_tur'),'')::numeric)::numeric, 2) AS ort_ekstra_tur,
                     """
                 else:
-                    otel_avg_expr = "NULL AS ort_otel, NULL AS ort_otobus, NULL AS ort_sofor, NULL AS ort_program, NULL AS ort_operasyon, NULL AS ort_transfer, NULL AS ort_ekstra_tur,"
+                    sub_avg_expr = "NULL AS ort_otobus, NULL AS ort_sofor, NULL AS ort_program, NULL AS ort_operasyon, NULL AS ort_transfer, NULL AS ort_ekstra_tur,"
 
                 rows = conn.execute(text(f"""
                     SELECT
-                        COALESCE(NULLIF(hs.porsline_survey_id,''), '') AS porsline_survey_id,
-                        hs.tur_adi_ham,
-                        hs.kalkis_tarihi,
-                        hs.rehber_adi,
-                        COUNT(*)                                                AS yanit_sayisi,
-                        ROUND(AVG(hs.genel_puan)::numeric,   2)                AS genel_puan,
-                        ROUND(AVG(hs.rehber_puani)::numeric, 2)                AS rehber_puani,
-                        {otel_avg_expr}
+                        COALESCE(hs.porsline_survey_id, '')  AS porsline_survey_id,
+                        COALESCE(hs.tur_adi_ham, '')         AS tur_adi_ham,
+                        COALESCE(hs.kalkis_tarihi, '')       AS kalkis_tarihi,
+                        COALESCE(hs.rehber_adi, '')          AS rehber_adi,
+                        COUNT(*)                             AS yanit_sayisi,
+                        ROUND(AVG(hs.genel_puan)::numeric,   2) AS genel_puan,
+                        ROUND(AVG(hs.rehber_puani)::numeric, 2) AS rehber_puani,
+                        {sub_avg_expr}
                         MAX(hs.matched_jt_kodu)
                             FILTER (WHERE hs.matched_jt_kodu IS NOT NULL
-                                      AND hs.matched_jt_kodu != '')            AS matched_jt_kodu,
-                        MAX(hs.match_status)                                   AS match_status,
+                                      AND hs.matched_jt_kodu != '')  AS matched_jt_kodu,
+                        MAX(hs.match_status)                         AS match_status,
                         MAX({bolge_expr})
-                            FILTER (WHERE {bolge_expr} != '')                  AS bolge,
-                        STRING_AGG(DISTINCT NULLIF({otel_adi_expr},''), ', ')  AS otel_adi,
-                        MAX(hs.created_at)::text                               AS created_at
+                            FILTER (WHERE {bolge_expr} != '')        AS bolge,
+                        STRING_AGG(DISTINCT NULLIF({otel_adi_expr},''), ', ') AS otel_adi,
+                        MAX(hs.created_at)::text                     AS created_at
                     FROM historical_surveys hs
                     {safe_where}
                     GROUP BY {group_key}
