@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import time as _time_module
+import threading
 import urllib.request
 import urllib.error
 from datetime import datetime, date
@@ -16,6 +18,64 @@ from typing import Optional
 # ── Config ────────────────────────────────────────────────────────────────────
 _BASE = "https://survey.porsline.com"
 _TOKEN = os.environ.get("PORSLINE_API_KEY", "")
+
+# ── Global rate limiter ───────────────────────────────────────────────────────
+# PORSLINE_MIN_INTERVAL: saniyeler arası minimum bekleme (env var ile ayarlanabilir)
+# Varsayılan 0.8s → max ~75 istek/dakika. 429 gelirse otomatik artar.
+_rl_lock          = threading.Lock()
+_rl_last_call     = 0.0          # son başarılı/başarısız çağrının zamanı
+_rl_interval      = float(os.environ.get("PORSLINE_MIN_INTERVAL", "0.8"))
+_rl_backoff_until = 0.0          # global blok (429 sonrası tüm çağrılar bekler)
+_rl_base_interval = _rl_interval  # sıfırlama için saklanan başlangıç değeri
+
+
+def _rl_throttle() -> None:
+    """Her API çağrısından önce çağrılır. Rate-limit ve backoff'u uygular."""
+    global _rl_last_call, _rl_backoff_until, _rl_interval
+
+    while True:
+        with _rl_lock:
+            now = _time_module.time()
+            # 1) Global backoff (429 sonrası)
+            backoff_wait = _rl_backoff_until - now
+            if backoff_wait > 0:
+                sleep_for = min(backoff_wait, 1.0)  # lock dışında uyu, küçük parçalar
+            else:
+                # 2) Minimum interval
+                interval_wait = (_rl_last_call + _rl_interval) - now
+                if interval_wait <= 0:
+                    _rl_last_call = now  # slot rezerve et
+                    return
+                sleep_for = min(interval_wait, 0.5)
+        _time_module.sleep(sleep_for)
+
+
+def _rl_on_429(retry_after=None) -> None:
+    """429 alındığında global backoff'u ve interval'ı günceller."""
+    global _rl_backoff_until, _rl_interval
+    with _rl_lock:
+        wait = 30.0
+        if retry_after:
+            try:
+                wait = min(float(retry_after), 60.0)
+            except (ValueError, TypeError):
+                pass
+        _rl_backoff_until = _time_module.time() + wait
+        # Interval'ı %50 artır (max 3s)
+        _rl_interval = min(_rl_interval * 1.5, 3.0)
+        import logging as _log
+        _log.getLogger(__name__).warning(
+            "Porsline 429 → %ds global backoff | interval artırıldı: %.1fs",
+            int(wait), _rl_interval
+        )
+
+
+def _rl_on_success() -> None:
+    """Başarılı çağrı sonrası interval'ı yavaşça azaltır (base'e doğru)."""
+    global _rl_interval
+    with _rl_lock:
+        if _rl_interval > _rl_base_interval:
+            _rl_interval = max(_rl_interval * 0.9, _rl_base_interval)
 
 # Ay adları → sayı (Türkçe)
 _MONTHS_TR = {
@@ -57,6 +117,10 @@ def _str_field(val) -> str:
 def _get(path: str, params: dict = None) -> dict:
     if not _TOKEN:
         return {"error": "PORSLINE_API_KEY tanımlı değil"}
+
+    # Rate limiter — her çağrıdan önce gerekirse bekle
+    _rl_throttle()
+
     url = f"{_BASE}{path}"
     if params:
         qs = "&".join(f"{k}={v}" for k, v in params.items())
@@ -73,7 +137,9 @@ def _get(path: str, params: dict = None) -> dict:
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
-            return json.loads(r.read())
+            result = json.loads(r.read())
+            _rl_on_success()  # başarılı → interval yavaşça düşer
+            return result
     except urllib.error.HTTPError as e:
         body = ""
         retry_after = None
@@ -82,6 +148,8 @@ def _get(path: str, params: dict = None) -> dict:
             retry_after = e.headers.get("Retry-After") or e.headers.get("X-RateLimit-Reset")
         except Exception:
             pass
+        if e.code == 429:
+            _rl_on_429(retry_after)  # global backoff + interval artışı
         return {"error": e.code, "detail": body, "retry_after": retry_after}
     except Exception as e:
         return {"error": str(e)}
@@ -90,12 +158,11 @@ def _get(path: str, params: dict = None) -> dict:
 def _get_with_retry(path: str, params: dict = None, max_retries: int = 2,
                     max_wait: float = 15.0) -> dict:
     """
-    _get'i çağırır; sadece 429 (rate-limit) gelirse Retry-After kadar bekler ve tekrar dener.
+    _get'i çağırır; sadece 429 gelirse tekrar dener.
+    429 backoff global rate limiter tarafından zaten uygulandığı için
+    burada ek sleep YOK — sadece retry sayısı kadar tekrar dener.
     Timeout veya diğer hatalar → hemen döner (retry yok).
-    max_wait: 429 beklemesi için tavan (saniye). Bulk sync'te kısa tutulur.
     """
-    import time as _t
-    import logging as _log
     last = {}
     for attempt in range(max_retries):
         last = _get(path, params)
@@ -103,17 +170,8 @@ def _get_with_retry(path: str, params: dict = None, max_retries: int = 2,
             return last
         err = last["error"]
         if err == 429:
-            wait = max_wait
-            ra = last.get("retry_after")
-            if ra:
-                try:
-                    wait = min(float(ra), max_wait)
-                except (ValueError, TypeError):
-                    pass
-            _log.getLogger(__name__).warning(
-                "Porsline 429 — %.0f sn bekleniyor (deneme %d/%d)", wait, attempt+1, max_retries
-            )
-            _t.sleep(wait)
+            # Global rate limiter backoff'u zaten uyguladı (_get içinde)
+            # Sadece bir retry daha dene
             continue
         # 404, timeout, bağlantı hatası → tekrar deneme yok
         break
@@ -217,13 +275,14 @@ def get_responses(survey_id: str, page: int = 1, page_size: int = 100,
         f"/api/v2/surveys/{survey_id}/responses/",
     ]
 
-    _retries  = 1 if fast else 2
-    _max_wait = 15.0 if fast else 30.0
+    # fast=True: bulk sync — 1 deneme/endpoint (global limiter backoff'u zaten uygular)
+    # fast=False: tek survey sync — 2 deneme (biraz daha sabırlı)
+    _retries = 1 if fast else 2
 
     last_error = None
     retry_after = None
     for ep in endpoints:
-        result = _get_with_retry(ep, params, max_retries=_retries, max_wait=_max_wait)
+        result = _get_with_retry(ep, params, max_retries=_retries)
         if "error" in result:
             last_error = result["error"]
             retry_after = result.get("retry_after")
