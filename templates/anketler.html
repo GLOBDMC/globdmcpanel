@@ -1208,7 +1208,7 @@ async function otelAcGuncelle(val) {
         if (!_acListe.length) { drop.classList.add('hidden'); return; }
         drop.innerHTML = _acListe.map((item, i) => {
             const p = item.ort_puan != null ? `<span style="color:#4ade80;font-weight:700;">${item.ort_puan.toFixed(1)}</span>` : '';
-            return `<div class="ac-item" data-idx="${i}" onclick="otelSec('${esc(item.otel)}')">
+            return `<div class="ac-item" data-otel="${esc(item.otel)}" data-idx="${i}" onclick="otelSecClick(this)">
                 <span class="ac-item-name">${esc(item.otel)}</span>
                 <span class="ac-item-meta">${p} <span>${item.adet} anket</span></span>
             </div>`;
@@ -1246,6 +1246,16 @@ function otelSec(otelAdi) {
     _anketSayfa = 0;
     yukleAnketler();
     yukleOtelKart(otelAdi);
+}
+
+// data-otel attribute üzerinden güvenli çağrı (onclick string içinde quote/& sorununu önler)
+function otelSecClick(el) {
+    const otelAdi = el.dataset.otel || el.closest('[data-otel]')?.dataset.otel;
+    if (!otelAdi) return;
+    otelSec(otelAdi);
+    setTimeout(() => {
+        document.getElementById('otelKartWrap')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 150);
 }
 
 function otelTemizle() {
@@ -1547,8 +1557,8 @@ function _turKartIcerigi(item) {
             const ad  = _cleanHotelKey(sehir);
             return `
             <div class="otel-satir">
-                <span class="otel-adi otel-link" title="Otel kartını aç: ${esc(ad)}"
-                      onclick="otelSec('${esc(ad)}');document.getElementById('otelKartWrap')?.scrollIntoView({behavior:'smooth',block:'start'})">
+                <span class="otel-adi otel-link" data-otel="${esc(ad)}"
+                      onclick="otelSecClick(this)" title="Otel kartını aç">
                     🏨 ${esc(ad)}
                 </span>
                 <div class="skor-bar-track" style="flex:1;max-width:120px;">
@@ -1651,8 +1661,7 @@ async function yukleYanitlar(cacheIdx) {
                 const vv = parseFloat(v);
                 const tc = vv >= 4.5 ? '#4ade80' : vv >= 3.5 ? '#facc15' : '#f87171';
                 return `<span class="tur-pill otel-link" style="color:${tc};border-color:rgba(255,255,255,.06);"
-                              title="Otel kartını aç: ${esc(ad)}"
-                              onclick="otelSec('${esc(ad)}');document.getElementById('otelKartWrap')?.scrollIntoView({behavior:'smooth',block:'start'})">
+                              data-otel="${esc(ad)}" onclick="otelSecClick(this)" title="Otel kartını aç">
                             🏨 ${esc(ad)} ${vv.toFixed(0)}
                         </span>`;
             });
