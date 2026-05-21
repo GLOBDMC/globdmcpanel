@@ -105,6 +105,25 @@
     /* Değişimler sekmesi gizleme */
     body:not([data-platform="degisimler"]) #degisimlerPanel { display: none; }
     body[data-platform="degisimler"] #anaListe { display: none; }
+
+    /* Kararlı kapalı sekmesi */
+    body:not([data-platform="kararli"]) #kararliPanel { display: none; }
+    body[data-platform="kararli"] #anaListe,
+    body[data-platform="kararli"] #degisimlerPanel,
+    body[data-platform="kararli"] #filtreAlani { display: none; }
+
+    .kararli-satir td:first-child { color: #f1f5f9; font-weight: 500; }
+    .gun-badge {
+        display: inline-flex; align-items: center; justify-content: center;
+        padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700;
+        background: rgba(239,68,68,0.12); color: #f87171;
+        border: 1px solid rgba(239,68,68,0.2);
+    }
+    .snap-dots { display: flex; gap: 3px; align-items: center; }
+    .snap-dot {
+        width: 8px; height: 8px; border-radius: 50%;
+        background: #ef4444; border: 1px solid rgba(239,68,68,0.4);
+    }
 </style>
 {% endblock %}
 
@@ -158,6 +177,16 @@
             Değişimler
             {% if toplam_degisim > 0 %}
             <span style="background:rgba(239,68,68,0.2);color:#F87171;font-size:10px;padding:1px 6px;border-radius:999px;font-weight:700;">{{ toplam_degisim }}</span>
+            {% else %}
+            <span class="text-slate-600 text-xs">yok</span>
+            {% endif %}
+        </button>
+        <button class="platform-tab{% if kararli_kapali %} active{% endif %}" data-p="kararli" onclick="platformSec('kararli', this)"
+                {% if kararli_kapali %}style="border-color:rgba(239,68,68,0.35);color:#f87171;background:rgba(239,68,68,0.08);"{% endif %}>
+            <span class="tab-dot" style="background:#ef4444;{% if kararli_kapali %}box-shadow:0 0 6px #ef4444;{% endif %}"></span>
+            5× Kapalı
+            {% if kararli_kapali %}
+            <span style="background:rgba(239,68,68,0.2);color:#F87171;font-size:10px;padding:1px 6px;border-radius:999px;font-weight:700;">{{ kararli_kapali|length }}</span>
             {% else %}
             <span class="text-slate-600 text-xs">yok</span>
             {% endif %}
@@ -243,6 +272,63 @@
         </tbody>
     </table>
     </div>
+</div>
+
+<!-- Kararlı Kapalı Paneli -->
+<div id="kararliPanel" style="display:none;">
+    <div class="px-5 py-4 border-b border-white/5">
+        <div class="flex items-center gap-3">
+            <div class="w-2 h-2 rounded-full bg-red-500" style="box-shadow:0 0 8px #ef4444;"></div>
+            <div>
+                <span class="text-sm font-semibold text-white">Son 5 Kontrolde Sürekli Kapalı</span>
+                <span class="ml-2 text-xs text-slate-500">— Jolly vitrinde YOK olarak görünen turlar</span>
+            </div>
+            <span class="ml-auto text-xs text-slate-500">{{ kararli_kapali|length }} tur</span>
+        </div>
+        <p class="text-xs text-slate-600 mt-1.5 ml-5">
+            Bu turlar art arda yapılan son 5 scrape'te vitrinde görünmedi. Satış süreci veya vitrin kapatma kararı gerektiriyor olabilir.
+        </p>
+    </div>
+    {% if kararli_kapali %}
+    <div class="table-scroll-container">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Tur İsmi</th>
+                <th>Gidiş Tarihi</th>
+                <th class="th-center">Kontrol Geçmişi</th>
+                <th class="th-center">Kapalı Süre</th>
+                <th class="th-center" style="color:#334155;">İlk Tespit</th>
+                <th class="th-center" style="color:#334155;">Son Kontrol</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for k in kararli_kapali %}
+            <tr class="kararli-satir satir-yok-jolly">
+                <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;">
+                    <a href="/turlar/{{ k.jt_kodu }}" class="hover:text-accent-blue transition-colors">{{ k.tur_adi }}</a>
+                </td>
+                <td class="text-slate-400 font-mono text-xs">{{ k.kalkis_tarihi }}</td>
+                <td class="td-center">
+                    <div class="snap-dots" style="justify-content:center;" title="{{ k.yok_sayisi }}/{{ k.snap_sayisi }} YOK">
+                        {% for i in range(k.snap_sayisi) %}<div class="snap-dot"></div>{% endfor %}
+                    </div>
+                </td>
+                <td class="td-center">
+                    <span class="gun-badge">{{ k.gun_sayisi }} gün</span>
+                </td>
+                <td class="td-center text-slate-600" style="font-size:11px;">{{ k.ilk_snap }}</td>
+                <td class="td-center text-slate-600" style="font-size:11px;">{{ k.son_snap }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <div class="text-center py-12 text-slate-600 text-sm">
+        Son 5 kontrolde sürekli kapalı tur bulunmuyor.
+    </div>
+    {% endif %}
 </div>
 
 <!-- Ana Liste -->
@@ -336,19 +422,21 @@
         document.querySelectorAll('.platform-tab').forEach(t => t.classList.remove('active'));
         btn.classList.add('active');
 
-        const degPanel  = document.getElementById('degisimlerPanel');
-        const anaListe  = document.getElementById('anaListe');
-        const filtreler = document.getElementById('filtreAlani');
-        if (p === 'degisimler') {
-            if (degPanel)  degPanel.style.display  = '';
-            if (anaListe)  anaListe.style.display   = 'none';
-            if (filtreler) filtreler.style.display  = 'none';
-        } else {
-            if (degPanel)  degPanel.style.display  = 'none';
-            if (anaListe)  anaListe.style.display   = '';
-            if (filtreler) filtreler.style.display  = '';
-            vitrinFiltrele();
-        }
+        const degPanel     = document.getElementById('degisimlerPanel');
+        const kararliPanel = document.getElementById('kararliPanel');
+        const anaListe     = document.getElementById('anaListe');
+        const filtreler    = document.getElementById('filtreAlani');
+
+        const showDeg     = (p === 'degisimler');
+        const showKararli = (p === 'kararli');
+        const showAna     = !showDeg && !showKararli;
+
+        if (degPanel)     degPanel.style.display     = showDeg     ? '' : 'none';
+        if (kararliPanel) kararliPanel.style.display = showKararli ? '' : 'none';
+        if (anaListe)     anaListe.style.display     = showAna     ? '' : 'none';
+        if (filtreler)    filtreler.style.display    = showAna     ? '' : 'none';
+
+        if (showAna) vitrinFiltrele();
     }
 
     const vitrinArama       = document.getElementById('vitrinArama');

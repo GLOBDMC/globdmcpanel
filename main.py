@@ -3323,6 +3323,65 @@ def vitrin_takibi_sayfasi(request: Request):
 
     son_yerler = sum(1 for t in tur_verileri_getir() if t[6] is not None and 1 <= t[6] <= 5)
 
+    # ── Son 5 snapshot'ta sürekli YOK olan turlar ─────────────────────────
+    kararli_kapali = []
+    try:
+        with db_engine.connect() as conn:
+            kkap_rows = conn.execute(text("""
+                WITH ranked AS (
+                    SELECT
+                        tour_code, tour_name, departure_date,
+                        COALESCE(jolly_vitrinde, '') AS jolly_vit,
+                        snapshot_date,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY tour_code
+                            ORDER BY snapshot_date DESC
+                        ) AS rn
+                    FROM tour_snapshots
+                ),
+                son5 AS (
+                    SELECT
+                        tour_code,
+                        MAX(tour_name)      AS tour_name,
+                        MAX(departure_date) AS departure_date,
+                        COUNT(*)            AS snap_sayisi,
+                        COUNT(*) FILTER (WHERE jolly_vit = 'YOK') AS yok_sayisi,
+                        MAX(snapshot_date)  AS son_snap,
+                        MIN(snapshot_date)  AS ilk_snap
+                    FROM ranked
+                    WHERE rn <= 5
+                    GROUP BY tour_code
+                )
+                SELECT
+                    tour_code, tour_name, departure_date,
+                    snap_sayisi, yok_sayisi,
+                    son_snap, ilk_snap,
+                    (CURRENT_DATE - ilk_snap) AS gun_sayisi
+                FROM son5
+                WHERE snap_sayisi >= 5
+                  AND yok_sayisi >= 5
+                ORDER BY departure_date NULLS LAST
+            """)).fetchall()
+
+        today = datetime.today().date()
+        sinir_kkap = today + _td(days=5)
+        for r in kkap_rows:
+            dep = _kalkis_parse(r[2])
+            if dep and dep <= sinir_kkap:
+                continue   # geçmiş / çok yakın turları atla
+            kararli_kapali.append({
+                "jt_kodu":       r[0],
+                "tur_adi":       r[1] or r[0],
+                "kalkis_tarihi": r[2] or "—",
+                "snap_sayisi":   int(r[3]),
+                "yok_sayisi":    int(r[4]),
+                "son_snap":      str(r[5]) if r[5] else "—",
+                "ilk_snap":      str(r[6]) if r[6] else "—",
+                "gun_sayisi":    int(r[7]) if r[7] is not None else 0,
+            })
+    except Exception as _exc:
+        logger.warning("kararli_kapali sorgusu basarisiz: %s", _exc)
+
     return templates.TemplateResponse(
         request=request,
         name="vitrin_takibi.html",
@@ -3334,6 +3393,7 @@ def vitrin_takibi_sayfasi(request: Request):
             "platform_stats": platform_stats,
             "toplam": toplam,
             "kritik_sayi": son_yerler,
+            "kararli_kapali": kararli_kapali,
         }
     )
 
