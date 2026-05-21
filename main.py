@@ -3773,6 +3773,27 @@ def _porsline_sync_worker(task_id: str, force: bool, username: str):
             sid = str(s.get("id") or s.get("uid") or "")
             if not sid:
                 continue
+
+            # Her survey öncesinde uzun rate-limit kontrolü
+            from porsline_service import _rl_get_backoff_remaining
+            rl_wait = _rl_get_backoff_remaining()
+            if rl_wait >= 300:  # 5 dakika üzeri → sync'i ertele
+                mins = int(rl_wait / 60) + 1
+                task["status"]  = "rate_limited"
+                task["rl_wait"] = int(rl_wait)
+                task["result"]  = {
+                    "ok": False,
+                    "reason": "rate_limited",
+                    "wait_seconds": int(rl_wait),
+                    "done_so_far": idx,
+                    "total": len(all_surveys),
+                }
+                _upd(f"⏸ Porsline rate limit — {mins} dakika bekleniyor ({idx}/{len(all_surveys)} tamamlandı)",
+                     done=idx)
+                audit_logger.info("PORSLINE_SYNC_PAUSED | rate_limit=%.0fs | done=%d/%d",
+                                  rl_wait, idx, len(all_surveys))
+                return
+
             _upd(f"[{idx+1}/{len(all_surveys)}] {str(s.get('title') or sid)[:50]}", done=idx)
 
             if not force:

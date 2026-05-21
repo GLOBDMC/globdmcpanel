@@ -29,8 +29,13 @@ _rl_backoff_until = 0.0          # global blok (429 sonrası tüm çağrılar be
 _rl_base_interval = _rl_interval  # sıfırlama için saklanan başlangıç değeri
 
 
+_RL_LONG_LIMIT = 300.0  # bu süreyi (sn) aşan backoff → sync worker durdurulmalı
+
+
 def _rl_throttle() -> None:
-    """Her API çağrısından önce çağrılır. Rate-limit ve backoff'u uygular."""
+    """Her API çağrısından önce çağrılır. Rate-limit ve backoff'u uygular.
+    Uzun backoff (>_RL_LONG_LIMIT) varsa bekleme yapmaz — çağıran taraf
+    _rl_get_backoff_remaining() ile durumu kontrol edip işi durdurmalı."""
     global _rl_last_call, _rl_backoff_until, _rl_interval
 
     while True:
@@ -38,26 +43,30 @@ def _rl_throttle() -> None:
             now = _time_module.time()
             # 1) Global backoff (429 sonrası)
             backoff_wait = _rl_backoff_until - now
+            if backoff_wait >= _RL_LONG_LIMIT:
+                # Çok uzun bekle — throttle'ı atlat, worker sonlandırsın
+                return
             if backoff_wait > 0:
-                sleep_for = min(backoff_wait, 1.0)  # lock dışında uyu, küçük parçalar
+                sleep_for = min(backoff_wait, 1.0)
             else:
                 # 2) Minimum interval
                 interval_wait = (_rl_last_call + _rl_interval) - now
                 if interval_wait <= 0:
-                    _rl_last_call = now  # slot rezerve et
+                    _rl_last_call = now
                     return
                 sleep_for = min(interval_wait, 0.5)
         _time_module.sleep(sleep_for)
 
 
 def _rl_on_429(retry_after=None) -> None:
-    """429 alındığında global backoff'u ve interval'ı günceller."""
+    """429 alındığında global backoff'u ve interval'ı günceller.
+    Retry-After değeri tam olarak uygulanır (üst sınır yok)."""
     global _rl_backoff_until, _rl_interval
     with _rl_lock:
         wait = 30.0
         if retry_after:
             try:
-                wait = min(float(retry_after), 60.0)
+                wait = float(retry_after)  # tam değeri kullan — üst sınır yok
             except (ValueError, TypeError):
                 pass
         _rl_backoff_until = _time_module.time() + wait
@@ -65,9 +74,15 @@ def _rl_on_429(retry_after=None) -> None:
         _rl_interval = min(_rl_interval * 1.5, 3.0)
         import logging as _log
         _log.getLogger(__name__).warning(
-            "Porsline 429 → %ds global backoff | interval artırıldı: %.1fs",
-            int(wait), _rl_interval
+            "Porsline 429 → %.0fs global backoff | interval artırıldı: %.1fs",
+            wait, _rl_interval
         )
+
+
+def _rl_get_backoff_remaining() -> float:
+    """Kalan global backoff süresi (saniye). 0 ise blok yok."""
+    with _rl_lock:
+        return max(0.0, _rl_backoff_until - _time_module.time())
 
 
 def _rl_on_success() -> None:

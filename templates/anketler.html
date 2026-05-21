@@ -884,14 +884,14 @@ function _startPolling(taskId) {
                 pctEl.textContent = pct + "%";
             }
 
-            if (s.status === "done" || s.status === "error") {
+            if (s.status === "done" || s.status === "error" || s.status === "rate_limited") {
                 clearInterval(_activePollInterval);
                 _activePollInterval = null;
                 sessionStorage.removeItem("porsline_task_id");
-                if (barEl) barEl.style.width = "100%";
 
                 if (s.status === "done" && s.result) {
                     const r = s.result;
+                    if (barEl) barEl.style.width = "100%";
                     if (resultEl) {
                         resultEl.classList.remove("hidden");
                         resultEl.innerHTML = "<div class=\"rounded-lg p-3 text-xs bg-green-900/20 border border-green-700/30 text-green-300\">" +
@@ -904,17 +904,72 @@ function _startPolling(taskId) {
                     yukleAnketler();
                     if ((r.toplam_eklenen || 0) > 0)
                         setTimeout(() => { var el = document.getElementById("anketListeSection"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); }, 400);
-                } else {
-                    if (msgEl) msgEl.textContent = "⚠ Hata: " + ((s.progress && s.progress.current) || "bilinmiyor");
-                    if (barEl) barEl.style.background = "#f87171";
-                }
+                    if (btn)      { btn.disabled = false; btn.textContent = btn.dataset.label || "Tümünü Güncelle"; btn.onclick = function(){ syncAllPorsline(); }; }
+                    if (btnForce) btnForce.disabled = false;
+                    setTimeout(() => { if (progress) progress.classList.add("hidden"); }, 4000);
 
-                if (btn)      { btn.disabled = false; btn.textContent = btn.dataset.label || "Tümünü Güncelle"; btn.onclick = function(){ syncAllPorsline(); }; }
-                if (btnForce) btnForce.disabled = false;
-                setTimeout(() => { if (progress) progress.classList.add("hidden"); }, 4000);
+                } else if (s.status === "rate_limited") {
+                    // Porsline rate limit — geri sayım göster
+                    const waitSecs = s.rl_wait || 5400;
+                    const doneSoFar = (s.result && s.result.done_so_far) || 0;
+                    const totalSurveys = (s.result && s.result.total) || 0;
+                    if (barEl) { barEl.style.background = "#f59e0b"; barEl.style.width = (Math.round(doneSoFar / Math.max(totalSurveys,1) * 100)) + "%"; }
+                    _startRateLimitCountdown(waitSecs, doneSoFar, totalSurveys);
+
+                } else {
+                    if (barEl) { barEl.style.width = "100%"; barEl.style.background = "#f87171"; }
+                    if (msgEl) msgEl.textContent = "⚠ Hata: " + ((s.progress && s.progress.current) || "bilinmiyor");
+                    if (btn)      { btn.disabled = false; btn.textContent = btn.dataset.label || "Tümünü Güncelle"; btn.onclick = function(){ syncAllPorsline(); }; }
+                    if (btnForce) btnForce.disabled = false;
+                    setTimeout(() => { if (progress) progress.classList.add("hidden"); }, 6000);
+                }
             }
         } catch(e) { /* poll hatası — devam et */ }
     }, 2000);
+}
+
+let _rlCountdownTimer = null;
+
+/**
+ * Rate-limit geri sayım gösterir. Süre dolunca otomatik devam et.
+ */
+function _startRateLimitCountdown(waitSecs, doneSoFar, totalSurveys) {
+    if (_rlCountdownTimer) clearInterval(_rlCountdownTimer);
+
+    const { progress, resultEl, msgEl, pctEl, btn, btnForce } = _syncUiRefs();
+    let remaining = waitSecs;
+
+    function fmt(s) {
+        const m = Math.floor(s / 60), sec = s % 60;
+        return m > 0 ? m + " dk " + sec + " sn" : sec + " sn";
+    }
+
+    if (resultEl) {
+        resultEl.classList.remove("hidden");
+        resultEl.innerHTML = "<div id=\"rlCountdownCard\" class=\"rounded-lg p-3 text-xs bg-amber-900/20 border border-amber-700/40 text-amber-300\">" +
+            "⏸ Porsline istek sınırı aşıldı · " + doneSoFar + "/" + totalSurveys + " anket tamamlandı<br>" +
+            "<span class=\"text-amber-400 font-medium\">Devam etmek için kalan süre: <span id=\"rlTimer\">" + fmt(remaining) + "</span></span>" +
+            "</div>";
+    }
+    if (msgEl) msgEl.textContent = "⏸ Rate limit — " + fmt(remaining) + " sonra devam edecek";
+    if (btn) { btn.disabled = true; btn.textContent = "⏸ Bekliyor..."; }
+    if (btnForce) btnForce.disabled = true;
+
+    _rlCountdownTimer = setInterval(() => {
+        remaining--;
+        const timerEl = document.getElementById("rlTimer");
+        if (timerEl) timerEl.textContent = fmt(remaining);
+        if (msgEl) msgEl.textContent = "⏸ Rate limit — " + fmt(remaining) + " sonra devam edecek";
+
+        if (remaining <= 0) {
+            clearInterval(_rlCountdownTimer);
+            _rlCountdownTimer = null;
+            if (msgEl) msgEl.textContent = "↺ Devam ediliyor…";
+            if (resultEl) resultEl.classList.add("hidden");
+            // Kaldığı yerden devam
+            _runBackendSyncAll(false);
+        }
+    }, 1000);
 }
 
 /**
