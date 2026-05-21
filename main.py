@@ -3747,16 +3747,23 @@ def _porsline_sync_worker(task_id: str, force: bool, username: str):
         all_surveys = chunk["surveys"]
         _upd(f"{len(all_surveys)} anket", total=len(all_surveys))
 
-        db_counts: dict = {}
+        db_counts: dict = {}     # sid → response_count
+        db_synced: dict = {}     # sid → last_synced_at (datetime)
         if not force:
             try:
                 with db_engine.connect() as conn:
                     rows_db = conn.execute(text(
-                        "SELECT porsline_survey_id, response_count FROM porsline_surveys"
+                        "SELECT porsline_survey_id, response_count, last_synced_at FROM porsline_surveys"
                     )).fetchall()
-                    db_counts = {str(r[0]): (r[1] or 0) for r in rows_db}
+                    for r in rows_db:
+                        db_counts[str(r[0])] = r[1] or 0
+                        if r[2]:
+                            db_synced[str(r[0])] = r[2]
             except Exception:
                 pass
+
+        from datetime import datetime as _dt, timezone as _tz
+        _now = _dt.now(_tz.utc)
 
         results = []
         atlandı = 0
@@ -3771,10 +3778,24 @@ def _porsline_sync_worker(task_id: str, force: bool, username: str):
                 pcount = int(s.get("responses_count") or s.get("respondents_count") or
                              s.get("response_count") or s.get("total_responses") or -1)
                 stored = db_counts.get(sid, -1)
+
+                # Porsline yanıt sayısı bildiriyorsa tam karşılaştır
                 if pcount != -1 and stored != -1 and pcount == stored:
                     atlandı += 1
                     results.append({"survey_id": sid, "ok": True, "atlandı": True})
                     continue
+
+                # Porsline sayı bildirmiyorsa (pcount==-1) ama son 8 saatte sync ettik → atla
+                if pcount == -1 and sid in db_synced:
+                    synced_at = db_synced[sid]
+                    if hasattr(synced_at, "tzinfo") and synced_at.tzinfo is None:
+                        synced_at = synced_at.replace(tzinfo=_tz.utc)
+                    age_hours = (_now - synced_at).total_seconds() / 3600
+                    if age_hours < 8:
+                        atlandı += 1
+                        results.append({"survey_id": sid, "ok": True, "atlandı": True,
+                                        "neden": f"son sync {age_hours:.1f}s önce"})
+                        continue
 
             try:
                 detail = get_survey_detail(sid)

@@ -72,7 +72,7 @@ def _get(path: str, params: dict = None) -> dict:
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=20) as r:
+        with urllib.request.urlopen(req, timeout=10) as r:
             return json.loads(r.read())
     except urllib.error.HTTPError as e:
         body = ""
@@ -87,10 +87,10 @@ def _get(path: str, params: dict = None) -> dict:
         return {"error": str(e)}
 
 
-def _get_with_retry(path: str, params: dict = None, max_retries: int = 3) -> dict:
+def _get_with_retry(path: str, params: dict = None, max_retries: int = 2) -> dict:
     """
-    _get'i çağırır; 429 (rate-limit) gelirse Retry-After kadar bekler ve tekrar dener.
-    Normal isteklerde bekleme yok — sadece 429 sonrası Retry-After süresi beklenir.
+    _get'i çağırır; sadece 429 (rate-limit) gelirse Retry-After kadar bekler ve tekrar dener.
+    Timeout veya diğer hatalar → hemen döner (retry yok).
     """
     import time as _t
     last = {}
@@ -98,22 +98,23 @@ def _get_with_retry(path: str, params: dict = None, max_retries: int = 3) -> dic
         last = _get(path, params)
         if "error" not in last:
             return last
-        if last["error"] == 429:
+        err = last["error"]
+        if err == 429:
             wait = 60.0
             ra = last.get("retry_after")
             if ra:
                 try:
-                    wait = min(float(ra), 300)  # en fazla 5 dk bekle
+                    wait = min(float(ra), 180)  # en fazla 3 dk
                 except (ValueError, TypeError):
                     pass
             import logging as _log
             _log.getLogger(__name__).warning(
-                "Porsline 429 rate-limit — %.0f sn bekleniyor (deneme %d/%d)",
-                wait, attempt + 1, max_retries,
+                "Porsline 429 — %.0f sn bekleniyor (deneme %d/%d)", wait, attempt+1, max_retries
             )
             _t.sleep(wait)
             continue
-        break  # 429 dışında hata → tekrar deneme yapma
+        # 404, timeout, bağlantı hatası → tekrar deneme yok
+        break
     return last
 
 
