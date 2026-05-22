@@ -349,7 +349,7 @@ def create_tur_kart_router(db_engine, templates) -> APIRouter:
         try:
             with db_engine.connect() as conn:
                 tur_row = conn.execute(text(
-                    "SELECT tur_adi, kalkis_tarihi, havayolu FROM turlar WHERE jt_kodu = :jt"
+                    "SELECT tur_adi, kalkis_tarihi, bitis_tarihi, havayolu FROM turlar WHERE jt_kodu = :jt"
                 ), {"jt": jt_kodu}).fetchone()
                 detay_row = conn.execute(text(
                     "SELECT pdf_data, program_json, ucus_json FROM tur_detaylar WHERE jt_kodu = :jt"
@@ -371,7 +371,8 @@ def create_tur_kart_router(db_engine, templates) -> APIRouter:
 
         tur_adi       = tur_row[0] if tur_row else jt_kodu
         kalkis_tarihi = tur_row[1] if tur_row else ""
-        havayolu      = tur_row[2] if tur_row else ""
+        bitis_tarihi  = tur_row[2] if tur_row else ""
+        havayolu      = tur_row[3] if tur_row else ""
 
         # ── Gordios ham PDF'den ek bölümleri parse et ───────────────────────
         dahil_hizmetler: list = []
@@ -390,7 +391,7 @@ def create_tur_kart_router(db_engine, templates) -> APIRouter:
 
         try:
             pdf_bytes = _build_program_pdf(
-                jt_kodu, tur_adi, kalkis_tarihi, havayolu,
+                jt_kodu, tur_adi, kalkis_tarihi, bitis_tarihi, havayolu,
                 program_gunler, ucus_listesi,
                 dahil_hizmetler, haric_hizmetler, notlar,
             )
@@ -712,6 +713,7 @@ def _build_program_pdf(
     jt_kodu: str,
     tur_adi: str,
     kalkis_tarihi: str,
+    bitis_tarihi: str,
     havayolu: str,
     program_gunler: list,
     ucus_listesi: list,
@@ -834,6 +836,7 @@ def _build_program_pdf(
     story.append(Paragraph(tur_adi or jt_kodu, s_baslik))
     meta_parts = [f"Kod: {jt_kodu}"]
     if kalkis_tarihi: meta_parts.append(f"Kalkış: {kalkis_tarihi}")
+    if bitis_tarihi:  meta_parts.append(f"Dönüş: {bitis_tarihi}")
     if havayolu:      meta_parts.append(f"Havayolu: {havayolu}")
     story.append(Paragraph("  ·  ".join(meta_parts), s_altyazi))
     story.append(HRFlowable(width=W, thickness=1, color=colors.HexColor("#e2e8f0"),
