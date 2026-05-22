@@ -405,6 +405,53 @@ def create_tur_kart_router(db_engine, templates) -> APIRouter:
             headers={"Content-Disposition": f'attachment; filename="tur-programi-{safe_ad}.pdf"'},
         )
 
+    # ── API: PDF Debug ────────────────────────────────────────────────────────
+
+    @router.get("/api/tur/{jt_kodu}/export-pdf-debug")
+    def api_tur_export_pdf_debug(request: Request, jt_kodu: str):
+        """pdf_data varlığını ve _parse_pdf_extra sonucunu döndürür (geçici debug)."""
+        from main import oturum_kullanicisi
+        kullanici = oturum_kullanicisi(request)
+        if not kullanici or kullanici["rol"] != "admin":
+            return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+        try:
+            with db_engine.connect() as conn:
+                row = conn.execute(text(
+                    "SELECT pdf_data, sync_status, gordios_sync_at FROM tur_detaylar WHERE jt_kodu = :jt"
+                ), {"jt": jt_kodu}).fetchone()
+        except Exception as e:
+            return JSONResponse({"hata": str(e)}, status_code=500)
+
+        if not row:
+            return JSONResponse({"hata": "tur_detaylar kaydı yok"})
+
+        raw = bytes(row[0]) if row[0] is not None else None
+        info = {
+            "sync_status":     row[1],
+            "gordios_sync_at": row[2].isoformat() if row[2] else None,
+            "pdf_data_null":   raw is None,
+            "pdf_data_bytes":  len(raw) if raw else 0,
+            "pdf_data_magic":  raw[:4].hex() if raw and len(raw) >= 4 else None,
+            "is_valid_pdf":    bool(raw and raw[:4] == b"%PDF"),
+        }
+
+        if raw and raw[:4] == b"%PDF":
+            try:
+                from gordios_scraper import _parse_pdf_extra
+                extra = _parse_pdf_extra(raw)
+                info["dahil_hizmetler"] = extra.get("dahil_hizmetler", [])
+                info["haric_hizmetler"] = extra.get("haric_hizmetler", [])
+                info["notlar_len"]      = len(extra.get("notlar", ""))
+                info["parse_ok"]        = True
+            except Exception as e:
+                info["parse_ok"]    = False
+                info["parse_hata"]  = str(e)
+        else:
+            info["parse_ok"] = False
+            info["parse_hata"] = "pdf_data yok veya geçersiz"
+
+        return JSONResponse(info)
+
     # ── API: Snapshot Geçmişi ─────────────────────────────────────────────────
 
     @router.get("/api/tur/{jt_kodu}/snapshots")
