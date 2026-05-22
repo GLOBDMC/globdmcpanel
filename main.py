@@ -445,6 +445,50 @@ def tablo_olustur():
                 created_at          TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
             )
         """))
+        # ── Historical surveys tablosu — CREATE önce gelmeli, ALTER TABLE'lar sonra ──
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS historical_surveys (
+                id               SERIAL PRIMARY KEY,
+                -- Ham anket verisi (import'tan gelen)
+                survey_date      VARCHAR(50)   DEFAULT '',
+                musteri_adi      VARCHAR(300)  DEFAULT '',
+                rehber_adi       VARCHAR(300)  DEFAULT '',
+                destinasyon      VARCHAR(300)  DEFAULT '',
+                kalkis_tarihi    VARCHAR(50)   DEFAULT '',
+                acente_adi       VARCHAR(300)  DEFAULT '',
+                genel_puan       NUMERIC(4,2),
+                rehber_puani     NUMERIC(4,2),
+                yorum            TEXT          DEFAULT '',
+                tur_adi_ham      VARCHAR(500)  DEFAULT '',
+                -- Eşleştirme sonuçları
+                matched_tur_id   INTEGER       REFERENCES turlar(id) ON DELETE SET NULL,
+                matched_jt_kodu  VARCHAR(50)   DEFAULT '',
+                match_confidence INTEGER       DEFAULT 0,
+                match_method     VARCHAR(30)   DEFAULT 'pending',
+                match_status     VARCHAR(30)   DEFAULT 'pending',
+                -- Manuel review
+                review_notu      TEXT          DEFAULT '',
+                -- Import metadata
+                import_batch     VARCHAR(200)  DEFAULT '',
+                kaynak_satir     INTEGER       DEFAULT 0,
+                created_at       TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+                updated_at       TIMESTAMP     DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        # Index'ler
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_hs_match_status
+                ON historical_surveys(match_status)
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_hs_import_batch
+                ON historical_surveys(import_batch)
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_hs_matched_jt
+                ON historical_surveys(matched_jt_kodu)
+        """))
+
         # Bölge sütunları
         conn.execute(text(
             "ALTER TABLE historical_surveys ADD COLUMN IF NOT EXISTS "
@@ -486,56 +530,11 @@ def tablo_olustur():
               AND puan_detay->'oteller' IS NOT NULL
               AND puan_detay->'oteller' != '{}'::jsonb
         """))
-        # Eski full-unique constraint'i düşür (varsa) — partial index ile değiştiriliyor
-        # NOT: CREATE INDEX ayrı transaction'da, aşağıda
+        # Eski full-unique constraint'i düşür (varsa)
         conn.execute(text(
             "ALTER TABLE historical_surveys "
             "DROP CONSTRAINT IF EXISTS hs_porsline_response_uniq"
         ))
-
-        # ── Historical surveys tablosu ──────────────────────────────────
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS historical_surveys (
-                id               SERIAL PRIMARY KEY,
-                -- Ham anket verisi (import'tan gelen)
-                survey_date      VARCHAR(50)   DEFAULT '',
-                musteri_adi      VARCHAR(300)  DEFAULT '',
-                rehber_adi       VARCHAR(300)  DEFAULT '',
-                destinasyon      VARCHAR(300)  DEFAULT '',
-                kalkis_tarihi    VARCHAR(50)   DEFAULT '',
-                acente_adi       VARCHAR(300)  DEFAULT '',
-                genel_puan       NUMERIC(4,2),
-                rehber_puani     NUMERIC(4,2),
-                yorum            TEXT          DEFAULT '',
-                tur_adi_ham      VARCHAR(500)  DEFAULT '',
-                -- Eşleştirme sonuçları
-                matched_tur_id   INTEGER       REFERENCES turlar(id) ON DELETE SET NULL,
-                matched_jt_kodu  VARCHAR(50)   DEFAULT '',
-                match_confidence INTEGER       DEFAULT 0,
-                match_method     VARCHAR(30)   DEFAULT 'pending',
-                match_status     VARCHAR(30)   DEFAULT 'pending',
-                -- Manuel review
-                review_notu      TEXT          DEFAULT '',
-                -- Import metadata
-                import_batch     VARCHAR(200)  DEFAULT '',
-                kaynak_satir     INTEGER       DEFAULT 0,
-                created_at       TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
-                updated_at       TIMESTAMP     DEFAULT CURRENT_TIMESTAMP
-            )
-        """))
-        # Index'ler (sorgular için)
-        conn.execute(text("""
-            CREATE INDEX IF NOT EXISTS idx_hs_match_status
-                ON historical_surveys(match_status)
-        """))
-        conn.execute(text("""
-            CREATE INDEX IF NOT EXISTS idx_hs_import_batch
-                ON historical_surveys(import_batch)
-        """))
-        conn.execute(text("""
-            CREATE INDEX IF NOT EXISTS idx_hs_matched_jt
-                ON historical_surveys(matched_jt_kodu)
-        """))
 
         # Admin hesabı — ilk kurulumda varsayılan şifre: Glob2025!
         default_hash = pwd.hash("Glob2025!")
