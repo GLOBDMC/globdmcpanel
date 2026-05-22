@@ -2287,6 +2287,100 @@ def _porsline_stats_worker(task_id: str, force: bool, username: str):
         logger.error("STATS_SYNC kritik hata: %s", e, exc_info=True)
 
 
+@app.post("/api/porsline/compute-stats")
+def porsline_compute_stats(request: Request):
+    """
+    Porsline API'ye HİÇ GITMEDEN mevcut historical_surveys verisinden
+    porsline_tour_stats tablosunu hesaplar ve doldurur.
+    Tek seferlik çalıştır, rate limit yok.
+    """
+    kullanici = oturum_kullanicisi(request)
+    if not kullanici or kullanici["rol"] != "admin":
+        return JSONResponse({"hata": "Yetkisiz"}, status_code=403)
+
+    try:
+        with db_engine.connect() as conn:
+            # Porsline_surveys'den survey meta + historical_surveys'den ortalamalar
+            sonuc = conn.execute(text("""
+                INSERT INTO porsline_tour_stats (
+                    porsline_survey_id, survey_title, tur_adi, kalkis_tarihi,
+                    rehber_adi, havayolu,
+                    matched_tur_id, matched_jt_kodu, match_status, match_confidence,
+                    response_count,
+                    avg_genel_puan, avg_rehber_puani,
+                    avg_otobus, avg_sofor, avg_program, avg_operasyon,
+                    avg_transfer, avg_ekstra_tur, avg_tavsiye, avg_genel_memnuniyet,
+                    avg_oteller, avg_detay,
+                    last_synced_at
+                )
+                SELECT
+                    ps.porsline_survey_id,
+                    ps.survey_title,
+                    ps.parsed_tur_adi,
+                    ps.parsed_kalkis,
+                    ''  AS rehber_adi,
+                    COALESCE(ps.parsed_havayolu, '') AS havayolu,
+                    ps.matched_tur_id,
+                    COALESCE(ps.matched_jt_kodu, ''),
+                    COALESCE(ps.match_status, 'pending'),
+                    COALESCE(ps.match_confidence, 0),
+                    COUNT(hs.id)::INTEGER,
+                    ROUND(AVG(hs.genel_puan)::NUMERIC, 2),
+                    ROUND(AVG(hs.rehber_puani)::NUMERIC, 2),
+                    ROUND(AVG((hs.puan_detay->>'otobus')::NUMERIC)::NUMERIC, 2),
+                    ROUND(AVG((hs.puan_detay->>'sofor')::NUMERIC)::NUMERIC, 2),
+                    ROUND(AVG((hs.puan_detay->>'program')::NUMERIC)::NUMERIC, 2),
+                    ROUND(AVG((hs.puan_detay->>'operasyon')::NUMERIC)::NUMERIC, 2),
+                    ROUND(AVG((hs.puan_detay->>'transfer')::NUMERIC)::NUMERIC, 2),
+                    ROUND(AVG((hs.puan_detay->>'ekstra_tur')::NUMERIC)::NUMERIC, 2),
+                    ROUND(AVG((hs.puan_detay->>'tavsiye')::NUMERIC)::NUMERIC, 2),
+                    ROUND(AVG((hs.puan_detay->>'genel_memnuniyet')::NUMERIC)::NUMERIC, 2),
+                    '{}'::jsonb,
+                    '{}'::jsonb,
+                    NOW()
+                FROM porsline_surveys ps
+                LEFT JOIN historical_surveys hs
+                    ON hs.porsline_survey_id = ps.porsline_survey_id
+                GROUP BY
+                    ps.porsline_survey_id, ps.survey_title, ps.parsed_tur_adi,
+                    ps.parsed_kalkis, ps.parsed_havayolu,
+                    ps.matched_tur_id, ps.matched_jt_kodu,
+                    ps.match_status, ps.match_confidence
+                ON CONFLICT (porsline_survey_id) DO UPDATE SET
+                    survey_title        = EXCLUDED.survey_title,
+                    tur_adi             = EXCLUDED.tur_adi,
+                    kalkis_tarihi       = EXCLUDED.kalkis_tarihi,
+                    matched_tur_id      = EXCLUDED.matched_tur_id,
+                    matched_jt_kodu     = EXCLUDED.matched_jt_kodu,
+                    match_status        = EXCLUDED.match_status,
+                    match_confidence    = EXCLUDED.match_confidence,
+                    response_count      = EXCLUDED.response_count,
+                    avg_genel_puan      = EXCLUDED.avg_genel_puan,
+                    avg_rehber_puani    = EXCLUDED.avg_rehber_puani,
+                    avg_otobus          = EXCLUDED.avg_otobus,
+                    avg_sofor           = EXCLUDED.avg_sofor,
+                    avg_program         = EXCLUDED.avg_program,
+                    avg_operasyon       = EXCLUDED.avg_operasyon,
+                    avg_transfer        = EXCLUDED.avg_transfer,
+                    avg_ekstra_tur      = EXCLUDED.avg_ekstra_tur,
+                    avg_tavsiye         = EXCLUDED.avg_tavsiye,
+                    avg_genel_memnuniyet = EXCLUDED.avg_genel_memnuniyet,
+                    last_synced_at      = NOW()
+            """))
+            conn.commit()
+            eklenen = sonuc.rowcount
+
+        return JSONResponse({
+            "ok": True,
+            "islenen": eklenen,
+            "mesaj": f"{eklenen} tur istatistiği historical_surveys'den hesaplandı (API kullanılmadı)"
+        })
+
+    except Exception as e:
+        logger.error("compute-stats hata: %s", e, exc_info=True)
+        return JSONResponse({"ok": False, "hata": str(e)}, status_code=500)
+
+
 @app.get("/api/porsline/tour-stats")
 def get_porsline_tour_stats(request: Request, jt_kodu: str = None,
                              match_status: str = None, limit: int = 200):
