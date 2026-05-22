@@ -437,7 +437,7 @@ def create_tur_kart_router(db_engine, templates) -> APIRouter:
 
         if raw and raw[:4] == b"%PDF":
             try:
-                import pdfplumber, io as _io
+                import pdfplumber, io as _io, re as _re
                 with pdfplumber.open(_io.BytesIO(raw)) as _pdf:
                     if _pdf.pages:
                         _pg = _pdf.pages[0]
@@ -445,9 +445,9 @@ def create_tur_kart_router(db_engine, templates) -> APIRouter:
                         # col_x tespiti (aynı mantık)
                         _col_x = None
                         for _i, _w in enumerate(_words):
-                            if re.search(r'olmayan', _w['text'], re.I):
+                            if _re.search(r'olmayan', _w['text'], _re.I):
                                 for _back in range(1, min(6, _i + 1)):
-                                    if re.search(r'dah[iı]l', _words[_i - _back]['text'], re.I):
+                                    if _re.search(r'dah[iı]l', _words[_i - _back]['text'], _re.I):
                                         _col_x = float(_words[_i - _back]['x0'])
                                         break
                                 if _col_x is not None:
