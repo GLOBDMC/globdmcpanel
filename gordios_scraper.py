@@ -507,6 +507,95 @@ def _extract_program_from_text(text: str) -> dict:
     return out
 
 
+# ── Ek bölüm parse (export-pdf için) ─────────────────────────────────────────
+
+def _parse_pdf_extra(pdf_bytes: bytes) -> dict:
+    """
+    Gordios PDF'den dahil/hariç hizmetler ve notları çıkarır.
+    Konaklama + yolcu listesi atlanır.
+
+    Döner:
+        dahil_hizmetler : list[str]
+        haric_hizmetler : list[str]
+        notlar          : str
+    """
+    out: dict = {"dahil_hizmetler": [], "haric_hizmetler": [], "notlar": ""}
+    try:
+        import pdfplumber
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            total = len(pdf.pages)
+            # Sayfa 1 → dahil/hariç hizmetler
+            if total >= 1:
+                t1 = pdf.pages[0].extract_text() or ""
+                out["dahil_hizmetler"], out["haric_hizmetler"] = _extract_services(t1)
+                logger.info("[gordios-extra] dahil: %d, hariç: %d",
+                            len(out["dahil_hizmetler"]), len(out["haric_hizmetler"]))
+            # Sayfa 2 → notlar / katılım koşulları
+            if total >= 2:
+                t2 = pdf.pages[1].extract_text() or ""
+                out["notlar"] = _extract_notes(t2)
+                logger.info("[gordios-extra] notlar: %d karakter", len(out["notlar"]))
+    except Exception as e:
+        logger.warning("[gordios] _parse_pdf_extra hatası: %s", e)
+    return out
+
+
+def _extract_services(text: str) -> tuple:
+    """
+    Sayfa 1 metninden dahil olan / olmayan hizmet listelerini çıkarır.
+    Döner: (dahil_list, haric_list)
+    """
+    dahil: list = []
+    haric: list = []
+
+    DAHIL_OLMAYAN = re.compile(r'dah[iı]l\s+olmayan', re.I)
+    DAHIL_OLAN    = re.compile(r'dah[iı]l\s+olan|dah[iı]l\s+h[iı]zmet', re.I)
+    SECTION_END   = re.compile(
+        r'kat[iı]l[iı]m|ko[sş]ul|notlar?|yolcu|u[cç]u[sş]|kalkı[sş]|konaklama', re.I
+    )
+    BULLET_STRIP  = re.compile(r'^[•·▪▸▶\-\*✓✗–—►]+\s*')
+
+    mode = None  # 'dahil' | 'haric' | None
+    for line in text.splitlines():
+        ln = line.strip()
+        if not ln:
+            continue
+        if DAHIL_OLMAYAN.search(ln):
+            mode = 'haric'
+            continue
+        if DAHIL_OLAN.search(ln):
+            mode = 'dahil'
+            continue
+        if mode and SECTION_END.search(ln):
+            mode = None
+            continue
+        if mode:
+            item = BULLET_STRIP.sub('', ln).strip()
+            if item and len(item) > 2:
+                (dahil if mode == 'dahil' else haric).append(item)
+
+    return dahil, haric
+
+
+def _extract_notes(text: str) -> str:
+    """Sayfa 2'den notlar / katılım koşullarını düz metin olarak döndürür."""
+    SKIP = re.compile(
+        r'glob\s*dmc|globdmc\.com|www\.|'
+        r'kat[iı]l[iı]m\s+ko[sş]ul|önemli\s+not|[oö]nemli\s+bil|'
+        r'tel[efo]*n\s*:|\b\+?\d[\d\s\-\(\)]{7,}\b',
+        re.I,
+    )
+    lines = []
+    for raw in text.splitlines():
+        ln = raw.strip()
+        if not ln or SKIP.search(ln):
+            continue
+        lines.append(ln)
+    out = "\n".join(lines).strip()
+    out = re.sub(r'\n{3,}', '\n\n', out)
+    return out
+
+
 # ── Diğer yardımcılar ────────────────────────────────────────────────────────
 
 def _extract_plan_id(page) -> Optional[int]:

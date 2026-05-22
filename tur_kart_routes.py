@@ -362,16 +362,7 @@ def create_tur_kart_router(db_engine, templates) -> APIRouter:
 
         safe_ad = "".join(c if c.isalnum() or c in "-_" else "_" for c in jt_kodu)
 
-        # ── Önce: Gordios'tan kaydedilen orijinal PDF ────────────────────────
-        raw_pdf = bytes(detay_row[0]) if detay_row[0] is not None else None
-        if raw_pdf and raw_pdf[:4] == b"%PDF":
-            return Response(
-                content=raw_pdf,
-                media_type="application/pdf",
-                headers={"Content-Disposition": f'attachment; filename="tur-programi-{safe_ad}.pdf"'},
-            )
-
-        # ── Fallback: reportlab ile DB verisinden üret ───────────────────────
+        raw_pdf        = bytes(detay_row[0]) if detay_row[0] is not None else None
         program_gunler = _json.loads(detay_row[1] or "[]")
         ucus_listesi   = _json.loads(detay_row[2] or "[]")
 
@@ -382,10 +373,26 @@ def create_tur_kart_router(db_engine, templates) -> APIRouter:
         kalkis_tarihi = tur_row[1] if tur_row else ""
         havayolu      = tur_row[2] if tur_row else ""
 
+        # ── Gordios ham PDF'den ek bölümleri parse et ───────────────────────
+        dahil_hizmetler: list = []
+        haric_hizmetler: list = []
+        notlar: str = ""
+
+        if raw_pdf and raw_pdf[:4] == b"%PDF":
+            try:
+                from gordios_scraper import _parse_pdf_extra
+                extra = _parse_pdf_extra(raw_pdf)
+                dahil_hizmetler = extra.get("dahil_hizmetler", [])
+                haric_hizmetler = extra.get("haric_hizmetler", [])
+                notlar          = extra.get("notlar", "")
+            except Exception as _e:
+                logger.warning("export-pdf extra parse [%s]: %s", jt_kodu, _e)
+
         try:
             pdf_bytes = _build_program_pdf(
                 jt_kodu, tur_adi, kalkis_tarihi, havayolu,
                 program_gunler, ucus_listesi,
+                dahil_hizmetler, haric_hizmetler, notlar,
             )
         except Exception as e:
             logger.error("export-pdf [%s]: %s", jt_kodu, e, exc_info=True)
@@ -701,11 +708,22 @@ def _get_unicode_fonts() -> tuple[str, str]:
     return "Helvetica", "Helvetica-Bold"
 
 
-def _build_program_pdf(jt_kodu: str, tur_adi: str, kalkis_tarihi: str,
-                       havayolu: str, program_gunler: list, ucus_listesi: list) -> bytes:
+def _build_program_pdf(
+    jt_kodu: str,
+    tur_adi: str,
+    kalkis_tarihi: str,
+    havayolu: str,
+    program_gunler: list,
+    ucus_listesi: list,
+    dahil_hizmetler: list = None,
+    haric_hizmetler: list = None,
+    notlar: str = "",
+) -> bytes:
     """
-    DB'deki program ve uçuş verisinden reportlab ile PDF üretir.
+    DB'deki program + uçuş + hizmet/notlar verisinden reportlab ile PDF üretir.
     Gordios auth gerektirmez — panele erişimi olan herkes indirebilir.
+    Dahil/hariç hizmetler ve notlar Gordios ham PDF'inden parse edilir;
+    yolcu listesi ve konaklama dahil edilmez.
     """
     from io import BytesIO
     from reportlab.lib.pagesizes import A4
@@ -786,6 +804,29 @@ def _build_program_pdf(jt_kodu: str, tur_adi: str, kalkis_tarihi: str,
         textColor=colors.HexColor("#94a3b8"),
         alignment=TA_CENTER,
     )
+    s_hizmet_baslik = ParagraphStyle(
+        "hizmet_baslik",
+        fontName=FB, fontSize=9,
+        textColor=colors.HexColor("#ffffff"),
+        spaceAfter=4,
+    )
+    s_hizmet = ParagraphStyle(
+        "hizmet",
+        fontName=F, fontSize=8,
+        textColor=colors.HexColor("#1e293b"),
+        leading=12, spaceAfter=2,
+    )
+    s_not = ParagraphStyle(
+        "not",
+        fontName=F, fontSize=8,
+        textColor=colors.HexColor("#374151"),
+        leading=12, spaceAfter=3,
+    )
+
+    # Eksik parametreleri normalize et
+    dahil_hizmetler = dahil_hizmetler or []
+    haric_hizmetler = haric_hizmetler or []
+    notlar          = notlar or ""
 
     story = []
 
@@ -797,6 +838,46 @@ def _build_program_pdf(jt_kodu: str, tur_adi: str, kalkis_tarihi: str,
     story.append(Paragraph("  ·  ".join(meta_parts), s_altyazi))
     story.append(HRFlowable(width=W, thickness=1, color=colors.HexColor("#e2e8f0"),
                              spaceAfter=10))
+
+    # ── Dahil / Hariç Hizmetler ───────────────────────────────────────────────
+    if dahil_hizmetler or haric_hizmetler:
+        # İki sütun yan yana tablo
+        def _hizmet_sutun(baslik_text, items, bg):
+            """Tek sütun için iç içe tablo döndürür."""
+            col_items = [
+                [Paragraph(baslik_text, s_hizmet_baslik)],
+            ]
+            for item in items:
+                col_items.append([Paragraph(f"• {item}", s_hizmet)])
+            inner = Table(col_items, colWidths=[W * 0.47])
+            inner.setStyle(TableStyle([
+                ("BACKGROUND",    (0, 0), (-1, 0), colors.HexColor(bg)),
+                ("LEFTPADDING",   (0, 0), (-1, -1), 7),
+                ("RIGHTPADDING",  (0, 0), (-1, -1), 7),
+                ("TOPPADDING",    (0, 0), (-1, 0),  5),
+                ("BOTTOMPADDING", (0, 0), (-1, 0),  5),
+                ("TOPPADDING",    (0, 1), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 1), (-1, -1), 2),
+                ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+            ]))
+            return inner
+
+        sol = _hizmet_sutun("DAHİL OLAN HİZMETLER",    dahil_hizmetler, "#166534")
+        sag = _hizmet_sutun("DAHİL OLMAYAN HİZMETLER", haric_hizmetler, "#991b1b")
+
+        hizmet_tbl = Table(
+            [[sol, Spacer(W * 0.06, 1), sag]],
+            colWidths=[W * 0.47, W * 0.06, W * 0.47],
+        )
+        hizmet_tbl.setStyle(TableStyle([
+            ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
+            ("TOPPADDING",    (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        story.append(hizmet_tbl)
+        story.append(Spacer(1, 0.3 * cm))
 
     # ── Uçuş Bilgileri ───────────────────────────────────────────────────────
     if ucus_listesi:
@@ -879,6 +960,20 @@ def _build_program_pdf(jt_kodu: str, tur_adi: str, kalkis_tarihi: str,
                                     color=colors.HexColor("#e2e8f0"), spaceAfter=6))
 
             story.append(KeepTogether(block))
+
+    # ── Önemli Notlar / Katılım Koşulları ────────────────────────────────────
+    if notlar and notlar.strip():
+        story.append(Paragraph("ÖNEMLİ NOTLAR", s_bolum))
+        story.append(HRFlowable(width=W, thickness=0.4, color=colors.HexColor("#fbbf24"),
+                                 spaceAfter=6))
+        for para in notlar.split("\n\n"):
+            para = para.strip()
+            if not para:
+                continue
+            # Çok satırlı paragrafı <br/> ile birleştir
+            para_html = para.replace("\n", "<br/>")
+            story.append(Paragraph(para_html, s_not))
+        story.append(Spacer(1, 0.2 * cm))
 
     # ── Footer ────────────────────────────────────────────────────────────────
     from datetime import datetime as _dt
