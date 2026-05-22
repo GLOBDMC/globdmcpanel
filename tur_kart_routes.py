@@ -640,6 +640,67 @@ def _run_gordios_sync(jt_kodu: str) -> dict:
 
 # ── PDF Üretimi ──────────────────────────────────────────────────────────────
 
+# Modül seviyesinde bir kez hesaplanır
+_PDF_FONT_REGULAR: str | None = None
+_PDF_FONT_BOLD:    str | None = None
+
+
+def _get_unicode_fonts() -> tuple[str, str]:
+    """
+    Türkçe karakter destekli (ş ı ğ ü ö ç) TTF fontunu ReportLab'e kaydeder.
+    Döner: (regular_font_name, bold_font_name)
+
+    Öncelik sırası:
+      1. Liberation Sans  — Dockerfile'da fonts-liberation paketiyle kurulu (Linux/Railway)
+      2. DejaVu Sans      — python:slim imajlarda bazen mevcut
+      3. Arial            — Windows geliştirme ortamı
+      4. Helvetica        — yedek (Türkçe desteği yok ama çökmez)
+    """
+    global _PDF_FONT_REGULAR, _PDF_FONT_BOLD
+    if _PDF_FONT_REGULAR is not None:
+        return _PDF_FONT_REGULAR, _PDF_FONT_BOLD
+
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    candidates = [
+        # (regular_path, bold_path, regular_name, bold_name)
+        (
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "LiberationSans", "LiberationSans-Bold",
+        ),
+        (
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "DejaVuSans", "DejaVuSans-Bold",
+        ),
+        (
+            "C:/Windows/Fonts/arial.ttf",
+            "C:/Windows/Fonts/arialbd.ttf",
+            "Arial", "Arial-Bold",
+        ),
+    ]
+
+    for reg_path, bold_path, reg_name, bold_name in candidates:
+        if os.path.exists(reg_path) and os.path.exists(bold_path):
+            try:
+                pdfmetrics.registerFont(TTFont(reg_name, reg_path))
+                pdfmetrics.registerFont(TTFont(bold_name, bold_path))
+                logger.info("PDF Türkçe font: %s / %s", reg_name, bold_name)
+                _PDF_FONT_REGULAR = reg_name
+                _PDF_FONT_BOLD    = bold_name
+                return reg_name, bold_name
+            except Exception as exc:
+                logger.warning("Font kayıt hatası (%s): %s", reg_name, exc)
+
+    # Hiç TTF bulunamadı — Helvetica (Türkçe kutuları gösterir ama çökmez)
+    logger.warning("PDF Türkçe font bulunamadı, Helvetica kullanılıyor")
+    _PDF_FONT_REGULAR = "Helvetica"
+    _PDF_FONT_BOLD    = "Helvetica-Bold"
+    return "Helvetica", "Helvetica-Bold"
+
+
 def _build_program_pdf(jt_kodu: str, tur_adi: str, kalkis_tarihi: str,
                        havayolu: str, program_gunler: list, ucus_listesi: list) -> bytes:
     """
@@ -657,6 +718,9 @@ def _build_program_pdf(jt_kodu: str, tur_adi: str, kalkis_tarihi: str,
     )
     from reportlab.lib.enums import TA_LEFT, TA_CENTER
 
+    F  = _get_unicode_fonts()[0]   # regular
+    FB = _get_unicode_fonts()[1]   # bold
+
     buf = BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=A4,
@@ -672,53 +736,53 @@ def _build_program_pdf(jt_kodu: str, tur_adi: str, kalkis_tarihi: str,
 
     s_baslik = ParagraphStyle(
         "baslik",
-        fontName="Helvetica-Bold", fontSize=15,
+        fontName=FB, fontSize=15,
         textColor=colors.HexColor("#1e293b"),
         spaceAfter=4,
     )
     s_altyazi = ParagraphStyle(
         "altyazi",
-        fontName="Helvetica", fontSize=9,
+        fontName=F, fontSize=9,
         textColor=colors.HexColor("#64748b"),
         spaceAfter=2,
     )
     s_bolum = ParagraphStyle(
         "bolum",
-        fontName="Helvetica-Bold", fontSize=10,
+        fontName=FB, fontSize=10,
         textColor=colors.HexColor("#1e40af"),
         spaceBefore=14, spaceAfter=6,
     )
     s_gun_no = ParagraphStyle(
         "gun_no",
-        fontName="Helvetica-Bold", fontSize=9,
+        fontName=FB, fontSize=9,
         textColor=colors.HexColor("#ffffff"),
     )
     s_gun_baslik = ParagraphStyle(
         "gun_baslik",
-        fontName="Helvetica-Bold", fontSize=10,
+        fontName=FB, fontSize=10,
         textColor=colors.HexColor("#1e293b"),
         spaceAfter=3,
     )
     s_gun_icerik = ParagraphStyle(
         "gun_icerik",
-        fontName="Helvetica", fontSize=9,
+        fontName=F, fontSize=9,
         textColor=colors.HexColor("#374151"),
         leading=13, spaceAfter=4,
     )
     s_tablo_baslik = ParagraphStyle(
         "tablo_baslik",
-        fontName="Helvetica-Bold", fontSize=8,
+        fontName=FB, fontSize=8,
         textColor=colors.white,
     )
     s_tablo_hucre = ParagraphStyle(
         "tablo_hucre",
-        fontName="Helvetica", fontSize=8,
+        fontName=F, fontSize=8,
         textColor=colors.HexColor("#1e293b"),
         leading=11,
     )
     s_footer = ParagraphStyle(
         "footer",
-        fontName="Helvetica", fontSize=7,
+        fontName=F, fontSize=7,
         textColor=colors.HexColor("#94a3b8"),
         alignment=TA_CENTER,
     )
