@@ -557,16 +557,20 @@ def _extract_services_from_page(page) -> tuple:
             return [], []
 
         # ── 1. 'DAHİL OLMAYAN' başlığının x0 konumunu bul ──────────────────
-        # Doğru yöntem: önce 'OLMAYAN' kelimesini bul, sonra hemen öncesindeki
-        # 'DAHİL' kelimesinin x0'ını al.  İleri arama yanlış — sol başlıktaki
-        # 'DAHİL OLAN HİZMETLER DAHİL OLMAYAN HİZMETLER' satırında soldaki
-        # 'DAHİL' (x0≈50) 4 kelime sonra 'OLMAYAN'ı buluyor ve col_x≈50 veriyor.
+        # 'OLMAYAN' kelimesini bul, sonra AYNI SATIRDA (top ±5pt) hemen
+        # öncesindeki 'DAHİL' kelimesinin x0'ını al.
+        # ÖNEMLI: aynı satır kontrolü şart — aksi hâlde madde metinlerindeki
+        # 'Dahil' kelimesi (x0≈30) yanlışlıkla seçiliyordu.
         col_x: float | None = None
         for i, w in enumerate(words):
             if re.search(r'olmayan', w['text'], re.I):
-                # Hemen öncesindeki 'dahil' kelimesini ara (en fazla 5 geri)
-                for back in range(1, min(6, i + 1)):
+                olmayan_top = float(w['top'])
+                # Geriye giderek AYNI SATIRDA 'DAHİL' ara;
+                # satır değişince (top farkı > 5pt) aramayı durdur.
+                for back in range(1, min(30, i + 1)):
                     prev = words[i - back]
+                    if abs(float(prev['top']) - olmayan_top) > 5:
+                        break   # farklı satır — daha geriye gitmenin anlamı yok
                     if re.search(r'dah[iı]l', prev['text'], re.I):
                         col_x = float(prev['x0'])
                         break

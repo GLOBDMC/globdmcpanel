@@ -442,23 +442,39 @@ def create_tur_kart_router(db_engine, templates) -> APIRouter:
                     if _pdf.pages:
                         _pg = _pdf.pages[0]
                         _words = _pg.extract_words(x_tolerance=5, y_tolerance=5)
-                        # col_x tespiti (aynı mantık)
+                        # col_x tespiti — AYNI SATIRDA kontrolü ile (düzeltilmiş)
                         _col_x = None
+                        _olmayan_idx = None
                         for _i, _w in enumerate(_words):
                             if _re.search(r'olmayan', _w['text'], _re.I):
-                                for _back in range(1, min(6, _i + 1)):
-                                    if _re.search(r'dah[iı]l', _words[_i - _back]['text'], _re.I):
-                                        _col_x = float(_words[_i - _back]['x0'])
+                                _olmayan_top = float(_w['top'])
+                                _olmayan_idx = _i
+                                for _back in range(1, min(30, _i + 1)):
+                                    _prev = _words[_i - _back]
+                                    if abs(float(_prev['top']) - _olmayan_top) > 5:
+                                        break
+                                    if _re.search(r'dah[iı]l', _prev['text'], _re.I):
+                                        _col_x = float(_prev['x0'])
                                         break
                                 if _col_x is not None:
                                     break
-                        info["col_x"]    = _col_x
+                        info["col_x"]      = _col_x
                         info["page_width"] = float(_pg.width)
-                        # İlk 10 kelimeyi göster
-                        info["first_words"] = [
-                            {"text": ww["text"], "x0": round(float(ww["x0"]), 1)}
-                            for ww in _words[:20]
-                        ]
+                        info["page_height"] = float(_pg.height)
+                        # OLMAYAN etrafındaki 10 kelimeyi top değerleriyle göster
+                        if _olmayan_idx is not None:
+                            _ctx_start = max(0, _olmayan_idx - 5)
+                            _ctx_end   = min(len(_words), _olmayan_idx + 5)
+                            info["olmayan_context"] = [
+                                {
+                                    "text": ww["text"],
+                                    "x0":   round(float(ww["x0"]), 1),
+                                    "top":  round(float(ww["top"]), 1),
+                                }
+                                for ww in _words[_ctx_start:_ctx_end]
+                            ]
+                        # Sayfa 1 ham metni (ilk 1500 karakter)
+                        info["page1_text"] = (_pg.extract_text() or "")[:1500]
                 from gordios_scraper import _parse_pdf_extra
                 extra = _parse_pdf_extra(raw)
                 info["dahil_hizmetler"] = extra.get("dahil_hizmetler", [])
