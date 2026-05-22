@@ -524,10 +524,10 @@ def _parse_pdf_extra(pdf_bytes: bytes) -> dict:
         import pdfplumber
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             total = len(pdf.pages)
-            # Sayfa 1 → dahil/hariç hizmetler
+            # Sayfa 1 → dahil/hariç hizmetler (sayfayı sol/sağ bölerek)
             if total >= 1:
-                t1 = pdf.pages[0].extract_text() or ""
-                out["dahil_hizmetler"], out["haric_hizmetler"] = _extract_services(t1)
+                out["dahil_hizmetler"], out["haric_hizmetler"] = \
+                    _extract_services_from_page(pdf.pages[0])
                 logger.info("[gordios-extra] dahil: %d, hariç: %d",
                             len(out["dahil_hizmetler"]), len(out["haric_hizmetler"]))
             # Sayfa 2 → notlar / katılım koşulları
@@ -540,41 +540,55 @@ def _parse_pdf_extra(pdf_bytes: bytes) -> dict:
     return out
 
 
-def _extract_services(text: str) -> tuple:
+def _extract_services_from_page(page) -> tuple:
     """
-    Sayfa 1 metninden dahil olan / olmayan hizmet listelerini çıkarır.
-    Döner: (dahil_list, haric_list)
+    Sayfa 1'i sol/sağ yarıya bölerek dahil olan / olmayan hizmetleri ayrı ayrı okur.
+
+    Gordios PDF'inde iki başlık ('DAHİL OLAN' + 'DAHİL OLMAYAN') yan yana
+    aynı satırda bulunduğundan tek metin bloğu olarak parse etmek doğru
+    sonuç vermez; pdfplumber crop ile spatial ayırma kullanılır.
     """
-    dahil: list = []
-    haric: list = []
+    try:
+        pw = float(page.width)
+        ph = float(page.height)
+        left_text  = (page.crop((0,    0, pw / 2, ph)).extract_text() or "")
+        right_text = (page.crop((pw / 2, 0, pw,   ph)).extract_text() or "")
+        dahil = _parse_service_items(left_text)
+        haric = _parse_service_items(right_text)
+        return dahil, haric
+    except Exception as e:
+        logger.warning("[gordios] _extract_services_from_page hatası: %s", e)
+        return [], []
 
-    DAHIL_OLMAYAN = re.compile(r'dah[iı]l\s+olmayan', re.I)
-    DAHIL_OLAN    = re.compile(r'dah[iı]l\s+olan|dah[iı]l\s+h[iı]zmet', re.I)
-    SECTION_END   = re.compile(
-        r'kat[iı]l[iı]m|ko[sş]ul|notlar?|yolcu|u[cç]u[sş]|kalkı[sş]|konaklama', re.I
-    )
-    BULLET_STRIP  = re.compile(r'^[•·▪▸▶\-\*✓✗–—►]+\s*')
 
-    mode = None  # 'dahil' | 'haric' | None
-    for line in text.splitlines():
-        ln = line.strip()
+def _parse_service_items(text: str) -> list:
+    """
+    Yarı-sayfa metninden madde listesini çıkarır.
+    - 'dahil ... hizmet' başlık satırını atlar
+    - 'X/Y' formatındaki sayfa numaralarını atlar (örn. '1/9')
+    - Kısa / anlamsız satırları eler
+    """
+    BULLET   = re.compile(r'^[•·▪▸▶\-\*✓✗–—►]+\s*')
+    PAGE_NUM = re.compile(r'^\d+/\d+$')
+    HDR      = re.compile(r'dah[iı]l.{0,20}h[iı]zmet', re.I)
+
+    items: list = []
+    in_section = False
+    for raw in text.splitlines():
+        ln = raw.strip()
         if not ln:
             continue
-        if DAHIL_OLMAYAN.search(ln):
-            mode = 'haric'
+        if HDR.search(ln):
+            in_section = True
             continue
-        if DAHIL_OLAN.search(ln):
-            mode = 'dahil'
+        if not in_section:
             continue
-        if mode and SECTION_END.search(ln):
-            mode = None
+        if PAGE_NUM.match(ln):
             continue
-        if mode:
-            item = BULLET_STRIP.sub('', ln).strip()
-            if item and len(item) > 2:
-                (dahil if mode == 'dahil' else haric).append(item)
-
-    return dahil, haric
+        item = BULLET.sub('', ln).strip()
+        if item and len(item) > 2:
+            items.append(item)
+    return items
 
 
 def _extract_notes(text: str) -> str:

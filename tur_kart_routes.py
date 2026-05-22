@@ -839,46 +839,6 @@ def _build_program_pdf(
     story.append(HRFlowable(width=W, thickness=1, color=colors.HexColor("#e2e8f0"),
                              spaceAfter=10))
 
-    # ── Dahil / Hariç Hizmetler ───────────────────────────────────────────────
-    if dahil_hizmetler or haric_hizmetler:
-        # İki sütun yan yana tablo
-        def _hizmet_sutun(baslik_text, items, bg):
-            """Tek sütun için iç içe tablo döndürür."""
-            col_items = [
-                [Paragraph(baslik_text, s_hizmet_baslik)],
-            ]
-            for item in items:
-                col_items.append([Paragraph(f"• {item}", s_hizmet)])
-            inner = Table(col_items, colWidths=[W * 0.47])
-            inner.setStyle(TableStyle([
-                ("BACKGROUND",    (0, 0), (-1, 0), colors.HexColor(bg)),
-                ("LEFTPADDING",   (0, 0), (-1, -1), 7),
-                ("RIGHTPADDING",  (0, 0), (-1, -1), 7),
-                ("TOPPADDING",    (0, 0), (-1, 0),  5),
-                ("BOTTOMPADDING", (0, 0), (-1, 0),  5),
-                ("TOPPADDING",    (0, 1), (-1, -1), 2),
-                ("BOTTOMPADDING", (0, 1), (-1, -1), 2),
-                ("VALIGN",        (0, 0), (-1, -1), "TOP"),
-            ]))
-            return inner
-
-        sol = _hizmet_sutun("DAHİL OLAN HİZMETLER",    dahil_hizmetler, "#166534")
-        sag = _hizmet_sutun("DAHİL OLMAYAN HİZMETLER", haric_hizmetler, "#991b1b")
-
-        hizmet_tbl = Table(
-            [[sol, Spacer(W * 0.06, 1), sag]],
-            colWidths=[W * 0.47, W * 0.06, W * 0.47],
-        )
-        hizmet_tbl.setStyle(TableStyle([
-            ("VALIGN",        (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING",   (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
-            ("TOPPADDING",    (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ]))
-        story.append(hizmet_tbl)
-        story.append(Spacer(1, 0.3 * cm))
-
     # ── Uçuş Bilgileri ───────────────────────────────────────────────────────
     if ucus_listesi:
         story.append(Paragraph("UÇUŞ BİLGİLERİ", s_bolum))
@@ -960,6 +920,43 @@ def _build_program_pdf(
                                     color=colors.HexColor("#e2e8f0"), spaceAfter=6))
 
             story.append(KeepTogether(block))
+
+    # ── Dahil / Hariç Hizmetler ───────────────────────────────────────────────
+    if dahil_hizmetler or haric_hizmetler:
+        def _hizmet_sutun(baslik_text, items, bg):
+            """Tek sütun için iç içe tablo döndürür."""
+            col_rows = [[Paragraph(baslik_text, s_hizmet_baslik)]]
+            for item in items:
+                col_rows.append([Paragraph(f"• {item}", s_hizmet)])
+            inner = Table(col_rows, colWidths=[W * 0.47])
+            inner.setStyle(TableStyle([
+                ("BACKGROUND",    (0, 0), (-1, 0), colors.HexColor(bg)),
+                ("LEFTPADDING",   (0, 0), (-1, -1), 7),
+                ("RIGHTPADDING",  (0, 0), (-1, -1), 7),
+                ("TOPPADDING",    (0, 0), (-1,  0), 5),
+                ("BOTTOMPADDING", (0, 0), (-1,  0), 5),
+                ("TOPPADDING",    (0, 1), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 1), (-1, -1), 2),
+                ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+            ]))
+            return inner
+
+        sol = _hizmet_sutun("DAHİL OLAN HİZMETLER",    dahil_hizmetler, "#166534")
+        sag = _hizmet_sutun("DAHİL OLMAYAN HİZMETLER", haric_hizmetler, "#991b1b")
+
+        hizmet_tbl = Table(
+            [[sol, Spacer(W * 0.06, 1), sag]],
+            colWidths=[W * 0.47, W * 0.06, W * 0.47],
+        )
+        hizmet_tbl.setStyle(TableStyle([
+            ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
+            ("TOPPADDING",    (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        story.append(hizmet_tbl)
+        story.append(Spacer(1, 0.3 * cm))
 
     # ── Önemli Notlar / Katılım Koşulları ────────────────────────────────────
     if notlar and notlar.strip():
