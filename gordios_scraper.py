@@ -542,48 +542,97 @@ def _parse_pdf_extra(pdf_bytes: bytes) -> dict:
 
 def _extract_services_from_page(page) -> tuple:
     """
-    Sayfa 1'i sol/sağ yarıya bölerek dahil olan / olmayan hizmetleri ayrı ayrı okur.
+    Gordios sayfa 1'den dahil / hariç hizmetleri çıkarır.
 
-    Gordios PDF'inde iki başlık ('DAHİL OLAN' + 'DAHİL OLMAYAN') yan yana
-    aynı satırda bulunduğundan tek metin bloğu olarak parse etmek doğru
-    sonuç vermez; pdfplumber crop ile spatial ayırma kullanılır.
+    Önce extract_tables() ile sütun bazlı okuma dener (en güvenilir).
+    Tablo bulunamazsa spatial crop fallback kullanır.
     """
+    # ── Yöntem 1: tablo çıkarımı ─────────────────────────────────────────────
+    try:
+        tables = page.extract_tables()
+        for tbl in tables:
+            if not tbl:
+                continue
+
+            # Her satır içinde "dahil olan" ve "dahil olmayan" başlıklarını bul
+            dahil_col = haric_col = -1
+            for row in tbl:
+                if not row:
+                    continue
+                for ci, cell in enumerate(row):
+                    ct = str(cell or "")
+                    if dahil_col < 0 and re.search(r'dah[iı]l\s+olan(?!\s*olmayan)', ct, re.I):
+                        dahil_col = ci
+                    if haric_col < 0 and re.search(r'dah[iı]l\s+olmayan', ct, re.I):
+                        haric_col = ci
+                if dahil_col >= 0 and haric_col >= 0:
+                    break
+
+            if dahil_col < 0 or haric_col < 0:
+                continue
+
+            # İki sütunun tüm içeriğini birleştir
+            dahil_parts, haric_parts = [], []
+            for row in tbl:
+                if not row:
+                    continue
+                if dahil_col < len(row) and row[dahil_col]:
+                    dahil_parts.append(str(row[dahil_col]))
+                if haric_col < len(row) and row[haric_col]:
+                    haric_parts.append(str(row[haric_col]))
+
+            dahil = _parse_service_items("\n".join(dahil_parts))
+            haric = _parse_service_items("\n".join(haric_parts))
+
+            if dahil or haric:
+                logger.info("[gordios] services tablo yöntemi: dahil=%d haric=%d",
+                            len(dahil), len(haric))
+                return dahil, haric
+    except Exception as e:
+        logger.warning("[gordios] services tablo hatası: %s", e)
+
+    # ── Yöntem 2: spatial crop (yedek) ──────────────────────────────────────
     try:
         pw = float(page.width)
         ph = float(page.height)
-        left_text  = (page.crop((0,    0, pw / 2, ph)).extract_text() or "")
-        right_text = (page.crop((pw / 2, 0, pw,   ph)).extract_text() or "")
-        dahil = _parse_service_items(left_text)
-        haric = _parse_service_items(right_text)
+        left_text  = (page.crop((0,     0, pw / 2, ph)).extract_text() or "")
+        right_text = (page.crop((pw / 2, 0, pw,    ph)).extract_text() or "")
+        dahil = _parse_service_items(left_text,  require_header=True)
+        haric = _parse_service_items(right_text, require_header=True)
+        logger.info("[gordios] services crop yöntemi: dahil=%d haric=%d",
+                    len(dahil), len(haric))
         return dahil, haric
     except Exception as e:
-        logger.warning("[gordios] _extract_services_from_page hatası: %s", e)
-        return [], []
+        logger.warning("[gordios] services crop hatası: %s", e)
+
+    return [], []
 
 
-def _parse_service_items(text: str) -> list:
+def _parse_service_items(text: str, require_header: bool = False) -> list:
     """
-    Yarı-sayfa metninden madde listesini çıkarır.
-    - 'dahil ... hizmet' başlık satırını atlar
-    - 'X/Y' formatındaki sayfa numaralarını atlar (örn. '1/9')
-    - Kısa / anlamsız satırları eler
+    Metin bloğundan hizmet maddelerini çıkarır.
+    require_header=False (varsayılan): tablo hücresi gibi doğrudan içerik —
+      'dahil...hizmet' başlık satırını atlayıp kalanı toplar.
+    require_header=True: tam sayfa metni — başlık bulunana kadar bekler.
+    'X/Y' sayfa numarası formatındaki satırları atlar.
     """
     BULLET   = re.compile(r'^[•·▪▸▶\-\*✓✗–—►]+\s*')
     PAGE_NUM = re.compile(r'^\d+/\d+$')
     HDR      = re.compile(r'dah[iı]l.{0,20}h[iı]zmet', re.I)
 
     items: list = []
-    in_section = False
+    in_section = not require_header  # require_header=False → hemen topla
+
     for raw in text.splitlines():
         ln = raw.strip()
         if not ln:
             continue
-        if HDR.search(ln):
+        if HDR.search(ln):       # başlık satırını atla, sonrasını topla
             in_section = True
             continue
         if not in_section:
             continue
-        if PAGE_NUM.match(ln):
+        if PAGE_NUM.match(ln):   # "1/9" gibi sayfa numarası
             continue
         item = BULLET.sub('', ln).strip()
         if item and len(item) > 2:
