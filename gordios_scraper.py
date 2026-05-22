@@ -544,100 +544,102 @@ def _extract_services_from_page(page) -> tuple:
     """
     Gordios sayfa 1'den dahil / hariç hizmetleri çıkarır.
 
-    Önce extract_tables() ile sütun bazlı okuma dener (en güvenilir).
-    Tablo bulunamazsa spatial crop fallback kullanır.
+    extract_words() ile her kelimenin gerçek x0 koordinatını alır.
+    'DAHİL OLMAYAN' başlığının x0'ı sütun sınırı (col_x) olarak kullanılır;
+    bu değer pw/2'den farklı olabilir — tam konum PDF'den okunur.
+
+    col_x solunda kalan kelimeler → dahil (sol sütun)
+    col_x sağında kalan kelimeler → hariç (sağ sütun)
     """
-    # ── Yöntem 1: tablo çıkarımı ─────────────────────────────────────────────
     try:
-        tables = page.extract_tables()
-        for tbl in tables:
-            if not tbl:
-                continue
+        words = page.extract_words(x_tolerance=5, y_tolerance=5)
+        if not words:
+            return [], []
 
-            # Her satır içinde "dahil olan" ve "dahil olmayan" başlıklarını bul
-            dahil_col = haric_col = -1
-            for row in tbl:
-                if not row:
-                    continue
-                for ci, cell in enumerate(row):
-                    ct = str(cell or "")
-                    if dahil_col < 0 and re.search(r'dah[iı]l\s+olan(?!\s*olmayan)', ct, re.I):
-                        dahil_col = ci
-                    if haric_col < 0 and re.search(r'dah[iı]l\s+olmayan', ct, re.I):
-                        haric_col = ci
-                if dahil_col >= 0 and haric_col >= 0:
-                    break
+        # ── 1. 'DAHİL OLMAYAN' başlığının x0 konumunu bul ──────────────────
+        col_x: float | None = None
+        for i, w in enumerate(words):
+            if re.search(r'dah[iı]l', w['text'], re.I):
+                for j in range(i + 1, min(i + 5, len(words))):
+                    if re.search(r'olmayan', words[j]['text'], re.I):
+                        col_x = float(w['x0'])
+                        break
+            if col_x is not None:
+                break
 
-            if dahil_col < 0 or haric_col < 0:
-                continue
+        if col_x is None:
+            col_x = float(page.width) / 2
+            logger.warning("[gordios] 'DAHİL OLMAYAN' x bulunamadı, pw/2=%.1f kullanılıyor", col_x)
+        else:
+            logger.info("[gordios] services col_x=%.1f (pw=%.1f)", col_x, float(page.width))
 
-            # İki sütunun tüm içeriğini birleştir
-            dahil_parts, haric_parts = [], []
-            for row in tbl:
-                if not row:
-                    continue
-                if dahil_col < len(row) and row[dahil_col]:
-                    dahil_parts.append(str(row[dahil_col]))
-                if haric_col < len(row) and row[haric_col]:
-                    haric_parts.append(str(row[haric_col]))
+        # ── 2. Başlık satırının en alt kenarını bul ─────────────────────────
+        HDR_RE = re.compile(r'dah[iı]l', re.I)
+        header_bottom = 0.0
+        for w in words:
+            if HDR_RE.search(w['text']):
+                header_bottom = max(header_bottom, float(w['bottom']))
 
-            dahil = _parse_service_items("\n".join(dahil_parts))
-            haric = _parse_service_items("\n".join(haric_parts))
+        # ── 3. Başlık altındaki kelimeleri sol/sağ sütuna ata ───────────────
+        from collections import defaultdict
+        left_lines: dict  = defaultdict(list)
+        right_lines: dict = defaultdict(list)
 
-            if dahil or haric:
-                logger.info("[gordios] services tablo yöntemi: dahil=%d haric=%d",
-                            len(dahil), len(haric))
-                return dahil, haric
-    except Exception as e:
-        logger.warning("[gordios] services tablo hatası: %s", e)
+        for w in words:
+            if float(w['top']) <= header_bottom:
+                continue   # başlık satırı veya üstü — atla
+            y_key = round(float(w['top']))
+            if float(w['x0']) < col_x:
+                left_lines[y_key].append(w['text'])
+            else:
+                right_lines[y_key].append(w['text'])
 
-    # ── Yöntem 2: spatial crop (yedek) ──────────────────────────────────────
-    try:
-        pw = float(page.width)
-        ph = float(page.height)
-        left_text  = (page.crop((0,     0, pw / 2, ph)).extract_text() or "")
-        right_text = (page.crop((pw / 2, 0, pw,    ph)).extract_text() or "")
-        dahil = _parse_service_items(left_text,  require_header=True)
-        haric = _parse_service_items(right_text, require_header=True)
-        logger.info("[gordios] services crop yöntemi: dahil=%d haric=%d",
-                    len(dahil), len(haric))
+        def _reconstruct(lines_dict: dict) -> str:
+            return '\n'.join(
+                ' '.join(lines_dict[y]) for y in sorted(lines_dict.keys())
+            )
+
+        dahil = _parse_service_items(_reconstruct(left_lines))
+        haric = _parse_service_items(_reconstruct(right_lines))
+        logger.info("[gordios] word-x sonuç: dahil=%d haric=%d", len(dahil), len(haric))
         return dahil, haric
+
     except Exception as e:
-        logger.warning("[gordios] services crop hatası: %s", e)
+        logger.warning("[gordios] _extract_services_from_page hatası: %s", e)
+        return [], []
 
-    return [], []
 
-
-def _parse_service_items(text: str, require_header: bool = False) -> list:
+def _parse_service_items(text: str) -> list:
     """
-    Metin bloğundan hizmet maddelerini çıkarır.
-    require_header=False (varsayılan): tablo hücresi gibi doğrudan içerik —
-      'dahil...hizmet' başlık satırını atlayıp kalanı toplar.
-    require_header=True: tam sayfa metni — başlık bulunana kadar bekler.
-    'X/Y' sayfa numarası formatındaki satırları atlar.
+    Madde listesi metninden hizmet maddelerini çıkarır.
+    - Bullet ile başlayan satırlar yeni madde başlatır
+    - Bullet'sız devam satırları önceki maddeye eklenir
+    - 'X/Y' sayfa numaraları ve çok kısa satırlar atlanır
     """
     BULLET   = re.compile(r'^[•·▪▸▶\-\*✓✗–—►]+\s*')
     PAGE_NUM = re.compile(r'^\d+/\d+$')
-    HDR      = re.compile(r'dah[iı]l.{0,20}h[iı]zmet', re.I)
 
-    items: list = []
-    in_section = not require_header  # require_header=False → hemen topla
+    items:   list = []
+    current: str | None = None
 
     for raw in text.splitlines():
         ln = raw.strip()
         if not ln:
             continue
-        if HDR.search(ln):       # başlık satırını atla, sonrasını topla
-            in_section = True
+        if PAGE_NUM.match(ln):
             continue
-        if not in_section:
-            continue
-        if PAGE_NUM.match(ln):   # "1/9" gibi sayfa numarası
-            continue
-        item = BULLET.sub('', ln).strip()
-        if item and len(item) > 2:
-            items.append(item)
-    return items
+        if BULLET.match(ln):           # yeni madde
+            if current:
+                items.append(current)
+            current = BULLET.sub('', ln).strip()
+        elif current is not None:      # önceki maddenin devamı
+            current += ' ' + ln
+        # bullet olmayan, current=None → başlık / gürültü → atla
+
+    if current:
+        items.append(current)
+
+    return [i for i in items if len(i) > 3]
 
 
 def _extract_notes(text: str) -> str:
