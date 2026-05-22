@@ -557,21 +557,27 @@ def _extract_services_from_page(page) -> tuple:
             return [], []
 
         # ── 1. 'DAHİL OLMAYAN' başlığının x0 konumunu bul ──────────────────
+        # Doğru yöntem: önce 'OLMAYAN' kelimesini bul, sonra hemen öncesindeki
+        # 'DAHİL' kelimesinin x0'ını al.  İleri arama yanlış — sol başlıktaki
+        # 'DAHİL OLAN HİZMETLER DAHİL OLMAYAN HİZMETLER' satırında soldaki
+        # 'DAHİL' (x0≈50) 4 kelime sonra 'OLMAYAN'ı buluyor ve col_x≈50 veriyor.
         col_x: float | None = None
         for i, w in enumerate(words):
-            if re.search(r'dah[iı]l', w['text'], re.I):
-                for j in range(i + 1, min(i + 5, len(words))):
-                    if re.search(r'olmayan', words[j]['text'], re.I):
-                        col_x = float(w['x0'])
+            if re.search(r'olmayan', w['text'], re.I):
+                # Hemen öncesindeki 'dahil' kelimesini ara (en fazla 5 geri)
+                for back in range(1, min(6, i + 1)):
+                    prev = words[i - back]
+                    if re.search(r'dah[iı]l', prev['text'], re.I):
+                        col_x = float(prev['x0'])
                         break
-            if col_x is not None:
-                break
+                if col_x is not None:
+                    break
 
         if col_x is None:
             col_x = float(page.width) / 2
-            logger.warning("[gordios] 'DAHİL OLMAYAN' x bulunamadı, pw/2=%.1f kullanılıyor", col_x)
+            logger.warning("[gordios] col_x bulunamadı, pw/2=%.1f kullanılıyor", col_x)
         else:
-            logger.info("[gordios] services col_x=%.1f (pw=%.1f)", col_x, float(page.width))
+            logger.info("[gordios] col_x=%.1f (pw=%.1f)", col_x, float(page.width))
 
         # ── 2. Başlık satırının en alt kenarını bul ─────────────────────────
         HDR_RE = re.compile(r'dah[iı]l', re.I)

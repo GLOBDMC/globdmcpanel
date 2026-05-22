@@ -437,6 +437,28 @@ def create_tur_kart_router(db_engine, templates) -> APIRouter:
 
         if raw and raw[:4] == b"%PDF":
             try:
+                import pdfplumber, io as _io
+                with pdfplumber.open(_io.BytesIO(raw)) as _pdf:
+                    if _pdf.pages:
+                        _pg = _pdf.pages[0]
+                        _words = _pg.extract_words(x_tolerance=5, y_tolerance=5)
+                        # col_x tespiti (aynı mantık)
+                        _col_x = None
+                        for _i, _w in enumerate(_words):
+                            if re.search(r'olmayan', _w['text'], re.I):
+                                for _back in range(1, min(6, _i + 1)):
+                                    if re.search(r'dah[iı]l', _words[_i - _back]['text'], re.I):
+                                        _col_x = float(_words[_i - _back]['x0'])
+                                        break
+                                if _col_x is not None:
+                                    break
+                        info["col_x"]    = _col_x
+                        info["page_width"] = float(_pg.width)
+                        # İlk 10 kelimeyi göster
+                        info["first_words"] = [
+                            {"text": ww["text"], "x0": round(float(ww["x0"]), 1)}
+                            for ww in _words[:20]
+                        ]
                 from gordios_scraper import _parse_pdf_extra
                 extra = _parse_pdf_extra(raw)
                 info["dahil_hizmetler"] = extra.get("dahil_hizmetler", [])
